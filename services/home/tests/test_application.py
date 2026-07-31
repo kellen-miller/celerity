@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from celerity_home import worker
 from celerity_home.application import create_app, deliver_notifications, migrate
-from celerity_home.training import Recipe, load_training_examples
+from celerity_home.training import MAXIMUM_PARITY_ERROR, Recipe, load_training_examples
 from celerity_home.worker import classify_evaluation
 
 AUTHORIZATION = {"Authorization": "Bearer secret"}
@@ -381,7 +381,8 @@ def test_recipe_classification_covers_pass_no_change_and_reject() -> None:
     assert classify_evaluation(0.0, False) == "completed"
     assert classify_evaluation(0.0, False, improves_baseline=False) == "no_change"
     assert classify_evaluation(0.0, True) == "no_change"
-    assert classify_evaluation(1e-4, False) == "rejected"
+    assert classify_evaluation(MAXIMUM_PARITY_ERROR, False) == "completed"
+    assert classify_evaluation(MAXIMUM_PARITY_ERROR * 2, False) == "rejected"
     assert classify_evaluation(float("nan"), False) == "rejected"
 
 

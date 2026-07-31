@@ -16,6 +16,10 @@ import torch
 from onnx.reference import ReferenceEvaluator
 from torch import nn
 
+# Both model outputs are temperatures. This remains far below source sensor resolution while
+# allowing harmless floating-point differences between supported ONNX/PyTorch platforms.
+MAXIMUM_PARITY_ERROR = 1e-4
+
 
 @dataclass(frozen=True)
 class Recipe:
@@ -350,7 +354,7 @@ def export_and_compare(
     expected = model(example).detach().numpy()
     actual = ReferenceEvaluator(onnx_model).run(None, {"thermal_history": example.numpy()})[0]
     maximum_error = float(np.max(np.abs(expected - actual)))
-    if maximum_error > 1e-5:
+    if maximum_error > MAXIMUM_PARITY_ERROR:
         raise RuntimeError(f"PyTorch/ONNX parity exceeded tolerance: {maximum_error}")
     return {
         "recipe": recipe.name,

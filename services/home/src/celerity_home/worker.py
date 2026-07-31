@@ -15,6 +15,7 @@ import onnx
 from onnx.reference import ReferenceEvaluator
 
 from celerity_home.training import (
+    MAXIMUM_PARITY_ERROR,
     NoEligibleTrainingData,
     Recipe,
     derive_run_index,
@@ -32,7 +33,7 @@ def classify_evaluation(
 ) -> str:
     """Classify a bounded recipe result before changing desired model state."""
     if (
-        not 0 <= maximum_parity_error <= 1e-5
+        not 0 <= maximum_parity_error <= MAXIMUM_PARITY_ERROR
         or not 0 <= calibration_error <= maximum_calibration_error
     ):
         return "rejected"

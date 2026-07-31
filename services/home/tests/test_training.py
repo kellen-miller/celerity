@@ -5,7 +5,13 @@ import onnx
 import pyarrow.parquet as pq
 from onnx.reference import ReferenceEvaluator
 
-from celerity_home.training import Recipe, derive_run_index, export_and_compare, whole_run_split
+from celerity_home.training import (
+    MAXIMUM_PARITY_ERROR,
+    Recipe,
+    derive_run_index,
+    export_and_compare,
+    whole_run_split,
+)
 
 
 def test_whole_run_split_is_stable_and_never_splits_one_run(tmp_path: Path) -> None:
@@ -31,7 +37,7 @@ def test_causal_tcn_exports_fixed_shape_with_reference_parity(tmp_path: Path) ->
     )
     assert evaluation["input_shape"] == [1, 9]
     assert evaluation["output_shape"] == [1, 2]
-    assert evaluation["maximum_parity_error"] <= 1e-5
+    assert evaluation["maximum_parity_error"] <= MAXIMUM_PARITY_ERROR
     assert len(evaluation["onnx_sha256"]) == 64
     assert evaluation["normalization"] == [
         {"mean": 90.0, "scale": 10.0},

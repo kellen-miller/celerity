@@ -66,6 +66,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
         direction: 1,
         runtime_lease_ms: 500,
         command_lease_ms: 150,
+        heartbeat_period_ms: 100,
     });
     pwm_channel.set_duty_cycle_fraction(u32::from(state.pwm_microseconds()), PWM_PERIOD_US);
     pwm_channel.enable();
@@ -97,7 +98,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
     let mut acknowledgement_sequence = 0_u32;
     let mut heartbeat_sequence = 0_u32;
     let mut fault_sequence = 0_u32;
-    let mut next_heartbeat_ms = 100_u64;
+    let mut next_heartbeat_ms = u64::from(state.heartbeat_period_ms().unwrap_or(100));
     loop {
         let now_ms = Instant::now().as_millis();
         state.advance_to(now_ms);
@@ -106,7 +107,8 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
         if now_ms >= next_heartbeat_ms {
             heartbeat_sequence = heartbeat_sequence.wrapping_add(1);
-            next_heartbeat_ms = now_ms.saturating_add(100);
+            next_heartbeat_ms =
+                now_ms.saturating_add(u64::from(state.heartbeat_period_ms().unwrap_or(100)));
             let heartbeat = Frame::Heartbeat {
                 node: NODE_ADDRESS,
                 message: Heartbeat {
@@ -243,7 +245,12 @@ async fn main(_spawner: embassy_executor::Spawner) {
                         direction: message.direction,
                         runtime_lease_ms: message.runtime_lease_ms,
                         command_lease_ms: message.command_lease_ms,
+                        heartbeat_period_ms: message.heartbeat_period_ms,
                     });
+                if accepted {
+                    next_heartbeat_ms =
+                        now_ms.saturating_add(u64::from(message.heartbeat_period_ms));
+                }
                 Some(Frame::ConfigurationAck {
                     node,
                     message: ConfigurationAck {

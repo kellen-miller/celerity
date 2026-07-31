@@ -44,6 +44,11 @@ rejected. Configuration reconciliation must precede leases. A controller reboot
 changes its boot session and loses authority. Link restoration does not restore
 authority.
 
+After accepting Configuration, the controller emits Heartbeat on its local
+monotonic timer at the configured heartbeat period. A valid CommandAck is also
+fresh controller truth for the exact acknowledged command; neither evidence
+restores authority after a boot-session or configuration mismatch.
+
 Runtime and Command Leases are independent controller-local monotonic deadlines.
 Each accepted Command refreshes the Command Lease to exactly the configured
 Command Lease milliseconds. Rejected, duplicate, stale, wrong-session,

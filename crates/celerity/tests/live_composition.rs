@@ -117,6 +117,9 @@ fn spawn_controller(
                 write_fd(&socket, current.can_id, current.payload());
                 response = current.follow_up().cloned();
             }
+            if let Some(heartbeat) = emulator.heartbeat(now_ms).expect("heartbeat") {
+                write_fd(&socket, heartbeat.can_id, heartbeat.payload());
+            }
         }
     })
 }

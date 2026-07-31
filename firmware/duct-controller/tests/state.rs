@@ -10,6 +10,7 @@ fn configured_state() -> ControllerState {
         direction: 1,
         runtime_lease_ms: 500,
         command_lease_ms: 100,
+        heartbeat_period_ms: 50,
     }));
     state
 }
@@ -17,6 +18,7 @@ fn configured_state() -> ControllerState {
 #[test]
 fn firmware_command_lease_expires_independently() {
     let mut state = configured_state();
+    assert_eq!(state.heartbeat_period_ms(), Some(50));
     assert!(state.accept_runtime_lease(0, 7, 3, 9, 1, 500));
     assert!(state.accept_command(10, 7, 3, 9, 1, 4_000));
     assert_eq!(state.mode(), FirmwareMode::RemoteAuthority);
@@ -63,6 +65,7 @@ fn interrupted_configuration_keeps_prior_generation() {
         direction: 1,
         runtime_lease_ms: 500,
         command_lease_ms: 100,
+        heartbeat_period_ms: 50,
     });
     state.recover_after_interrupted_write();
 

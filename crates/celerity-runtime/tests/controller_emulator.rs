@@ -81,6 +81,27 @@ fn discovery_emits_announce_then_capability() {
 }
 
 #[test]
+fn heartbeat_uses_the_configured_period_and_current_truth() {
+    let mut emulator = configured_emulator();
+    assert!(emulator.heartbeat(49).expect("heartbeat timer").is_none());
+
+    let heartbeat = emulator
+        .heartbeat(50)
+        .expect("heartbeat timer")
+        .expect("configured deadline must emit");
+    let Frame::Heartbeat { message, .. } =
+        decode(heartbeat.can_id, heartbeat.payload()).expect("heartbeat must decode")
+    else {
+        panic!("expected heartbeat")
+    };
+    assert_eq!(message.heartbeat_sequence, 1);
+    assert_eq!(message.current_epoch, 0);
+    assert_eq!(message.state_flags, 1);
+    assert!(emulator.heartbeat(99).expect("heartbeat timer").is_none());
+    assert!(emulator.heartbeat(100).expect("heartbeat timer").is_some());
+}
+
+#[test]
 fn accepted_command_refreshes_only_command_lease() {
     let mut emulator = configured_emulator();
     ingest(

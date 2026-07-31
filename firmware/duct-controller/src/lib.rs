@@ -18,6 +18,7 @@ pub struct FirmwareConfiguration {
     pub direction: u8,
     pub runtime_lease_ms: u16,
     pub command_lease_ms: u16,
+    pub heartbeat_period_ms: u16,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -180,6 +181,12 @@ impl ControllerState {
     }
 
     #[must_use]
+    pub fn heartbeat_period_ms(&self) -> Option<u16> {
+        self.active_configuration
+            .map(|configuration| configuration.heartbeat_period_ms)
+    }
+
+    #[must_use]
     pub fn current_epoch(&self) -> Option<u64> {
         self.runtime_lease.map(|lease| lease.epoch)
     }
@@ -233,4 +240,5 @@ const fn valid_configuration(configuration: FirmwareConfiguration) -> bool {
         && (configuration.direction == 1 || configuration.direction == 2)
         && configuration.runtime_lease_ms > 0
         && configuration.command_lease_ms > 0
+        && configuration.heartbeat_period_ms > 0
 }

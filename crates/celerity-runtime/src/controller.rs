@@ -1,6 +1,6 @@
 use celerity_protocol::{
-    CapabilityReport, CommandAck, ConfigurationAck, Frame, NodeAnnounce, RuntimeLeaseAck,
-    WireError, decode, encode,
+    CapabilityReport, CommandAck, ConfigurationAck, Frame, Heartbeat, NodeAnnounce,
+    RuntimeLeaseAck, WireError, decode, encode,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,6 +44,7 @@ struct ActiveConfiguration {
     generation: u32,
     digest_prefix: u32,
     command_lease_ms: u16,
+    heartbeat_period_ms: u16,
     fallback_basis_points: u16,
 }
 
@@ -62,6 +63,8 @@ pub struct ControllerEmulator {
     command_deadline_ms: Option<u64>,
     last_command_sequence: Option<u32>,
     acknowledgement_sequence: u32,
+    heartbeat_sequence: u32,
+    next_heartbeat_ms: Option<u64>,
     mode: ControllerMode,
     accepted_basis_points: u16,
 }
@@ -77,6 +80,8 @@ impl ControllerEmulator {
             command_deadline_ms: None,
             last_command_sequence: None,
             acknowledgement_sequence: 0,
+            heartbeat_sequence: 0,
+            next_heartbeat_ms: None,
             mode: ControllerMode::LocalFallback,
         }
     }
@@ -127,8 +132,11 @@ impl ControllerEmulator {
                         generation: message.configuration_generation,
                         digest_prefix: message.digest_prefix,
                         command_lease_ms: message.command_lease_ms,
+                        heartbeat_period_ms: message.heartbeat_period_ms,
                         fallback_basis_points: message.fallback_basis_points,
                     });
+                    self.next_heartbeat_ms =
+                        Some(now_ms.saturating_add(u64::from(message.heartbeat_period_ms)));
                     self.accepted_basis_points = message.fallback_basis_points;
                 }
 
@@ -246,6 +254,46 @@ impl ControllerEmulator {
         Ok(response)
     }
 
+    /// Emits the configured periodic controller truth when its local deadline
+    /// has elapsed. Callers drive this from their own monotonic timer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WireError`] if the fixed heartbeat cannot be encoded.
+    pub fn heartbeat(&mut self, now_ms: u64) -> Result<Option<EmulatorResponse>, WireError> {
+        self.advance_to(now_ms);
+        let Some(configuration) = self.configuration else {
+            return Ok(None);
+        };
+        if self
+            .next_heartbeat_ms
+            .is_none_or(|deadline| now_ms < deadline)
+        {
+            return Ok(None);
+        }
+
+        self.heartbeat_sequence = self.heartbeat_sequence.wrapping_add(1);
+        self.next_heartbeat_ms =
+            Some(now_ms.saturating_add(u64::from(configuration.heartbeat_period_ms)));
+        encode_response(&Frame::Heartbeat {
+            node: self.provisioning.node,
+            message: Heartbeat {
+                boot_session: self.provisioning.boot_session,
+                configuration_generation: configuration.generation,
+                capability_generation: self.provisioning.capability_generation,
+                heartbeat_sequence: self.heartbeat_sequence,
+                current_epoch: self.runtime_lease.map_or(0, |lease| lease.epoch),
+                last_command_sequence: self.last_command_sequence.unwrap_or(0),
+                accepted_basis_points: self.accepted_basis_points,
+                state_flags: match self.mode {
+                    ControllerMode::LocalFallback => 1,
+                    ControllerMode::RemoteAuthority => 2,
+                },
+            },
+        })
+        .map(Some)
+    }
+
     pub fn advance_to(&mut self, now_ms: u64) {
         if self.runtime_lease.is_some() && !self.runtime_lease_valid(now_ms) {
             self.runtime_lease = None;
@@ -265,6 +313,7 @@ impl ControllerEmulator {
         self.runtime_lease = None;
         self.command_deadline_ms = None;
         self.last_command_sequence = None;
+        self.next_heartbeat_ms = None;
         self.select_fallback();
     }
 

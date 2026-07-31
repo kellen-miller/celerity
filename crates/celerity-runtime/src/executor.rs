@@ -391,6 +391,9 @@ impl ExecutorState {
                         .last_command
                         .is_some_and(|(sequence, _, _)| sequence == command_sequence);
                 if valid {
+                    if let Some(controller) = &mut self.controller {
+                        controller.monotonic_ms = monotonic_ms;
+                    }
                     if self
                         .last_command
                         .is_some_and(|(_, _, source)| source == CommandSource::ModelOptimized)

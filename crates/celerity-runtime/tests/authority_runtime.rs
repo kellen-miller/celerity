@@ -224,6 +224,34 @@ fn stale_command_acknowledgement_stops_lease_renewal() {
 }
 
 #[test]
+fn accepted_command_acknowledgement_refreshes_controller_truth() {
+    let mut events = healthy_events();
+    events.extend([
+        RuntimeEvent::InputSnapshot {
+            monotonic_ms: 42,
+            coolant_c: 95.0,
+            iat_c: 50.0,
+        },
+        RuntimeEvent::CommandAcknowledged {
+            monotonic_ms: 43,
+            boot_session: 7,
+            command_sequence: 2,
+            accepted: true,
+        },
+        RuntimeEvent::Cycle {
+            monotonic_ms: 44,
+            remaining_cycle_ns: 20_000_000,
+        },
+    ]);
+    let outcome = Runtime::new(bundle(), ExternalAdapters::simulation(events))
+        .expect("matching composition")
+        .run();
+
+    assert_eq!(outcome.final_feature_authority, FeatureAuthority::Active);
+    assert_eq!(outcome.accepted_basis_points, Some(5_000));
+}
+
+#[test]
 fn experiment_waits_for_authority_and_rejection_aborts_once() {
     let events = vec![
         RuntimeEvent::InputSnapshot {

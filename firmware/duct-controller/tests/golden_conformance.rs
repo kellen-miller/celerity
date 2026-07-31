@@ -57,6 +57,7 @@ fn firmware_native_state_consumes_shared_raw_vectors() {
         direction: configuration.direction,
         runtime_lease_ms: configuration.runtime_lease_ms,
         command_lease_ms: configuration.command_lease_ms,
+        heartbeat_period_ms: configuration.heartbeat_period_ms,
     }));
     let lease = lease.expect("Runtime Lease vector");
     assert!(state.accept_runtime_lease(

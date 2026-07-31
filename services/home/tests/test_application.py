@@ -203,7 +203,9 @@ def test_job_admits_only_complete_runs_and_survives_as_durable_subprocess(
     while time.monotonic() < deadline and job["state"] != "completed":
         time.sleep(0.05)
         job = client.get(f"/v1/jobs/{job_id}", headers=AUTHORIZATION).json()
-    assert job["state"] == "completed"
+    assert job["state"] == "completed", (
+        f"{job}\n{Path(job['stderr_path']).read_text(encoding='utf-8')}"
+    )
     assert job["pid"] > 0
     assert Path(job["stdout_path"]).exists()
     assert Path(job["stderr_path"]).exists()
@@ -406,5 +408,7 @@ def test_restart_recovers_an_orphaned_durable_job(tmp_path: Path, home_client: T
         while time.monotonic() < deadline and job["state"] != "completed":
             time.sleep(0.05)
             job = restarted.get("/v1/jobs/recover-me", headers=AUTHORIZATION).json()
-        assert job["state"] == "completed"
+        assert job["state"] == "completed", (
+            f"{job}\n{Path(job['stderr_path']).read_text(encoding='utf-8')}"
+        )
         assert job["pid"] > 0

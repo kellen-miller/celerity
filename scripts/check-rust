@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+portable=false
+if [[ "${1:-}" == "--portable" ]]; then
+  portable=true
+elif [[ $# -ne 0 ]]; then
+  echo "usage: $0 [--portable]" >&2
+  exit 2
+fi
+
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --workspace
+
+if [[ "$portable" == false ]] || command -v aarch64-linux-gnu-gcc >/dev/null; then
+  cargo build --release --target aarch64-unknown-linux-gnu \
+    -p celerity -p celerity-sync
+else
+  echo "skipping ARM64 link: aarch64-linux-gnu-gcc is unavailable"
+fi
+
+cargo build --release --target thumbv7em-none-eabihf -p duct-controller

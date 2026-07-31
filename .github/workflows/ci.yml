@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  portable:
+    strategy:
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: ./scripts/check-rust --portable
+      - run: ./scripts/check-python
+      - run: ./scripts/check-e2e
+      - run: ./scripts/check-site
+      - run: ./scripts/check-artifacts
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross linker and vcan
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc-aarch64-linux-gnu
+          sudo modprobe vcan
+          sudo ip link add dev vcan-powertrain type vcan
+          sudo ip link add dev vcan-controller type vcan
+          sudo ip link set up vcan-powertrain
+          sudo ip link set up vcan-controller
+      - run: ./scripts/check-linux

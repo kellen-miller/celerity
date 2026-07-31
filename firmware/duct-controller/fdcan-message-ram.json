@@ -1,0 +1,21 @@
+{
+  "device": "STM32G431KB",
+  "source": "RM0440 FDCAN MessageRAM 0x4000ac00..0x4000afff; AN5348 Rev 6 section 4.2",
+  "g431_allocation_words": 256,
+  "standard_filters": [
+    "DiscoveryProbe 0x080",
+    "Command 0x101",
+    "RuntimeLease 0x181",
+    "FallbackRequest 0x241",
+    "Configuration 0x2c1"
+  ],
+  "sections": [
+    { "name": "standard_filters", "offset_words": 0, "elements": 5, "payload_bytes": 0, "words_per_element": 1 },
+    { "name": "rx_fifo_0", "offset_words": 5, "elements": 8, "payload_bytes": 32, "words_per_element": 10 },
+    { "name": "dedicated_rx_buffers", "offset_words": 85, "elements": 0, "payload_bytes": 32, "words_per_element": 10 },
+    { "name": "tx_event_fifo", "offset_words": 85, "elements": 8, "payload_bytes": 0, "words_per_element": 2 },
+    { "name": "tx_fifo", "offset_words": 101, "elements": 8, "payload_bytes": 32, "words_per_element": 10 }
+  ],
+  "allocated_words": 181,
+  "spare_words": 75
+}

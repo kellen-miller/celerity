@@ -1,0 +1,16 @@
+schema_version = 1
+name = "synthetic-duct-sweep"
+maximum_duration_ms = 3000
+maximum_coolant_c = 110
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 3000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 5000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 7000

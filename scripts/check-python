@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+uv sync --project services/home --locked
+uv run --project services/home ruff format --check
+uv run --project services/home ruff check
+uv run --project services/home pytest

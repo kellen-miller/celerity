@@ -1,0 +1,21 @@
+[Unit]
+Description=Celerity authority-free home synchronization
+After=local-fs.target network.target
+RequiresMountsFor=/var/lib/celerity
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/celerity-sync /etc/celerity/celerity.toml
+Environment=CELERITY_HOME_TOKEN_PATH=/etc/celerity/home-token
+StateDirectory=celerity
+TimeoutStopSec=5s
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/celerity
+
+[Install]
+WantedBy=multi-user.target

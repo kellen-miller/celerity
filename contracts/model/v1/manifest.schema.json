@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://celerity.dev/contracts/model/v1/manifest.schema.json",
+  "title": "Celerity model bundle manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "onnx_sha256",
+    "signal_order",
+    "units",
+    "sample_period_ms",
+    "history_length",
+    "horizons",
+    "output_order",
+    "command_lattice",
+    "compatibility"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "onnx_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "signal_order": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "units": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "sample_period_ms": { "type": "integer", "minimum": 1 },
+    "history_length": { "type": "integer", "minimum": 1 },
+    "horizons": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+    "output_order": { "type": "array", "items": { "enum": ["coolant", "post_intercooler_iat"] } },
+    "command_lattice": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 10000 } },
+    "compatibility": { "type": "object" }
+  }
+}

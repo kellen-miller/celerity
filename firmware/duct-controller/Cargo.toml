@@ -1,0 +1,33 @@
+[package]
+name = "duct-controller"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+celerity-protocol = { path = "../../crates/celerity-protocol" }
+
+[target.'cfg(target_arch = "arm")'.dependencies]
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.6"
+embassy-executor = "0.10.0"
+embassy-stm32 = { version = "0.6.0", features = ["executor-thread", "stm32g431kb", "memory-x", "time-driver-any"] }
+embassy-time = "0.5.1"
+embedded-can = "0.4.1"
+panic-halt = "1.0.0"
+
+[dev-dependencies]
+hex = "0.4.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "duct-controller"
+path = "src/main.rs"
+
+[lints]
+workspace = true

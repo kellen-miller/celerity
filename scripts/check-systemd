@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$(uname -s)" != "Linux" ]]; then
+  echo "check-systemd requires Linux" >&2
+  exit 2
+fi
+if ! command -v systemctl >/dev/null || ! systemctl show-environment >/dev/null; then
+  echo "host systemd is unavailable" >&2
+  exit 1
+fi
+sudo -n true
+
+unit_root=/run/systemd/system
+config_root=/etc/celerity
+runtime_binary=/usr/local/bin/celerityd
+sync_binary=/usr/local/bin/celerity-sync
+
+cleanup() {
+  sudo systemctl stop celerityd.service celerity-sync.service >/dev/null 2>&1 || true
+  sudo rm -f "$unit_root/celerityd.service" "$unit_root/celerity-sync.service"
+  sudo rm -f "$runtime_binary" "$sync_binary" "$config_root/celerity.toml" "$config_root/home-token"
+  sudo rmdir "$config_root" >/dev/null 2>&1 || true
+  sudo systemctl daemon-reload
+}
+trap cleanup EXIT
+
+cargo build --release -p celerity -p celerity-sync
+sudo install -m 0755 target/release/celerityd "$runtime_binary"
+sudo install -m 0755 target/release/celerity-sync "$sync_binary"
+sudo install -d -m 0755 "$config_root"
+sudo install -m 0644 config/examples/simulation.toml "$config_root/celerity.toml"
+sudo install -m 0600 /dev/null "$config_root/home-token"
+sudo install -m 0644 deploy/systemd/celerityd.service "$unit_root/celerityd.service"
+sudo install -m 0644 deploy/systemd/celerity-sync.service "$unit_root/celerity-sync.service"
+systemd-analyze verify deploy/systemd/celerityd.service deploy/systemd/celerity-sync.service
+sudo systemctl daemon-reload
+
+sudo systemctl start celerityd.service celerity-sync.service
+sudo systemctl is-active --quiet celerityd.service
+sudo systemctl is-active --quiet celerity-sync.service
+sleep 3
+sudo systemctl is-active --quiet celerityd.service
+
+main_pid=$(sudo systemctl show celerityd.service --property MainPID --value)
+restart_count=$(sudo systemctl show celerityd.service --property NRestarts --value)
+sudo kill -KILL "$main_pid"
+for _ in {1..30}; do
+  current_count=$(sudo systemctl show celerityd.service --property NRestarts --value)
+  if (( current_count > restart_count )); then
+    break
+  fi
+  sleep 0.2
+done
+sudo systemctl is-active --quiet celerityd.service
+sudo systemctl status celerityd.service --no-pager | grep -F "controller-local fallback"
+
+start_ns=$(date +%s%N)
+sudo systemctl stop celerityd.service
+end_ns=$(date +%s%N)
+if (( end_ns - start_ns > 3000000000 )); then
+  echo "celerityd exceeded bounded stop deadline" >&2
+  exit 1
+fi

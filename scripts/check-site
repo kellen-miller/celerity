@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+npm --prefix site ci
+npm --prefix site run format:check
+npm --prefix site run lint
+npm --prefix site run check
+npm --prefix site run test
+npm --prefix site run build

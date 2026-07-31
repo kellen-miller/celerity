@@ -1,0 +1,31 @@
+use std::process::Command;
+
+use serde_json::Value;
+
+#[test]
+fn sync_has_no_authority_or_can_dependency_path() {
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .output()
+        .expect("cargo metadata");
+    assert!(output.status.success());
+    let metadata: Value = serde_json::from_slice(&output.stdout).expect("metadata JSON");
+    let package = metadata["packages"]
+        .as_array()
+        .expect("packages")
+        .iter()
+        .find(|package| package["name"] == "celerity-sync")
+        .expect("celerity-sync package");
+    let forbidden = [
+        "celerity-runtime",
+        "celerity-protocol",
+        "socketcan",
+        "tokio-socketcan",
+    ];
+    for dependency in package["dependencies"].as_array().expect("dependencies") {
+        assert!(
+            !forbidden.contains(&dependency["name"].as_str().expect("dependency name")),
+            "sync dependency crosses the authority boundary: {dependency}"
+        );
+    }
+}

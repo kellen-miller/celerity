@@ -1,0 +1,42 @@
+schema_version = 1
+generation = 1
+mode = "simulation"
+
+[runtime]
+cycle_ms = 20
+
+[powertrain]
+decoder_generation = 1
+
+[controllers.duct]
+address = 1
+identity = 1
+
+[duct]
+radiator_split_minimum = 0.1
+radiator_split_maximum = 0.9
+coolant_breakpoints_c = [80.0, 95.0, 105.0]
+iat_breakpoints_c = [30.0, 50.0, 70.0]
+policy_basis_points = [[1000, 2000, 3000], [4000, 5000, 6000], [7000, 8000, 9000]]
+
+[model]
+required = false
+
+[run_storage]
+root = ".tmp/runs"
+minimum_free_bytes = 1048576
+
+[diagnostics]
+socket = ".tmp/celerityd.sock"
+
+[sync]
+spool_root = ".tmp/runs"
+retention_count = 2
+home_interface = "home0"
+expected_default_gateway = "192.0.2.1"
+home_api_url = "https://home.invalid"
+credential_path = ".tmp/home-token"
+
+[composition]
+kind = "simulation"
+scenario = "fixtures/scenarios/healthy-startup.toml"

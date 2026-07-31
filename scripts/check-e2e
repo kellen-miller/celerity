@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cargo test -p celerity-sync --test end_to_end -- --ignored --nocapture
+cargo test -p celerity-runtime --test model_slots
+uv run --project services/home pytest services/home/tests/test_application.py

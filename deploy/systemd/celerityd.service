@@ -1,0 +1,26 @@
+[Unit]
+Description=Celerity vehicle control runtime
+After=local-fs.target
+RequiresMountsFor=/var/lib/celerity
+StartLimitIntervalSec=30
+StartLimitBurst=3
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=/usr/local/bin/celerityd /etc/celerity/celerity.toml
+Environment=CELERITY_DIAGNOSTICS_SOCKET=/run/celerity/diagnostics.sock
+RuntimeDirectory=celerity
+StateDirectory=celerity
+WatchdogSec=2s
+TimeoutStopSec=3s
+Restart=on-failure
+RestartSec=1s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/celerity
+
+[Install]
+WantedBy=multi-user.target

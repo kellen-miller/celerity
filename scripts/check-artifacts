@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+artifact_root="$(mktemp -d)"
+trap 'rm -rf "$artifact_root"' EXIT
+
+cargo run --quiet -p celerity-protocol --features std \
+  --bin write-golden-vectors -- "$artifact_root/controller"
+uv run --project services/home python -m celerity_home.export_fixture \
+  --output "$artifact_root/model"
+
+cmp contracts/golden/controller-can-v1/vectors.json "$artifact_root/controller/vectors.json"
+cmp contracts/golden/model-v1/identity.onnx "$artifact_root/model/identity.onnx"
+kubectl kustomize deploy/kubernetes >"$artifact_root/home.yaml"
+test -s "$artifact_root/home.yaml"

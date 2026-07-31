@@ -1,0 +1,24 @@
+[workspace]
+members = [
+  "crates/celerity",
+  "crates/celerity-protocol",
+  "crates/celerity-runtime",
+  "crates/celerity-sync",
+  "firmware/duct-controller",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+rust-version = "1.97"
+version = "0.1.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+needless_pass_by_value = "allow"
+too_many_lines = "allow"

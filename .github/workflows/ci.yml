@@ -17,10 +17,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with:
           cache-on-failure: true
-          key: portable
+          cache-key: portable
+          rustflags: ""
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
@@ -31,6 +32,9 @@ jobs:
           node-version: 26
           cache: npm
           cache-dependency-path: site/package-lock.json
+      - uses: Azure/setup-kubectl@v5.1.0
+        with:
+          version: v1.36.3
       - name: Set up virtual CAN on Linux
         if: runner.os == 'Linux'
         run: |
@@ -51,10 +55,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with:
           cache-on-failure: true
-          key: linux-full
+          cache-key: linux-full
+          rustflags: ""
       - name: Install cross linker and vcan
         run: |
           sudo apt-get update

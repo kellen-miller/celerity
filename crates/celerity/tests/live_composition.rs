@@ -127,9 +127,12 @@ fn write_fd(socket: &CanFdSocket, can_id: u16, payload: &[u8]) {
     socket.write_frame(&frame).expect("controller transmit");
 }
 
-fn send_powertrain_temperature(coolant_c: f64, iat_c: f64) {
+fn send_powertrain_temperature(coolant_c: i16, iat_c: i16) {
     let socket = CanSocket::open("vcan-powertrain").expect("powertrain vcan");
-    let raw = |temperature_c: f64| ((temperature_c + 273.1) * 10.0).round() as u16;
+    let raw = |temperature_c: i16| {
+        u16::try_from(i32::from(temperature_c) * 10 + 2_731)
+            .expect("test temperature must fit the Haltech encoding")
+    };
     let coolant = raw(coolant_c).to_be_bytes();
     let iat = raw(iat_c).to_be_bytes();
     let payload = [coolant[0], coolant[1], iat[0], iat[1], 0, 0, 0, 0];

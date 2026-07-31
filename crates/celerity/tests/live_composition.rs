@@ -53,7 +53,7 @@ fn live_kernel_sockets_drive_model_command_and_seal_run() {
     )
     .expect("production loop must bind vcan");
     for _ in 0..4 {
-        send_powertrain_temperature(100.0, 40.0);
+        send_powertrain_temperature(100, 40);
         runtime.run_cycle().expect("bounded live cycle");
     }
 

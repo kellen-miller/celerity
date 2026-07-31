@@ -21,7 +21,7 @@ The repository is greenfield. The main complexity risk is therefore not legacy c
 - [x] (2026-07-31 19:53Z) Implemented PyTorch TCN export/evaluation, ONNX/`tract` parity, Rust optimizer/model eligibility, and startup-only two-slot lifecycle.
 - [x] (2026-07-31 20:04Z) Implemented authority-isolated sync, durable transfer journal, exact acknowledgement/retention, authenticated home API/job lifecycle, model staging, exceptional lifecycle notifications, and webhook-failure independence.
 - [x] (2026-07-31 19:13Z) Added the one-replica PVC Helm deployment, public accessible SvelteKit walkthrough, operator/deployment/configuration docs, and explicit physical evidence checklist.
-- [ ] Portable validation and macOS browser evidence are recorded and green. The pinned `ubuntu-24.04` job still owns the Linux-only ARM64 link, vCAN, and systemd execution evidence before this item can close.
+- [x] (2026-07-31 20:58Z) PR #17 head `87d5d49` passed GitHub Actions run `30664026585`: Linux including ARM64 link/vCAN/systemd in 12m28s, macOS portable in 5m36s, and Ubuntu portable in 5m21s. Implementation is complete and ready for closeout.
 
 ## Surprises & Discoveries
 
@@ -43,8 +43,8 @@ low: 0
   Evidence: `git show feat/controller-conformance-prototype:prototypes/controller-conformance/README.md` labels it throwaway and names those unresolved items.
 - Observation: Older research contains superseded choices: Nano/MCP251863, production ARX, `radiator_air_fraction`, shadow/human promotion, and vehicle software A/B.
   Evidence: the completed Wayfinder resolution and `decision.md` select STM32G431, TCN/ONNX/`tract`, `radiator_split_command`, automatic startup-only activation with no shadow, and model-only A/B.
-- Observation: The macOS implementation host has no host systemd or ARM64 GNU linker, so exact service lifecycle, `vcan`, and ARM64 link claims remain owned by the pinned Ubuntu CI job rather than being simulated locally.
-  Evidence: `scripts/check-rust --portable` reports the explicit ARM64 skip and `scripts/check-linux` rejects non-Linux hosts; `scripts/check-systemd` requires host systemd.
+- Observation: The macOS implementation host has no host systemd or ARM64 GNU linker, so local validation correctly omitted exact service lifecycle, `vcan`, and ARM64 link claims; the pinned Ubuntu CI job supplied that evidence.
+  Evidence: PR #17 head `87d5d49`, GitHub Actions run `30664026585`, passed the full Linux job in 12m28s after the portable macOS and Ubuntu surfaces also passed.
 - Observation: Current FastAPI/Starlette emits a deprecation warning for its compatibility `TestClient`; it does not affect the eleven passing Python tests and is upstream of this application.
   Evidence: `./scripts/check-python` passes with the warning originating from the installed `fastapi/testclient.py` compatibility import.
 
@@ -65,10 +65,15 @@ low: 0
 - Decision: Do not introduce an interface solely for a fake predictor or in-memory Run repository.
   Rationale: Real ONNX fixtures and real temporary files exercise the production seams with less indirection and prevent tests from drifting into an alternate system.
   Date/Author: 2026-07-31 / planning agent.
+- Decision: Package the home application as a split-template Helm chart and source its token and webhook URL through one ExternalSecret backed by an existing 1Password `ClusterSecretStore`.
+  Rationale: Celerity retains ownership of its workload resources while infrastructure supplies environment-specific values and secret-store identity without static Kubernetes Secrets in this repository.
+  Date/Author: 2026-07-31 / implementation agent.
 
 ## Outcomes & Retrospective
 
-Planning is complete when this document is accepted. During implementation, summarize each non-stopping dependency milestone here with observable results and remaining risk. At final completion, compare the working hardware-free system against the purpose above and list only the physical evidence still external.
+The hardware-free implementation is complete at PR #17 head `87d5d49`. The repository now exercises the controller protocol and firmware state machine, single-writer runtime and fault behavior, immutable Run/replay lifecycle, production ONNX/`tract` model path, authority-isolated synchronization, authenticated home training and model lifecycle, bounded exceptional notifications, startup-only two-slot activation, systemd/vCAN/ARM64 Linux integration, and the public architecture walkthrough. GitHub Actions run `30664026585` passed Linux in 12m28s, macOS portable in 5m36s, and Ubuntu portable in 5m21s.
+
+The home deployment is a versioned Helm chart with separate Deployment, Service, PVC, ConfigMap, and ExternalSecret templates. Its required store value references a pre-existing External Secrets Operator 1Password `ClusterSecretStore`; no static Kubernetes Secret is rendered. Chart lint, render, and package checks pass, but cluster installation remains a deployment action rather than simulated evidence. The remaining acceptance work is the explicitly external physical/HIL matrix: installed-bus decoding and fail-silence, electrical and target timing, servo/mechanism calibration, thermal/model envelope proof, and road/track validation.
 
 ## Context and Orientation
 
@@ -194,7 +199,7 @@ Implement `celerity-sync` with Linux home-network detection, periodic recovery r
 
 Implement the home FastAPI application using `uv`, Uvicorn, stdlib SQLite, filesystem/PVC storage, PyTorch/ONNX training dependencies, and explicit startup migrations. Authenticate every vehicle request with one manually rotatable token. Validate chunks and manifests before admitting Runs. Exclude incomplete/corrupt/nonmonotonic Runs; exclude bad windows with machine reasons. Build whole-Run splits and preserved evaluation suites, compare candidate to active, and automatically stage only a compatible passing artifact. No eligible data or no better candidate is a successful no-change job.
 
-Implement one configured HTTPS webhook and durable events for training failure, candidate rejection, demotion, and rollback. Retries are bounded and best-effort. Tests prove a permanently failing webhook leaves model/job outcomes unchanged. Add Kubernetes Deployment `replicas: 1`, PVC, Service, probes, resource bounds, security context, and Secret/ConfigMap references; do not add a queue, object store, PostgreSQL, model microservice, or simulated cluster.
+Implement one configured HTTPS webhook and durable events for training failure, candidate rejection, demotion, and rollback. Retries are bounded and best-effort. Tests prove a permanently failing webhook leaves model/job outcomes unchanged. Add a split-template Helm chart for the single-replica Deployment, PVC, Service, ConfigMap, probes, resource bounds, and security context. Render one ExternalSecret for the vehicle token and webhook URL; require an infrastructure-supplied name for the existing 1Password `ClusterSecretStore`. Do not render static Secret values or add a queue, object store, PostgreSQL, model microservice, or simulated cluster.
 
 Exercise a complete local loop with tiny fixtures: seal Run, detect home, upload/resume/acknowledge, derive/train/evaluate, stage/download, restart runtime, activate candidate, reject corruption, and select known-good at a later startup. Use the production HTTP client/server and temporary filesystem/SQLite state.
 

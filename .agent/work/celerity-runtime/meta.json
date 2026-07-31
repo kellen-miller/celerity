@@ -2,9 +2,9 @@
   "id": "celerity-runtime",
   "title": "Build the Celerity vehicle control runtime",
   "stage": "implementation",
-  "state": "active",
+  "state": "completed",
   "created_at": "2026-07-31T17:45:15Z",
-  "updated_at": "2026-07-31T20:04:39Z",
+  "updated_at": "2026-07-31T20:58:04Z",
   "wayfinder_map_title": "Design the Celerity vehicle control runtime",
   "wayfinder_map_url": "https://github.com/kellen-miller/celerity/issues/1",
   "wayfinder_state": "completed",
@@ -123,7 +123,18 @@
       "actual_model": "gpt-5.6-sol",
       "actual_reasoning_effort": "medium",
       "unavailable_capability_fallback": "none",
-      "started_at": "2026-07-31T18:24:13Z"
+      "started_at": "2026-07-31T18:24:13Z",
+      "completed_at": "2026-07-31T20:58:04Z",
+      "status": "ready_for_closeout",
+      "pull_request": 17,
+      "head_commit": "87d5d49",
+      "ci": {
+        "workflow_run_id": 30664026585,
+        "status": "passed",
+        "linux_duration": "12m28s",
+        "macos_portable_duration": "5m36s",
+        "ubuntu_portable_duration": "5m21s"
+      }
     }
   }
 }

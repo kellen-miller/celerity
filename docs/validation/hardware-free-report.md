@@ -3,6 +3,8 @@
 Date: 2026-07-31
 Base commit: `a993404`
 Branch: `feat/celerity-runtime`
+Validated PR/head: #17 / `87d5d49`
+GitHub Actions run: `30664026585`
 Configuration fixtures: `config/examples/simulation.toml`, `config/examples/replay.toml`
 Contract schemas: controller CAN v1, Run v1, home v1, model bundle v1
 
@@ -62,12 +64,27 @@ These commands execute 48 portable Rust tests, the production HTTP exercise,
 eleven Python tests, two site tests, artifact byte-stability checks, the G431
 release link, and the static site build. The ARM64 cross-link and
 `./scripts/check-linux` were not executed locally because the macOS host lacks
-the Linux linker, `vcan`, and host systemd. The pinned `ubuntu-24.04` CI job owns
-the ARM64 link, real vCAN receive-only application test, exact systemd unit
-verification/install/readiness/watchdog/bounded-stop/SIGKILL-restart lifecycle,
-and cleanup claims. The Helm chart lints and renders locally but was not
-installed in a cluster. The site build reports three low-severity npm dependency
-advisories; the checked formatter, linter, type checker, tests, and build pass.
+the Linux linker, `vcan`, and host systemd. The site build reports three
+low-severity npm dependency advisories; the checked formatter, linter, type
+checker, tests, and build pass.
+
+## Executed in GitHub Actions
+
+PR #17 head `87d5d49` passed run `30664026585` in all three jobs:
+
+- Linux completed in 12m28s, including the actual ARM64 GNU link, production
+  vCAN receive-only/interface-separation test, exact systemd unit verification,
+  readiness/watchdog/bounded-stop/SIGKILL-restart lifecycle, and trap cleanup.
+- macOS portable completed in 5m36s.
+- Ubuntu portable completed in 5m21s.
+
+Both portable jobs also linted, rendered, and packaged
+`deploy/helm/celerity-home`. The chart owns separate Deployment, Service, PVC,
+ConfigMap, and ExternalSecret templates. The ExternalSecret requires an
+infrastructure-supplied name for a pre-existing External Secrets Operator
+1Password `ClusterSecretStore` and materializes only the vehicle token and HTTPS
+webhook URL. No static Kubernetes Secret is rendered. The chart was not
+installed in a cluster, so no cluster rollout claim is made.
 
 ## Explicitly unclaimed
 

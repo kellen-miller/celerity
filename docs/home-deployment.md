@@ -7,22 +7,26 @@ security, liveness and readiness probes, a PVC, ConfigMap reference, and Secret
 reference. It does not add a queue, object store, PostgreSQL, or model
 microservice.
 
-Before rendering, replace the image placeholder with an immutable release
-digest, create the manually rotatable vehicle token, and configure the single
-HTTPS lifecycle webhook:
+The chart is also the upstream package for an infrastructure-owned proxy chart.
+That proxy declares `celerity-home` as a versioned dependency and places its
+environment-specific overrides under the `celerity-home:` values key; Celerity
+continues to own the Deployment, Service, PVC, ConfigMap, and ExternalSecret
+templates.
+
+The cluster must already provide External Secrets Operator and a 1Password SDK
+`ClusterSecretStore`. The selected 1Password item has `vehicle-token` and
+`webhook-url` properties by default. The infrastructure proxy supplies its
+store name and may override the item and property names.
+
+Before installation, replace the image placeholder with an immutable release
+digest and select the existing `ClusterSecretStore`:
 
 ```sh
-kubectl create namespace celerity --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n celerity create secret generic celerity-home-vehicle-token \
-  --from-literal=token='<random token>' \
-  --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n celerity create secret generic celerity-home-webhook \
-  --from-literal=url='https://alerts.example.invalid/celerity' \
-  --dry-run=client -o yaml | kubectl apply -f -
 helm upgrade --install celerity-home deploy/helm/celerity-home \
   --namespace celerity \
   --create-namespace \
-  --set-string image.digest='sha256:<release digest>'
+  --set-string image.digest='sha256:<release digest>' \
+  --set-string externalSecrets.secretStoreName='<onepassword store>'
 kubectl -n celerity rollout status deployment/celerity-home
 ```
 

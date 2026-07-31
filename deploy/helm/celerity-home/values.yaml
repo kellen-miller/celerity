@@ -9,9 +9,12 @@ persistence:
   size: 20Gi
   storageClassName: ""
 
-secrets:
-  vehicleToken: celerity-home-vehicle-token
-  webhook: celerity-home-webhook
+externalSecrets:
+  secretStoreName: ""
+  refreshInterval: 1h
+  itemName: celerity-home
+  vehicleTokenProperty: vehicle-token
+  webhookUrlProperty: webhook-url
 
 resources:
   requests:

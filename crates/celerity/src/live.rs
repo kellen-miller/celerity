@@ -41,6 +41,11 @@ pub struct LiveRuntime {
     last_sent_command: Option<(u32, u16, CommandSource)>,
 }
 
+struct LiveCanBoundaries {
+    powertrain: PowertrainCanReceiver,
+    actuator: ActuatorCanTransport,
+}
+
 impl LiveRuntime {
     /// Opens the strictly qualified physical live composition. This is the
     /// only constructor used by `celerityd` for authority.
@@ -63,8 +68,10 @@ impl LiveRuntime {
         let (powertrain_interface, actuator_interface) = bundle
             .live_interfaces()
             .ok_or_else(|| "live interfaces are absent".to_owned())?;
-        let powertrain = PowertrainCanReceiver::open(powertrain_interface, actuator_interface)?;
-        let actuator = ActuatorCanTransport::open(actuator_interface, powertrain_interface)?;
+        let boundaries = LiveCanBoundaries {
+            powertrain: PowertrainCanReceiver::open(powertrain_interface, actuator_interface)?,
+            actuator: ActuatorCanTransport::open(actuator_interface, powertrain_interface)?,
+        };
         Self::from_boundaries(
             bundle,
             model,
@@ -72,8 +79,7 @@ impl LiveRuntime {
             epoch,
             run_id,
             diagnostics,
-            powertrain,
-            actuator,
+            boundaries,
         )
     }
 
@@ -102,8 +108,10 @@ impl LiveRuntime {
         if !powertrain_interface.starts_with("vcan-") || !actuator_interface.starts_with("vcan-") {
             return Err("hardware-free composition requires explicit vcan-* interfaces".to_owned());
         }
-        let powertrain = PowertrainCanReceiver::bind_prequalified(powertrain_interface)?;
-        let actuator = ActuatorCanTransport::bind_prequalified(actuator_interface)?;
+        let boundaries = LiveCanBoundaries {
+            powertrain: PowertrainCanReceiver::bind_prequalified(powertrain_interface)?,
+            actuator: ActuatorCanTransport::bind_prequalified(actuator_interface)?,
+        };
         Self::from_boundaries(
             bundle,
             model,
@@ -111,8 +119,7 @@ impl LiveRuntime {
             epoch,
             run_id,
             diagnostics,
-            powertrain,
-            actuator,
+            boundaries,
         )
     }
 
@@ -123,8 +130,7 @@ impl LiveRuntime {
         epoch: u64,
         run_id: &str,
         diagnostics: Arc<RwLock<DiagnosticsSnapshot>>,
-        powertrain: PowertrainCanReceiver,
-        actuator: ActuatorCanTransport,
+        boundaries: LiveCanBoundaries,
     ) -> Result<Self, String> {
         if epoch == 0 {
             return Err("runtime epoch zero is reserved".to_owned());
@@ -155,8 +161,8 @@ impl LiveRuntime {
         let mut runtime = Self {
             bundle,
             controller,
-            powertrain,
-            actuator,
+            powertrain: boundaries.powertrain,
+            actuator: boundaries.actuator,
             session,
             writer: Some(writer),
             diagnostics,
@@ -241,7 +247,7 @@ impl LiveRuntime {
             )
         };
         if powertrain_ready {
-            self.receive_powertrain()?;
+            self.receive_powertrain();
         }
         if actuator_ready {
             self.receive_controller()?;
@@ -249,12 +255,12 @@ impl LiveRuntime {
         Ok(powertrain_ready || actuator_ready)
     }
 
-    fn receive_powertrain(&mut self) -> Result<(), String> {
+    fn receive_powertrain(&mut self) {
         let received = match self.powertrain.receive() {
             Ok(received) => received,
             Err(error) => {
                 self.record("powertrain_can_rejected", &error);
-                return Ok(());
+                return;
             }
         };
         self.record(
@@ -283,14 +289,14 @@ impl LiveRuntime {
             Ok(can_id) => can_id,
             Err(error) => {
                 self.record("powertrain_can_rejected", &error.to_string());
-                return Ok(());
+                return;
             }
         };
         let decoded = match decode_powertrain_frame(can_id, &received.data, None) {
             Ok(decoded) => decoded,
             Err(error) => {
                 self.record("powertrain_can_rejected", &format!("{error:?}"));
-                return Ok(());
+                return;
             }
         };
         let observed_ms = self.monotonic_ms();
@@ -300,7 +306,6 @@ impl LiveRuntime {
                 (signal.value, observed_ms, raw_sequence),
             );
         }
-        Ok(())
     }
 
     fn ingest_safety_snapshot(&mut self) -> Result<(), String> {
@@ -716,27 +721,27 @@ impl LiveRuntime {
             .diagnostics
             .write()
             .map_err(|error| error.to_string())?;
-        snapshot.global_authority = if outcome.hard_fault_latched {
+        let global_authority = if outcome.hard_fault_latched {
             "hard_fault"
         } else if outcome.final_feature_authority == FeatureAuthority::Active {
             "active"
         } else {
             "fallback"
-        }
-        .to_owned();
-        snapshot.feature_authority = match outcome.final_feature_authority {
+        };
+        global_authority.clone_into(&mut snapshot.global_authority);
+        let feature_authority = match outcome.final_feature_authority {
             FeatureAuthority::Fallback => "fallback",
             FeatureAuthority::Arming => "arming",
             FeatureAuthority::Active => "active",
-        }
-        .to_owned();
-        snapshot.command_source = match outcome.command_source {
+        };
+        feature_authority.clone_into(&mut snapshot.feature_authority);
+        let command_source = match outcome.command_source {
             CommandSource::ControllerLocalFallback => "controller_local_fallback",
             CommandSource::Deterministic => "deterministic",
             CommandSource::ModelOptimized => "model_optimized",
             CommandSource::Experiment => "experiment",
-        }
-        .to_owned();
+        };
+        command_source.clone_into(&mut snapshot.command_source);
         snapshot.lease_renewal = outcome.final_feature_authority != FeatureAuthority::Fallback;
         Ok(())
     }

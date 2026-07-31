@@ -11,17 +11,36 @@ permissions:
 jobs:
   portable:
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-15, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: portable
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          cache-dependency-glob: services/home/uv.lock
+          cache-suffix: ${{ matrix.os }}
+      - uses: actions/setup-node@v6
         with:
           node-version: 26
           cache: npm
           cache-dependency-path: site/package-lock.json
+      - name: Set up virtual CAN on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes "linux-modules-extra-$(uname -r)"
+          sudo modprobe vcan
+          sudo ip link add dev vcan-powertrain type vcan
+          sudo ip link add dev vcan-controller type vcan
+          sudo ip link set up vcan-powertrain
+          sudo ip link set up vcan-controller
       - run: ./scripts/check-rust --portable
       - run: ./scripts/check-python
       - run: ./scripts/check-e2e
@@ -31,7 +50,11 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: linux-full
       - name: Install cross linker and vcan
         run: |
           sudo apt-get update

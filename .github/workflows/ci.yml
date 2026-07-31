@@ -35,7 +35,7 @@ jobs:
       - name: Install cross linker and vcan
         run: |
           sudo apt-get update
-          sudo apt-get install --yes gcc-aarch64-linux-gnu
+          sudo apt-get install --yes gcc-aarch64-linux-gnu "linux-modules-extra-$(uname -r)"
           sudo modprobe vcan
           sudo ip link add dev vcan-powertrain type vcan
           sudo ip link add dev vcan-controller type vcan

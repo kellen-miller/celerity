@@ -20,7 +20,7 @@ The repository is greenfield. The main complexity risk is therefore not legacy c
 - [x] (2026-07-31 19:53Z) Implemented canonical Run storage, bounded Experiment Plans, simulation, replay, systemd integration, and hardware-free fault scenarios.
 - [x] (2026-07-31 19:53Z) Implemented PyTorch TCN export/evaluation, ONNX/`tract` parity, Rust optimizer/model eligibility, and startup-only two-slot lifecycle.
 - [x] (2026-07-31 20:04Z) Implemented authority-isolated sync, durable transfer journal, exact acknowledgement/retention, authenticated home API/job lifecycle, model staging, exceptional lifecycle notifications, and webhook-failure independence.
-- [x] (2026-07-31 19:13Z) Added the one-replica PVC Kubernetes deployment, public accessible SvelteKit walkthrough, operator/deployment/configuration docs, and explicit physical evidence checklist.
+- [x] (2026-07-31 19:13Z) Added the one-replica PVC Helm deployment, public accessible SvelteKit walkthrough, operator/deployment/configuration docs, and explicit physical evidence checklist.
 - [ ] Portable validation and macOS browser evidence are recorded and green. The pinned `ubuntu-24.04` job still owns the Linux-only ARM64 link, vCAN, and systemd execution evidence before this item can close.
 
 ## Surprises & Discoveries
@@ -86,7 +86,7 @@ The minimal Cargo workspace has `crates/celerity-protocol`, `crates/celerity-run
 
 The `crates/celerity` package contains the thin `celerityd`, `celerity`, and `celerityctl` binaries plus concrete Linux adapters. `celerity simulate <scenario.toml>` and `celerity replay <run> --verify|--explore` use the production runtime. `crates/celerity-sync` is a separate binary and library with no dependency that exposes controller transport. `firmware/duct-controller` uses the shared protocol crate plus `embassy-stm32` for STM32G431 FDCAN, timers/PWM, flash, and watchdogs.
 
-`services/home` is the `uv`-managed Python project. Put the cohesive application package under `services/home/src/celerity_home/` with HTTP routes, SQLite schema/migrations, Run admission/derivation, training/evaluation, artifact storage, job ownership, and webhook delivery in files named for those domain concepts. Do not create `utils.py`, `helpers.py`, or generic repository/service layers. `deploy/kubernetes/home/` contains the single-replica Deployment, Service, PVC, Secret/ConfigMap references, probes, and resource bounds. `site/` is the SvelteKit static public site.
+`services/home` is the `uv`-managed Python project. Put the cohesive application package under `services/home/src/celerity_home/` with HTTP routes, SQLite schema/migrations, Run admission/derivation, training/evaluation, artifact storage, job ownership, and webhook delivery in files named for those domain concepts. Do not create `utils.py`, `helpers.py`, or generic repository/service layers. `deploy/helm/celerity-home/` contains the single-replica Helm chart with its Deployment, Service, PVC, Secret/ConfigMap references, probes, and resource bounds. `site/` is the SvelteKit static public site.
 
 ## Fixed external contracts
 
@@ -278,7 +278,7 @@ Run acceptance requires native-rate raw evidence, monotonic order, all relevant 
 
 Linux integration acceptance requires the pinned `ubuntu-24.04` VM job to fail when host systemd is unavailable, pass `systemd-analyze verify` on the checked-in units, install exact temporary units under `/run/systemd/system`, and prove readiness/watchdog, bounded shutdown, restart limits, `SIGKILL` recovery, no `network-online.target`, and restart into fallback. Cleanup runs from a trap and removes the units before daemon reload. Focused `vcan` tests prove only production application behavior and interface separation. Generic Linux paths and configuration contain no Raspberry Pi assumption.
 
-End-to-end acceptance is one local command/test that demonstrates complete Run upload, exact acknowledgement, derivation, TCN training/evaluation, ONNX bundle stage, vehicle download, inactive-slot validation, next-startup activation, corrupt rejection, later known-good rollback, and durable nonblocking notification failure. Kubernetes manifests render/validate and describe one replica/PVC/SQLite/filesystem without simulating a cluster.
+End-to-end acceptance is one local command/test that demonstrates complete Run upload, exact acknowledgement, derivation, TCN training/evaluation, ONNX bundle stage, vehicle download, inactive-slot validation, next-startup activation, corrupt rejection, later known-good rollback, and durable nonblocking notification failure. The Helm chart lints/renders and describes one replica/PVC/SQLite/filesystem without simulating a cluster.
 
 The hardware-free report may claim all of the above only with command evidence. It must explicitly leave unclaimed: live Haltech/CANTCU decode validation on this car, physical zero-drive fail-silent tap, FDCAN electrical behavior, controller/servo timing under target load, protected power/EMC/thermal behavior, passive radiator-biased return, mechanism travel/settling/backlash, actual model accuracy/thermal envelope, target ARM deadlines, installation, and road/track acceptance.
 

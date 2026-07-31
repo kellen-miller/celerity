@@ -65,8 +65,8 @@ release link, and the static site build. The ARM64 cross-link and
 the Linux linker, `vcan`, and host systemd. The pinned `ubuntu-24.04` CI job owns
 the ARM64 link, real vCAN receive-only application test, exact systemd unit
 verification/install/readiness/watchdog/bounded-stop/SIGKILL-restart lifecycle,
-and cleanup claims. Kubernetes manifests render locally but were not applied
-to a cluster. The site build reports three low-severity npm dependency
+and cleanup claims. The Helm chart lints and renders locally but was not
+installed in a cluster. The site build reports three low-severity npm dependency
 advisories; the checked formatter, linter, type checker, tests, and build pass.
 
 ## Explicitly unclaimed

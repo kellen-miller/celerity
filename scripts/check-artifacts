@@ -11,5 +11,7 @@ uv run --project services/home python -m celerity_home.export_fixture \
 
 cmp contracts/golden/controller-can-v1/vectors.json "$artifact_root/controller/vectors.json"
 cmp contracts/golden/model-v1/identity.onnx "$artifact_root/model/identity.onnx"
-kubectl kustomize deploy/kubernetes >"$artifact_root/home.yaml"
+helm lint deploy/helm/celerity-home
+helm template celerity-home deploy/helm/celerity-home \
+  --namespace celerity >"$artifact_root/home.yaml"
 test -s "$artifact_root/home.yaml"

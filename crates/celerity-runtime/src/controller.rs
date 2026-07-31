@@ -1,5 +1,6 @@
 use celerity_protocol::{
-    CommandAck, ConfigurationAck, Frame, NodeAnnounce, RuntimeLeaseAck, WireError, decode, encode,
+    CapabilityReport, CommandAck, ConfigurationAck, Frame, NodeAnnounce, RuntimeLeaseAck,
+    WireError, decode, encode,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -23,12 +24,18 @@ pub struct EmulatorResponse {
     pub can_id: u16,
     bytes: [u8; 64],
     len: usize,
+    follow_up: Option<Box<Self>>,
 }
 
 impl EmulatorResponse {
     #[must_use]
     pub fn payload(&self) -> &[u8] {
         &self.bytes[..self.len]
+    }
+
+    #[must_use]
+    pub fn follow_up(&self) -> Option<&Self> {
+        self.follow_up.as_deref()
     }
 }
 
@@ -90,6 +97,7 @@ impl ControllerEmulator {
     ) -> Result<Option<EmulatorResponse>, WireError> {
         self.advance_to(now_ms);
         let frame = decode(can_id, payload)?;
+        let discovery = matches!(&frame, Frame::DiscoveryProbe(_));
         let response = match frame {
             Frame::DiscoveryProbe(message) if message.protocol_major == 1 => {
                 Some(Frame::NodeAnnounce {
@@ -220,15 +228,32 @@ impl ControllerEmulator {
             _ => None,
         };
 
-        response.as_ref().map(encode_response).transpose()
+        let mut response = response.as_ref().map(encode_response).transpose()?;
+        if discovery && let Some(announce) = &mut response {
+            announce.follow_up = Some(Box::new(encode_response(&Frame::CapabilityReport {
+                node: self.provisioning.node,
+                message: CapabilityReport {
+                    boot_session: self.provisioning.boot_session,
+                    capability_generation: self.provisioning.capability_generation,
+                    resource_id: 1,
+                    minimum_basis_points: 0,
+                    maximum_basis_points: 10_000,
+                    capability_flags: 0,
+                    maximum_command_rate_hz: 50,
+                },
+            })?));
+        }
+        Ok(response)
     }
 
     pub fn advance_to(&mut self, now_ms: u64) {
-        if self.mode == ControllerMode::RemoteAuthority
-            && (!self.runtime_lease_valid(now_ms)
-                || self
-                    .command_deadline_ms
-                    .is_none_or(|deadline| now_ms >= deadline))
+        if self.runtime_lease.is_some() && !self.runtime_lease_valid(now_ms) {
+            self.runtime_lease = None;
+            self.select_fallback();
+        } else if self.mode == ControllerMode::RemoteAuthority
+            && self
+                .command_deadline_ms
+                .is_none_or(|deadline| now_ms >= deadline)
         {
             self.select_fallback();
         }
@@ -288,5 +313,6 @@ fn encode_response(frame: &Frame) -> Result<EmulatorResponse, WireError> {
         can_id: encoded.can_id,
         bytes,
         len: encoded.len,
+        follow_up: None,
     })
 }

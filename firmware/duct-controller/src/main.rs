@@ -17,8 +17,8 @@ embassy_stm32::bind_interrupts!(struct Irqs {
 )]
 async fn main(_spawner: embassy_executor::Spawner) {
     use celerity_protocol::{
-        CommandAck, ConfigurationAck, FallbackAck, FaultReport, Frame, Heartbeat, RuntimeLeaseAck,
-        decode, encode,
+        CapabilityReport, CommandAck, ConfigurationAck, FallbackAck, FaultReport, Frame, Heartbeat,
+        NodeAnnounce, RuntimeLeaseAck, decode, encode,
     };
     use duct_controller::{ControllerState, FirmwareConfiguration, FirmwareMode};
     use embassy_stm32::can::filter::{Action, Filter, FilterType, StandardFilterSlot};
@@ -177,6 +177,60 @@ async fn main(_spawner: embassy_executor::Spawner) {
             continue;
         };
         let now_ms = Instant::now().as_millis();
+
+        if let Frame::DiscoveryProbe(message) = &frame {
+            let discovery_responses = [
+                Frame::NodeAnnounce {
+                    node: NODE_ADDRESS,
+                    message: NodeAnnounce {
+                        protocol_major: celerity_protocol::PROTOCOL_MAJOR,
+                        protocol_minor: 0,
+                        lifecycle: if state.configuration_generation().is_some() {
+                            2
+                        } else {
+                            1
+                        },
+                        state_flags: if state.mode() == FirmwareMode::RemoteAuthority {
+                            2
+                        } else {
+                            1
+                        },
+                        boot_session: BOOT_SESSION,
+                        provisioned_identity: 42,
+                        firmware_generation: 1,
+                        capability_generation: 1,
+                        configuration_generation: state.configuration_generation().unwrap_or(0),
+                        announce_sequence: message.probe_sequence,
+                    },
+                },
+                Frame::CapabilityReport {
+                    node: NODE_ADDRESS,
+                    message: CapabilityReport {
+                        boot_session: BOOT_SESSION,
+                        capability_generation: 1,
+                        resource_id: 1,
+                        minimum_basis_points: 0,
+                        maximum_basis_points: 10_000,
+                        capability_flags: 0,
+                        maximum_command_rate_hz: 50,
+                    },
+                },
+            ];
+            for response in discovery_responses {
+                let mut payload = [0_u8; 64];
+                if let Ok(encoded) = encode(&response, &mut payload)
+                    && let Some(id) = StandardId::new(encoded.can_id)
+                    && let Some(frame) =
+                        <embassy_stm32::can::frame::FdFrame as embedded_can::Frame>::new(
+                            id,
+                            &payload[..encoded.len],
+                        )
+                {
+                    let _superseded = can.write_fd(&frame).await;
+                }
+            }
+            continue;
+        }
 
         let response = match frame {
             Frame::Configuration { node, message } if node == NODE_ADDRESS => {

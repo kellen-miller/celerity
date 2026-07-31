@@ -12,6 +12,7 @@ fi
 sudo -n true
 
 unit_root=/run/systemd/system
+runtime_override_root="$unit_root/celerityd.service.d"
 config_root=/etc/celerity
 runtime_binary=/usr/local/bin/celerityd
 sync_binary=/usr/local/bin/celerity-sync
@@ -19,6 +20,8 @@ sync_binary=/usr/local/bin/celerity-sync
 cleanup() {
   sudo systemctl stop celerityd.service celerity-sync.service >/dev/null 2>&1 || true
   sudo rm -f "$unit_root/celerityd.service" "$unit_root/celerity-sync.service"
+  sudo rm -f "$runtime_override_root/10-supervisor-check.conf"
+  sudo rmdir "$runtime_override_root" >/dev/null 2>&1 || true
   sudo rm -f "$runtime_binary" "$sync_binary" "$config_root/celerity.toml" "$config_root/home-token"
   sudo rmdir "$config_root" >/dev/null 2>&1 || true
   sudo systemctl daemon-reload
@@ -33,6 +36,12 @@ sudo install -m 0644 config/examples/simulation.toml "$config_root/celerity.toml
 sudo install -m 0600 /dev/null "$config_root/home-token"
 sudo install -m 0644 deploy/systemd/celerityd.service "$unit_root/celerityd.service"
 sudo install -m 0644 deploy/systemd/celerity-sync.service "$unit_root/celerity-sync.service"
+sudo install -d -m 0755 "$runtime_override_root"
+sudo tee "$runtime_override_root/10-supervisor-check.conf" >/dev/null <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/celerityd --systemd-supervisor-check
+EOF
 systemd-analyze verify deploy/systemd/celerityd.service deploy/systemd/celerity-sync.service
 sudo systemctl daemon-reload
 
@@ -53,7 +62,8 @@ for _ in {1..30}; do
   sleep 0.2
 done
 sudo systemctl is-active --quiet celerityd.service
-sudo systemctl status celerityd.service --no-pager | grep -F "controller-local fallback"
+sudo systemctl status celerityd.service --no-pager \
+  | grep -F "test-only supervisor check; no vehicle authority"
 
 start_ns=$(date +%s%N)
 sudo systemctl stop celerityd.service

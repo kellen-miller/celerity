@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import struct
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -14,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from celerity_home import worker
 from celerity_home.application import create_app, deliver_notifications, migrate
+from celerity_home.training import Recipe, load_training_examples
 from celerity_home.worker import classify_evaluation
 
 AUTHORIZATION = {"Authorization": "Bearer secret"}
@@ -30,8 +32,78 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def varint(value: int) -> bytes:
+    encoded = bytearray()
+    while value >= 0x80:
+        encoded.append((value & 0x7F) | 0x80)
+        value >>= 7
+    encoded.append(value)
+    return bytes(encoded)
+
+
+def run_record(sequence: int, source: str, payload: dict[str, object]) -> bytes:
+    source_bytes = source.encode()
+    payload_bytes = json.dumps(payload, separators=(",", ":")).encode()
+    message = (
+        varint(4 << 3)
+        + varint(sequence)
+        + varint((8 << 3) | 2)
+        + varint(len(source_bytes))
+        + source_bytes
+        + varint((26 << 3) | 2)
+        + varint(len(payload_bytes))
+        + payload_bytes
+    )
+    return varint(len(message)) + message
+
+
+def typed_record(sequence: int, payload_field: int, payload: bytes) -> bytes:
+    message = (
+        varint(4 << 3)
+        + varint(sequence)
+        + varint((payload_field << 3) | 2)
+        + varint(len(payload))
+        + payload
+    )
+    return varint(len(message)) + message
+
+
+def signal_record(sequence: int, signal: str, value: float) -> bytes:
+    name = signal.encode()
+    payload = (
+        varint((1 << 3) | 2)
+        + varint(len(name))
+        + name
+        + varint((2 << 3) | 1)
+        + struct.pack("<d", value)
+    )
+    return typed_record(sequence, 21, payload)
+
+
+def control_record(sequence: int, split: int, state: str) -> bytes:
+    encoded = json.dumps({"state": state, "radiator_split_basis_points": split}).encode()
+    payload = varint((1 << 3) | 2) + varint(len(encoded)) + encoded
+    return typed_record(sequence, 24, payload)
+
+
+def canonical_chunk(offset: float = 0.0) -> bytes:
+    records = bytearray()
+    sequence = 0
+    for index in range(7):
+        sequence += 1
+        records.extend(signal_record(sequence, "coolant_temperature_c", 90.0 + offset - index))
+        sequence += 1
+        records.extend(signal_record(sequence, "air_temperature_c", 45.0 + offset / 2 - index / 2))
+        if index < 6:
+            sequence += 1
+            records.extend(control_record(sequence, 2000, "requested"))
+            sequence += 1
+            records.extend(control_record(sequence, [1000, 5000, 9000][index % 3], "accepted"))
+    return bytes(records)
+
+
 def upload_run(client: TestClient, run_name: str) -> str:
-    chunk = f"events-{run_name}".encode()
+    chunk = canonical_chunk(float(len(run_name)))
     chunk_digest = digest(chunk)
     manifest = json.dumps(
         {
@@ -40,6 +112,18 @@ def upload_run(client: TestClient, run_name: str) -> str:
             "completion": "complete",
             "chunk_file": "events.chunk",
             "chunk_sha256": chunk_digest,
+            "configuration_generation": 1,
+            "configuration_sha256": "a" * 64,
+            "model_bundle_digest": None,
+            "protocol_major": 1,
+            "firmware_generation": 1,
+            "decoder_generation": 1,
+            "model_abi": "thermal-v1",
+            "model_input_signals": ["coolant_temperature_c", "air_temperature_c"],
+            "model_history_length": 4,
+            "sample_period_ms": 20,
+            "command_lattice": [1000, 5000, 9000],
+            "maximum_calibration_error": 100.0,
         },
         sort_keys=True,
     ).encode()
@@ -106,11 +190,11 @@ def test_job_admits_only_complete_runs_and_survives_as_durable_subprocess(
         json={"run_digests": ["0" * 64], "recipe": "causal-tcn-v1"},
     )
     assert rejected.status_code == 409
-    run_digest = upload_run(client, "run-training")
+    run_digests = [upload_run(client, "run-training-a"), upload_run(client, "run-training-b")]
     admitted = client.post(
         "/v1/jobs",
         headers=AUTHORIZATION,
-        json={"run_digests": [run_digest], "recipe": "causal-tcn-v1"},
+        json={"run_digests": run_digests, "recipe": "causal-tcn-v1"},
     )
     assert admitted.status_code == 202
     job_id = admitted.json()["job_id"]
@@ -128,7 +212,7 @@ def test_job_admits_only_complete_runs_and_survives_as_durable_subprocess(
     repeated = client.post(
         "/v1/jobs",
         headers=AUTHORIZATION,
-        json={"run_digests": [run_digest], "recipe": "causal-tcn-v1"},
+        json={"run_digests": run_digests, "recipe": "causal-tcn-v1"},
     )
     assert repeated.status_code == 202
     repeated_id = repeated.json()["job_id"]
@@ -143,6 +227,49 @@ def test_job_admits_only_complete_runs_and_survives_as_durable_subprocess(
             "SELECT count(*) FROM notifications WHERE job_id=?", (job_id,)
         ).fetchone()
     assert notification_count == (0,)
+
+
+def test_valid_but_ineligible_corpus_finishes_as_no_change(
+    home_client: TestClient,
+) -> None:
+    client = home_client
+    run_digest = upload_run(client, "single-valid-run")
+    response = client.post(
+        "/v1/jobs",
+        headers=AUTHORIZATION,
+        json={"run_digests": [run_digest], "recipe": "causal-tcn-v1"},
+    )
+    assert response.status_code == 202
+    job_id = response.json()["job_id"]
+    deadline = time.monotonic() + 10
+    job = client.get(f"/v1/jobs/{job_id}", headers=AUTHORIZATION).json()
+    while time.monotonic() < deadline and job["state"] in {"queued", "running"}:
+        time.sleep(0.05)
+        job = client.get(f"/v1/jobs/{job_id}", headers=AUTHORIZATION).json()
+    assert job["state"] == "no_change"
+    assert job["artifact_digest"] is None
+
+
+def test_training_uses_only_acknowledged_control_decisions(
+    tmp_path: Path, home_client: TestClient
+) -> None:
+    run_digests = [upload_run(home_client, "ack-run-a"), upload_run(home_client, "ack-run-b")]
+    with sqlite3.connect(tmp_path / "home.sqlite3") as connection:
+        manifests = [
+            json.loads(
+                connection.execute(
+                    "SELECT manifest_json FROM runs WHERE digest=?", (run_digest,)
+                ).fetchone()[0]
+            )
+            for run_digest in run_digests
+        ]
+    train_inputs, _, held_inputs, _, _ = load_training_examples(
+        tmp_path, run_digests, manifests, Recipe()
+    )
+    command_values = {
+        round(float(value), 1) for value in [*train_inputs[:, -1], *held_inputs[:, -1]]
+    }
+    assert command_values == {0.1, 0.5, 0.9}
 
 
 def test_webhook_failure_never_changes_completed_job(tmp_path: Path) -> None:
@@ -224,19 +351,8 @@ def test_worker_records_candidate_rejection_and_training_failure(
     with sqlite3.connect(database) as connection:
         connection.execute(
             "INSERT INTO jobs(id, state, recipe, input_digests_json) "
-            "VALUES ('reject-me', 'running', 'causal-tcn-v1', '[]')"
-        )
-        connection.execute(
-            "INSERT INTO jobs(id, state, recipe, input_digests_json) "
             "VALUES ('fail-me', 'running', 'causal-tcn-v1', '[]')"
         )
-
-    def reject_candidate(path: Path) -> dict[str, object]:
-        path.write_bytes(b"rejected-candidate")
-        return {"maximum_parity_error": 1.0}
-
-    monkeypatch.setattr(worker, "export_and_compare", reject_candidate)
-    worker.run(tmp_path, "reject-me")
 
     def fail_job(_root: Path, _job: str) -> None:
         raise RuntimeError("boom")
@@ -255,12 +371,13 @@ def test_worker_records_candidate_rejection_and_training_failure(
             json.loads(row[0])["event_type"]
             for row in connection.execute("SELECT payload_json FROM notifications").fetchall()
         }
-    assert jobs == {"reject-me": "rejected", "fail-me": "failed"}
-    assert events == {"candidate_rejection", "training_failure"}
+    assert jobs == {"fail-me": "failed"}
+    assert events == {"training_failure"}
 
 
 def test_recipe_classification_covers_pass_no_change_and_reject() -> None:
     assert classify_evaluation(0.0, False) == "completed"
+    assert classify_evaluation(0.0, False, improves_baseline=False) == "no_change"
     assert classify_evaluation(0.0, True) == "no_change"
     assert classify_evaluation(1e-4, False) == "rejected"
     assert classify_evaluation(float("nan"), False) == "rejected"
@@ -268,7 +385,7 @@ def test_recipe_classification_covers_pass_no_change_and_reject() -> None:
 
 def test_restart_recovers_an_orphaned_durable_job(tmp_path: Path, home_client: TestClient) -> None:
     client = home_client
-    run_digest = upload_run(client, "run-recovery")
+    run_digests = [upload_run(client, "run-recovery-a"), upload_run(client, "run-recovery-b")]
     jobs = tmp_path / "jobs"
     jobs.mkdir(exist_ok=True)
     with sqlite3.connect(tmp_path / "home.sqlite3") as connection:
@@ -277,7 +394,7 @@ def test_restart_recovers_an_orphaned_durable_job(tmp_path: Path, home_client: T
             "VALUES (?, 'queued', 'causal-tcn-v1', ?, ?, ?)",
             (
                 "recover-me",
-                json.dumps([run_digest]),
+                json.dumps(run_digests),
                 str(jobs / "recover-me.stdout"),
                 str(jobs / "recover-me.stderr"),
             ),

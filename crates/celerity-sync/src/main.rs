@@ -1,7 +1,7 @@
 #[cfg(unix)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::{
-        env, io,
+        env, fs, io,
         path::{Path, PathBuf},
         sync::{
             Arc,
@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_or_else(|| PathBuf::from("/var/lib/celerity/models"), PathBuf::from);
     let mut configuration =
         SyncConfiguration::from_bundle(Path::new(&bundle_path), journal_path, model_root)?;
+    let model_root = configuration.model_root.clone();
     if let Some(token_path) = env::var_os("CELERITY_HOME_TOKEN_PATH") {
         configuration.credential_path = PathBuf::from(token_path);
     }
@@ -36,7 +37,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     signal_hook::flag::register(SIGINT, Arc::clone(&stopping))?;
 
     while !stopping.load(Ordering::Relaxed) {
-        if let Err(error) = synchronizer.reconcile_once(&network, &home, None, None, &[]) {
+        let read_marker = |name: &str| {
+            fs::read_to_string(model_root.join(name))
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        };
+        let active = read_marker("active-digest");
+        let desired = read_marker("desired-digest");
+        let rejected = fs::read_to_string(model_root.join("rejected-digests"))
+            .map(|contents| {
+                contents
+                    .lines()
+                    .map(str::trim)
+                    .filter(|digest| !digest.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if let Err(error) = synchronizer.reconcile_once(
+            &network,
+            &home,
+            active.as_deref(),
+            desired.as_deref(),
+            &rejected,
+        ) {
             eprintln!("sync reconciliation deferred: {error}");
         }
         for _ in 0..30 {

@@ -11,6 +11,7 @@ uv run --project services/home python -m celerity_home.export_fixture \
 
 cmp contracts/golden/controller-can-v1/vectors.json "$artifact_root/controller/vectors.json"
 cmp contracts/golden/model-v1/identity.onnx "$artifact_root/model/identity.onnx"
+cmp contracts/golden/model-v1/manifest.json "$artifact_root/model/manifest.json"
 helm lint deploy/helm/celerity-home \
   --set externalSecrets.secretStoreName=onepassword
 helm template celerity-home deploy/helm/celerity-home \

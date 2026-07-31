@@ -21,7 +21,10 @@ The repository is greenfield. The main complexity risk is therefore not legacy c
 - [x] (2026-07-31 19:53Z) Implemented PyTorch TCN export/evaluation, ONNX/`tract` parity, Rust optimizer/model eligibility, and startup-only two-slot lifecycle.
 - [x] (2026-07-31 20:04Z) Implemented authority-isolated sync, durable transfer journal, exact acknowledgement/retention, authenticated home API/job lifecycle, model staging, exceptional lifecycle notifications, and webhook-failure independence.
 - [x] (2026-07-31 19:13Z) Added the one-replica PVC Helm deployment, public accessible SvelteKit walkthrough, operator/deployment/configuration docs, and explicit physical evidence checklist.
-- [x] (2026-07-31 20:58Z) PR #17 head `87d5d49` passed GitHub Actions run `30664026585`: Linux including ARM64 link/vCAN/systemd in 12m28s, macOS portable in 5m36s, and Ubuntu portable in 5m21s. Implementation is complete and ready for closeout.
+- [x] (2026-07-31 20:58Z) PR #17 head `87d5d49` passed the initial GitHub Actions run `30664026585`: Linux including ARM64 link/vCAN/systemd in 12m28s, macOS portable in 5m36s, and Ubuntu portable in 5m21s.
+- [x] (2026-07-31 21:03Z) The sole normal closeout review found that the production daemon did not execute the runtime lifecycle and that model selection could not reach an actuator command; implementation was reopened rather than accepting component-only evidence.
+- [x] (2026-07-31 22:32Z) Integrated the live CAN/controller/Run loop, ACK-backed model command and promotion evidence, canonical Run-to-training records, automatic home training, exact bundle staging/startup selection, startup-only tract inference, bounded experiments, persistent invalid-model recovery, and two-slot rollback preservation. The complete local Rust, Python, production e2e, artifact, Helm, and SvelteKit gates pass.
+- [ ] Publish the corrected head, pass a fresh Linux vCAN/systemd/ARM64 CI run, complete the sole Claude implementation adversarial review and dispositions, and finish the Lavish implementation ownership loop.
 
 ## Surprises & Discoveries
 

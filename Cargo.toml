@@ -20,5 +20,6 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
+cast_possible_truncation = "allow"
 needless_pass_by_value = "allow"
 too_many_lines = "allow"

@@ -145,11 +145,13 @@ impl ControllerState {
     }
 
     pub fn advance_to(&mut self, now_ms: u64) {
-        if self.mode == FirmwareMode::RemoteAuthority
-            && (!self.runtime_lease_valid(now_ms)
-                || self
-                    .command_deadline_ms
-                    .is_none_or(|deadline| now_ms >= deadline))
+        if self.runtime_lease.is_some() && !self.runtime_lease_valid(now_ms) {
+            self.runtime_lease = None;
+            self.select_fallback();
+        } else if self.mode == FirmwareMode::RemoteAuthority
+            && self
+                .command_deadline_ms
+                .is_none_or(|deadline| now_ms >= deadline)
         {
             self.select_fallback();
         }

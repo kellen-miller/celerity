@@ -234,6 +234,7 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
     def reconcile(request: ReconcileRequest) -> dict[str, object]:
         if request.schema_version != 1:
             raise HTTPException(status_code=422, detail="unsupported schema_version")
+        training_job: tuple[str, Path, Path] | None = None
         with _transaction(database) as connection:
             present = {
                 row["digest"] for row in connection.execute("SELECT digest FROM runs").fetchall()
@@ -296,6 +297,66 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
                         "VALUES (?, NULL, ?, 'pending')",
                         (event_id, json.dumps(payload, sort_keys=True)),
                     )
+            reported = sorted(set(request.completed_run_digests))
+            if reported and set(reported).issubset(present):
+                contract_fields = (
+                    "model_abi",
+                    "model_input_signals",
+                    "model_history_length",
+                    "sample_period_ms",
+                    "command_lattice",
+                    "maximum_calibration_error",
+                )
+                manifests = {
+                    row["digest"]: json.loads(row["manifest_json"])
+                    for row in connection.execute(
+                        "SELECT digest, manifest_json FROM runs"
+                    ).fetchall()
+                }
+                reported_contracts = {
+                    json.dumps(
+                        [manifests[digest].get(field) for field in contract_fields],
+                        sort_keys=True,
+                    )
+                    for digest in reported
+                }
+                if len(reported_contracts) != 1:
+                    raise HTTPException(status_code=409, detail="reported Run contracts disagree")
+                contract = reported_contracts.pop()
+                corpus = sorted(
+                    digest
+                    for digest, manifest in manifests.items()
+                    if json.dumps(
+                        [manifest.get(field) for field in contract_fields], sort_keys=True
+                    )
+                    == contract
+                )
+                active_job = connection.execute(
+                    "SELECT 1 FROM jobs WHERE state IN ('queued', 'running') LIMIT 1"
+                ).fetchone()
+                latest_job = connection.execute(
+                    "SELECT input_digests_json FROM jobs ORDER BY created_at DESC, id DESC LIMIT 1"
+                ).fetchone()
+                latest_inputs = [] if latest_job is None else json.loads(latest_job[0])
+                if active_job is None and latest_inputs != corpus:
+                    job_id = str(uuid.uuid4())
+                    jobs = storage_root / "jobs"
+                    jobs.mkdir(parents=True, exist_ok=True)
+                    stdout_path = jobs / f"{job_id}.stdout"
+                    stderr_path = jobs / f"{job_id}.stderr"
+                    connection.execute(
+                        "INSERT INTO jobs(id, state, recipe, input_digests_json, stdout_path, "
+                        "stderr_path) VALUES (?, 'queued', 'causal-tcn-v1', ?, ?, ?)",
+                        (
+                            job_id,
+                            json.dumps(corpus),
+                            str(stdout_path),
+                            str(stderr_path),
+                        ),
+                    )
+                    training_job = (job_id, stdout_path, stderr_path)
+        if training_job is not None:
+            _launch_managed_job(storage_root, database, *training_job)
         return {
             "missing_run_digests": sorted(set(request.completed_run_digests) - present),
             "desired_model_digest": desired_digest,

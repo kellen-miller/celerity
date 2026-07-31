@@ -1,6 +1,9 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
+
+use crate::ExperimentPlan;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -23,6 +26,7 @@ pub enum BundleError {
     InvalidControllerAddress(u8),
     DuplicateControllerAddress(u8),
     DuplicateControllerIdentity(u64),
+    MissingDuctController,
     InvalidDuctBounds,
     NonmonotonicPolicy,
     InvalidRuntimeTiming,
@@ -33,6 +37,10 @@ pub enum BundleError {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ValidatedBundle {
+    #[serde(skip)]
+    configuration_sha256: String,
+    #[serde(skip)]
+    loaded_experiment_plan: Option<ExperimentPlan>,
     schema_version: u32,
     generation: u64,
     mode: StartupMode,
@@ -40,10 +48,12 @@ pub struct ValidatedBundle {
     powertrain: PowertrainConfiguration,
     controllers: BTreeMap<String, ControllerConfiguration>,
     duct: DuctConfiguration,
-    model: ModelConfiguration,
+    pub(crate) model: ModelConfiguration,
     run_storage: RunStorageConfiguration,
     diagnostics: DiagnosticsConfiguration,
     sync: SyncConfiguration,
+    #[serde(default)]
+    experiment: Option<ExperimentConfiguration>,
     composition: Composition,
 }
 
@@ -64,6 +74,23 @@ struct PowertrainConfiguration {
 struct ControllerConfiguration {
     address: u8,
     identity: u64,
+    configuration_generation: u32,
+    capability_generation: u32,
+    resource_id: u32,
+    minimum_basis_points: u16,
+    maximum_basis_points: u16,
+    maximum_command_rate_hz: u16,
+    fallback_basis_points: u16,
+    pwm_endpoint_a_us: u16,
+    pwm_endpoint_b_us: u16,
+    direction: u8,
+    runtime_lease_ms: u16,
+    command_lease_ms: u16,
+    heartbeat_period_ms: u16,
+    acknowledgement_deadline_ms: u16,
+    normal_slew_basis_points_per_second: u16,
+    protection_slew_basis_points_per_second: u16,
+    digest_prefix: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -78,8 +105,46 @@ struct DuctConfiguration {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct ModelConfiguration {
-    required: bool,
+pub(crate) struct ModelConfiguration {
+    pub(crate) required: bool,
+    pub(crate) slots_root: String,
+    pub(crate) abi: String,
+    pub(crate) input_signals: Vec<String>,
+    pub(crate) history_length: usize,
+    pub(crate) warmup_iterations: usize,
+    pub(crate) maximum_uncertainty: f64,
+    pub(crate) maximum_ood_score: f64,
+    pub(crate) required_post_work_ns: u64,
+    pub(crate) hard_coolant_ceiling_c: f64,
+    pub(crate) coolant_target_c: f64,
+    pub(crate) coolant_input_minimum_c: f64,
+    pub(crate) coolant_input_maximum_c: f64,
+    pub(crate) iat_input_minimum_c: f64,
+    pub(crate) iat_input_maximum_c: f64,
+    pub(crate) command_lattice: Vec<u16>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ControllerRuntimeConfiguration {
+    pub address: u8,
+    pub identity: u64,
+    pub configuration_generation: u32,
+    pub capability_generation: u32,
+    pub resource_id: u32,
+    pub minimum_basis_points: u16,
+    pub maximum_basis_points: u16,
+    pub maximum_command_rate_hz: u16,
+    pub fallback_basis_points: u16,
+    pub pwm_endpoint_a_us: u16,
+    pub pwm_endpoint_b_us: u16,
+    pub direction: u8,
+    pub runtime_lease_ms: u16,
+    pub command_lease_ms: u16,
+    pub heartbeat_period_ms: u16,
+    pub acknowledgement_deadline_ms: u16,
+    pub normal_slew_basis_points_per_second: u16,
+    pub protection_slew_basis_points_per_second: u16,
+    pub digest_prefix: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -104,6 +169,12 @@ struct SyncConfiguration {
     expected_default_gateway: String,
     home_api_url: String,
     credential_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ExperimentConfiguration {
+    plan: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -139,8 +210,10 @@ impl ValidatedBundle {
     pub fn load_configured(path: &Path) -> Result<Self, BundleError> {
         let source =
             fs::read_to_string(path).map_err(|error| BundleError::Read(error.to_string()))?;
-        let bundle: Self =
+        let mut bundle: Self =
             toml::from_str(&source).map_err(|error| BundleError::Parse(error.to_string()))?;
+        bundle.configuration_sha256 = digest(&source);
+        bundle.loaded_experiment_plan = load_experiment(&bundle, path)?;
         bundle.validate(bundle.mode)?;
         Ok(bundle)
     }
@@ -154,8 +227,10 @@ impl ValidatedBundle {
     pub fn load(path: &Path, requested_mode: StartupMode) -> Result<Self, BundleError> {
         let source =
             fs::read_to_string(path).map_err(|error| BundleError::Read(error.to_string()))?;
-        let bundle: Self =
+        let mut bundle: Self =
             toml::from_str(&source).map_err(|error| BundleError::Parse(error.to_string()))?;
+        bundle.configuration_sha256 = digest(&source);
+        bundle.loaded_experiment_plan = load_experiment(&bundle, path)?;
         bundle.validate(requested_mode)?;
         Ok(bundle)
     }
@@ -163,6 +238,36 @@ impl ValidatedBundle {
     #[must_use]
     pub const fn generation(&self) -> u64 {
         self.generation
+    }
+
+    #[must_use]
+    pub fn configuration_sha256(&self) -> &str {
+        &self.configuration_sha256
+    }
+
+    #[must_use]
+    pub const fn decoder_generation(&self) -> u64 {
+        self.powertrain.decoder_generation
+    }
+
+    #[must_use]
+    pub const fn model_history_length(&self) -> usize {
+        self.model.history_length
+    }
+
+    #[must_use]
+    pub fn model_command_lattice(&self) -> &[u16] {
+        &self.model.command_lattice
+    }
+
+    #[must_use]
+    pub const fn model_maximum_calibration_error(&self) -> f64 {
+        self.model.maximum_uncertainty
+    }
+
+    #[must_use]
+    pub fn experiment_plan(&self) -> Option<ExperimentPlan> {
+        self.loaded_experiment_plan.clone()
     }
 
     #[must_use]
@@ -180,8 +285,64 @@ impl ValidatedBundle {
         self.model.required
     }
 
-    pub(crate) const fn cycle_ms(&self) -> u64 {
+    #[must_use]
+    pub const fn cycle_ms(&self) -> u64 {
         self.runtime.cycle_ms
+    }
+
+    #[must_use]
+    pub fn controller_runtime_configuration(&self) -> ControllerRuntimeConfiguration {
+        let controller = &self.controllers["duct"];
+        ControllerRuntimeConfiguration {
+            address: controller.address,
+            identity: controller.identity,
+            configuration_generation: controller.configuration_generation,
+            capability_generation: controller.capability_generation,
+            resource_id: controller.resource_id,
+            minimum_basis_points: controller.minimum_basis_points,
+            maximum_basis_points: controller.maximum_basis_points,
+            maximum_command_rate_hz: controller.maximum_command_rate_hz,
+            fallback_basis_points: controller.fallback_basis_points,
+            pwm_endpoint_a_us: controller.pwm_endpoint_a_us,
+            pwm_endpoint_b_us: controller.pwm_endpoint_b_us,
+            direction: controller.direction,
+            runtime_lease_ms: controller.runtime_lease_ms,
+            command_lease_ms: controller.command_lease_ms,
+            heartbeat_period_ms: controller.heartbeat_period_ms,
+            acknowledgement_deadline_ms: controller.acknowledgement_deadline_ms,
+            normal_slew_basis_points_per_second: controller.normal_slew_basis_points_per_second,
+            protection_slew_basis_points_per_second: controller
+                .protection_slew_basis_points_per_second,
+            digest_prefix: controller.digest_prefix,
+        }
+    }
+
+    #[must_use]
+    pub fn model_slots_root(&self) -> &Path {
+        Path::new(&self.model.slots_root)
+    }
+
+    #[must_use]
+    pub fn model_abi(&self) -> &str {
+        &self.model.abi
+    }
+
+    #[must_use]
+    pub const fn model_input_length(&self) -> usize {
+        self.model
+            .history_length
+            .saturating_mul(self.model.input_signals.len())
+            .saturating_add(1)
+    }
+
+    #[must_use]
+    pub fn model_input_signals(&self) -> &[String] {
+        &self.model.input_signals
+    }
+
+    #[must_use]
+    pub const fn minimum_run_free_bytes(&self) -> u64 {
+        self.run_storage.minimum_free_bytes
     }
 
     pub(crate) fn deterministic_command(&self, coolant_c: f64, iat_c: f64) -> u16 {
@@ -258,6 +419,9 @@ impl ValidatedBundle {
             }
             addresses[usize::from(controller.address)] = true;
         }
+        if !self.controllers.contains_key("duct") {
+            return Err(BundleError::MissingDuctController);
+        }
 
         if !self.duct.radiator_split_minimum.is_finite()
             || !self.duct.radiator_split_maximum.is_finite()
@@ -280,6 +444,82 @@ impl ValidatedBundle {
 
         if self.run_storage.root.is_empty() || self.run_storage.minimum_free_bytes == 0 {
             return Err(BundleError::InvalidStorage);
+        }
+        let controller = &self.controllers["duct"];
+        if controller.configuration_generation == 0
+            || controller.capability_generation == 0
+            || controller.resource_id == 0
+            || controller.minimum_basis_points > controller.maximum_basis_points
+            || controller.maximum_basis_points > 10_000
+            || controller.maximum_command_rate_hz == 0
+            || controller.fallback_basis_points > 10_000
+            || controller.pwm_endpoint_a_us >= controller.pwm_endpoint_b_us
+            || !matches!(controller.direction, 1 | 2)
+            || controller.runtime_lease_ms == 0
+            || controller.command_lease_ms == 0
+            || controller.heartbeat_period_ms == 0
+            || controller.acknowledgement_deadline_ms == 0
+            || controller.normal_slew_basis_points_per_second == 0
+            || controller.protection_slew_basis_points_per_second == 0
+        {
+            return Err(BundleError::InvalidRuntimeTiming);
+        }
+        if self.model.slots_root.is_empty()
+            || self.model.abi.is_empty()
+            || self.model.input_signals.is_empty()
+            || !self
+                .model
+                .input_signals
+                .iter()
+                .any(|signal| signal == "coolant_temperature_c")
+            || !self
+                .model
+                .input_signals
+                .iter()
+                .any(|signal| signal == "air_temperature_c")
+            || self
+                .model
+                .input_signals
+                .iter()
+                .enumerate()
+                .any(|(index, signal)| {
+                    signal.is_empty() || self.model.input_signals[..index].contains(signal)
+                })
+            || self.model.history_length == 0
+            || self.model.warmup_iterations == 0
+            || !self.model.maximum_uncertainty.is_finite()
+            || self.model.maximum_uncertainty < 0.0
+            || !self.model.maximum_ood_score.is_finite()
+            || self.model.maximum_ood_score < 0.0
+            || self.model.required_post_work_ns == 0
+            || !self.model.hard_coolant_ceiling_c.is_finite()
+            || !self.model.coolant_target_c.is_finite()
+            || !self.model.coolant_input_minimum_c.is_finite()
+            || !self.model.coolant_input_maximum_c.is_finite()
+            || self.model.coolant_input_minimum_c >= self.model.coolant_input_maximum_c
+            || !self.model.iat_input_minimum_c.is_finite()
+            || !self.model.iat_input_maximum_c.is_finite()
+            || self.model.iat_input_minimum_c >= self.model.iat_input_maximum_c
+            || self.model.command_lattice.is_empty()
+            || self.model.command_lattice.iter().any(|command| {
+                !(controller.minimum_basis_points..=controller.maximum_basis_points)
+                    .contains(command)
+            })
+            || self
+                .model
+                .command_lattice
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+        {
+            return Err(BundleError::InvalidRuntimeTiming);
+        }
+        if self.loaded_experiment_plan.as_ref().is_some_and(|plan| {
+            !plan.commands_within(
+                controller.minimum_basis_points,
+                controller.maximum_basis_points,
+            )
+        }) {
+            return Err(BundleError::InvalidRuntimeTiming);
         }
         if self.sync.spool_root != self.run_storage.root
             || self.sync.retention_count == 0
@@ -348,4 +588,39 @@ fn policy_is_monotonic(table: &[[u16; 3]; 3], minimum: f64, maximum: f64) -> boo
         }
     }
     true
+}
+
+fn digest(source: &str) -> String {
+    use std::fmt::Write as _;
+
+    Sha256::digest(source.as_bytes())
+        .iter()
+        .fold(String::with_capacity(64), |mut output, byte| {
+            write!(output, "{byte:02x}").expect("writing to String cannot fail");
+            output
+        })
+}
+
+fn load_experiment(
+    bundle: &ValidatedBundle,
+    bundle_path: &Path,
+) -> Result<Option<ExperimentPlan>, BundleError> {
+    let Some(configuration) = &bundle.experiment else {
+        return Ok(None);
+    };
+    if configuration.plan.is_empty() {
+        return Err(BundleError::InvalidRuntimeTiming);
+    }
+    let configured = Path::new(&configuration.plan);
+    let path = if configured.is_absolute() {
+        configured.to_path_buf()
+    } else {
+        bundle_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(configured)
+    };
+    ExperimentPlan::load(&path)
+        .map(Some)
+        .map_err(|_| BundleError::InvalidRuntimeTiming)
 }

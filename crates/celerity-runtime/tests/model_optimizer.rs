@@ -11,10 +11,10 @@ fn fixture() -> PathBuf {
 
 #[test]
 fn production_tract_wrapper_runs_real_onnx_fixture() {
-    let model = TractModel::load(&fixture(), 2, 3).expect("load, warm, and benchmark fixture");
+    let model = TractModel::load(&fixture(), 3, 3).expect("load, warm, and benchmark fixture");
     assert_eq!(
-        model.infer(&[1.5, -2.0]).expect("finite inference"),
-        vec![1.5, -2.0]
+        model.infer(&[95.0, 50.0, 0.9]).expect("finite inference"),
+        vec![77.0, 59.0]
     );
     assert!(model.measured_ceiling_ns() > 0);
 }
@@ -22,12 +22,12 @@ fn production_tract_wrapper_runs_real_onnx_fixture() {
 #[test]
 fn corrupt_and_nonfinite_model_inputs_are_rejected() {
     assert!(matches!(
-        TractModel::load(PathBuf::from("missing.onnx").as_path(), 2, 1),
+        TractModel::load(PathBuf::from("missing.onnx").as_path(), 3, 1),
         Err(ModelError::Load(_))
     ));
-    let model = TractModel::load(&fixture(), 2, 1).expect("fixture");
+    let model = TractModel::load(&fixture(), 3, 1).expect("fixture");
     assert_eq!(
-        model.infer(&[f32::NAN, 1.0]),
+        model.infer(&[f32::NAN, 1.0, 0.5]),
         Err(ModelError::NonfiniteInput)
     );
 }

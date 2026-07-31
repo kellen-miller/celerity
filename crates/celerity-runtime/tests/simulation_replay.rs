@@ -63,7 +63,10 @@ fn replay_rejects_tampered_chunk() {
         fs::remove_dir_all(&root).expect("clean fixture");
     }
     let writer = RunWriter::start(&root, "tampered", 2, 0).expect("writer");
-    let event = celerity_runtime::RuntimeEvent::Cycle { monotonic_ms: 1 };
+    let event = celerity_runtime::RuntimeEvent::Cycle {
+        monotonic_ms: 1,
+        remaining_cycle_ns: 20_000_000,
+    };
     assert_eq!(
         writer.enqueue(RunRecord::runtime_event(1, &event).expect("event")),
         EnqueueResult::Accepted

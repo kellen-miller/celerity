@@ -16,6 +16,7 @@ identity_matches = true
 [[events]]
 kind = "cycle"
 monotonic_ms = 2
+remaining_cycle_ns = 20000000
 
 [[events]]
 kind = "command_acknowledged"
@@ -27,3 +28,4 @@ accepted = true
 [[events]]
 kind = "cycle"
 monotonic_ms = 4
+remaining_cycle_ns = 20000000

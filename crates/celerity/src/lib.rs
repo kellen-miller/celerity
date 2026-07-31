@@ -1,7 +1,11 @@
 //! Host adapters and read-only diagnostics for Celerity binaries.
 
+#[cfg(target_os = "linux")]
+mod live;
 mod powertrain;
 
+#[cfg(target_os = "linux")]
+pub use live::LiveRuntime;
 pub use powertrain::{
     CantcuDefaultStream, DecodedPowertrainFrame, DecodedSignal, PowertrainDecodeError,
     PowertrainSource, decode_powertrain_frame,
@@ -12,7 +16,7 @@ use std::{
     io::{Read, Write},
     path::Path,
     sync::{
-        Arc,
+        Arc, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -247,7 +251,7 @@ impl PowertrainCanReceiver {
         Self::bind_prequalified(powertrain_interface)
     }
 
-    fn bind_prequalified(powertrain_interface: &str) -> Result<Self, String> {
+    pub(crate) fn bind_prequalified(powertrain_interface: &str) -> Result<Self, String> {
         use nix::sys::socket::{setsockopt, sockopt};
         use socketcan::{Socket, SocketOptions};
 
@@ -307,11 +311,26 @@ impl PowertrainCanReceiver {
             timestamp_source,
         })
     }
+
+    pub(crate) fn borrowed_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        use std::os::fd::AsFd;
+
+        self.socket.as_fd()
+    }
 }
 
 #[cfg(target_os = "linux")]
 pub struct ActuatorCanTransport {
     socket: socketcan::CanFdSocket,
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) struct ReceivedControllerFrame {
+    pub id: u32,
+    pub data: Vec<u8>,
+    pub fd: bool,
+    pub bit_rate_switch: bool,
+    pub decoded: celerity_protocol::Frame,
 }
 
 #[cfg(target_os = "linux")]
@@ -326,6 +345,17 @@ impl ActuatorCanTransport {
 
         query_and_verify_actuator_netdevice(actuator_interface, powertrain_interface)
             .map_err(|error| format!("{error:?}"))?;
+        let socket =
+            socketcan::CanFdSocket::open(actuator_interface).map_err(|error| error.to_string())?;
+        socket
+            .set_error_filter_accept_all()
+            .map_err(|error| error.to_string())?;
+        Ok(Self { socket })
+    }
+
+    pub(crate) fn bind_prequalified(actuator_interface: &str) -> Result<Self, String> {
+        use socketcan::{Socket, SocketOptions};
+
         let socket =
             socketcan::CanFdSocket::open(actuator_interface).map_err(|error| error.to_string())?;
         socket
@@ -360,18 +390,33 @@ impl ActuatorCanTransport {
     /// # Errors
     ///
     /// Returns an error for kernel receive or invalid protocol payload.
-    pub fn receive(&self) -> Result<celerity_protocol::Frame, String> {
+    pub(crate) fn receive(&self) -> Result<ReceivedControllerFrame, String> {
         use socketcan::{EmbeddedFrame, Frame, Socket};
 
         let frame = self
             .socket
             .read_frame()
             .map_err(|error| error.to_string())?;
-        celerity_protocol::decode(
+        let id = frame.raw_id();
+        let data = frame.data().to_vec();
+        let decoded = celerity_protocol::decode(
             u16::try_from(frame.raw_id()).map_err(|error| error.to_string())?,
             frame.data(),
         )
-        .map_err(|error| format!("{error:?}"))
+        .map_err(|error| format!("{error:?}"))?;
+        Ok(ReceivedControllerFrame {
+            id,
+            data,
+            fd: matches!(frame, socketcan::CanAnyFrame::Fd(_)),
+            bit_rate_switch: matches!(frame, socketcan::CanAnyFrame::Fd(ref fd) if fd.is_brs()),
+            decoded,
+        })
+    }
+
+    pub(crate) fn borrowed_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        use std::os::fd::AsFd;
+
+        self.socket.as_fd()
     }
 }
 
@@ -424,6 +469,7 @@ impl DiagnosticsSnapshot {
 pub fn serve_diagnostics(
     socket_path: &Path,
     stopping: Arc<AtomicBool>,
+    snapshot: Arc<RwLock<DiagnosticsSnapshot>>,
 ) -> Result<thread::JoinHandle<Result<(), String>>, std::io::Error> {
     use std::os::unix::net::UnixListener;
 
@@ -452,9 +498,9 @@ pub fn serve_diagnostics(
                                 .map_err(|error| error.to_string())?;
                             continue;
                         }
+                        let current = snapshot.read().map_err(|error| error.to_string())?;
                         let mut response =
-                            serde_json::to_vec(&DiagnosticsSnapshot::startup_fallback())
-                                .map_err(|error| error.to_string())?;
+                            serde_json::to_vec(&*current).map_err(|error| error.to_string())?;
                         response.push(b'\n');
                         stream
                             .write_all(&response)

@@ -8,11 +8,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use celerity_runtime::{
+    CommandSource, EnqueueResult, ExternalAdapters, ModelSlots, RunContext, RunRecord, RunWriter,
+    Runtime, RuntimeEffect, RuntimeEvent, RuntimeModel, StartupMode, ValidatedBundle,
+};
 use celerity_sync::{
     NetworkPresence, ReconcileOutcome, ReqwestHomeApi, SyncConfiguration, SyncError, Synchronizer,
 };
 use reqwest::blocking::Client;
-use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
@@ -34,17 +37,6 @@ impl Drop for HomeProcess {
     }
 }
 
-#[derive(Deserialize)]
-struct JobStarted {
-    job_id: String,
-}
-
-#[derive(Deserialize)]
-struct JobStatus {
-    state: String,
-    artifact_digest: Option<String>,
-}
-
 fn digest(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -54,19 +46,66 @@ fn digest(bytes: &[u8]) -> String {
         })
 }
 
-fn make_complete_run(spool: &Path) -> io::Result<String> {
-    let run = spool.join("run-e2e");
-    fs::create_dir_all(&run)?;
-    let events = b"time_ms,coolant_c,iat_c,split_bp\n0,88,42,7500\n";
-    fs::write(run.join("events.chunk"), events)?;
-    let manifest = serde_json::to_vec(&json!({
-        "chunk_file": "events.chunk",
-        "chunk_sha256": digest(events),
-        "completion": "complete",
-        "run_id": "run-e2e",
-        "schema_version": 1
-    }))?;
-    fs::write(run.join("manifest.json"), &manifest)?;
+fn make_complete_run(spool: &Path, name: &str) -> io::Result<String> {
+    let writer = RunWriter::start_with_context(
+        spool,
+        name,
+        64,
+        0,
+        RunContext {
+            configuration_generation: 1,
+            configuration_sha256: "a".repeat(64),
+            model_bundle_digest: None,
+            protocol_major: 1,
+            firmware_generation: 1,
+            decoder_generation: 1,
+            model_abi: "thermal-v1".to_owned(),
+            model_input_signals: vec![
+                "coolant_temperature_c".to_owned(),
+                "air_temperature_c".to_owned(),
+            ],
+            model_history_length: 4,
+            sample_period_ms: 20,
+            command_lattice: vec![1000, 5000, 9000],
+            maximum_calibration_error: 100.0,
+        },
+    )
+    .map_err(io::Error::other)?;
+    let mut sequence = 0;
+    for index in 0_u32..7 {
+        for (signal, value) in [
+            ("coolant_temperature_c", 90.0 - f64::from(index)),
+            ("air_temperature_c", 45.0 - f64::from(index) / 2.0),
+        ] {
+            sequence += 1;
+            assert_eq!(
+                writer.enqueue(RunRecord::signal(
+                    sequence, sequence, signal, value, 1, 0, 1
+                )),
+                EnqueueResult::Accepted
+            );
+        }
+        if index < 6 {
+            sequence += 1;
+            let command =
+                [1000, 5000, 9000][usize::try_from(index % 3).expect("bounded command index")];
+            assert_eq!(
+                writer.enqueue(RunRecord::control(
+                    sequence,
+                    sequence,
+                    &json!({
+                        "schema_version": 1,
+                        "state": "accepted",
+                        "radiator_split_basis_points": command
+                    })
+                    .to_string(),
+                )),
+                EnqueueResult::Accepted
+            );
+        }
+    }
+    writer.seal().map_err(io::Error::other)?;
+    let manifest = fs::read(spool.join(name).join("manifest.json"))?;
     Ok(digest(&manifest))
 }
 
@@ -77,7 +116,8 @@ fn production_http_upload_trains_and_stages_exact_model() {
     let spool = temporary.path().join("spool");
     let model_root = temporary.path().join("models");
     let home_root = temporary.path().join("home");
-    let run_digest = make_complete_run(&spool).expect("complete Run fixture");
+    make_complete_run(&spool, "run-e2e-a").expect("first complete Run fixture");
+    make_complete_run(&spool, "run-e2e-b").expect("second complete Run fixture");
     let token_path = temporary.path().join("vehicle-token");
     fs::write(&token_path, "e2e-secret\n").expect("vehicle token");
 
@@ -138,6 +178,14 @@ fn production_http_upload_trains_and_stages_exact_model() {
         credential_path: token_path.clone(),
         journal_path: temporary.path().join("sync.sqlite3"),
         model_root: model_root.clone(),
+        model_abi: "thermal-v1".to_owned(),
+        model_input_signals: vec![
+            "coolant_temperature_c".to_owned(),
+            "air_temperature_c".to_owned(),
+        ],
+        model_history_length: 4,
+        model_command_lattice: vec![1000, 5000, 9000],
+        model_maximum_calibration_error: 100.0,
     };
     let home = ReqwestHomeApi::new(&base_url, &token_path).expect("production home client");
     let mut synchronizer = Synchronizer::new(configuration).expect("synchronizer");
@@ -146,48 +194,88 @@ fn production_http_upload_trains_and_stages_exact_model() {
             .reconcile_once(&AlwaysHome, &home, None, None, &[])
             .expect("upload complete Run"),
         ReconcileOutcome::Synchronized {
-            uploaded: 1,
+            uploaded: 2,
             model_staged: false,
         }
     );
 
-    let started: JobStarted = client
-        .post(format!("{base_url}/v1/jobs"))
-        .bearer_auth("e2e-secret")
-        .json(&json!({"recipe": "causal-tcn-v1", "run_digests": [run_digest]}))
-        .send()
-        .and_then(reqwest::blocking::Response::error_for_status)
-        .expect("start managed training job")
-        .json()
-        .expect("training job response");
     let job_deadline = Instant::now() + Duration::from_secs(30);
-    let artifact_digest = loop {
-        let job: JobStatus = client
-            .get(format!("{base_url}/v1/jobs/{}", started.job_id))
-            .bearer_auth("e2e-secret")
-            .send()
-            .and_then(reqwest::blocking::Response::error_for_status)
-            .expect("read training job")
-            .json()
-            .expect("training job status");
-        if job.state == "completed" {
-            break job.artifact_digest.expect("completed model digest");
+    loop {
+        let outcome = synchronizer
+            .reconcile_once(&AlwaysHome, &home, None, None, &[])
+            .expect("automatic training reconciliation");
+        if outcome
+            == (ReconcileOutcome::Synchronized {
+                uploaded: 0,
+                model_staged: true,
+            })
+        {
+            break;
         }
-        assert_ne!(job.state, "failed", "training job failed");
         assert!(Instant::now() < job_deadline, "training job timed out");
         thread::sleep(Duration::from_millis(50));
-    };
+    }
+    assert!(model_root.join("desired-digest").is_file());
+    assert!(model_root.join("slot-a/model.onnx").is_file());
+    let desired_digest = fs::read_to_string(model_root.join("desired-digest"))
+        .expect("desired digest")
+        .trim()
+        .to_owned();
+    let slots = ModelSlots::open(&model_root).expect("startup model slots");
+    let selected = slots
+        .select_configured_startup("thermal-v1", 9)
+        .expect("startup selection")
+        .expect("staged startup model");
+    assert_eq!(selected.digest, desired_digest);
 
-    assert_eq!(
-        synchronizer
-            .reconcile_once(&AlwaysHome, &home, None, None, &[])
-            .expect("download desired model"),
-        ReconcileOutcome::Synchronized {
-            uploaded: 0,
-            model_staged: true,
+    let runtime_bundle_path = temporary.path().join("runtime.toml");
+    let runtime_bundle = fs::read_to_string(repository.join("config/examples/simulation.toml"))
+        .expect("runtime bundle")
+        .replacen("history_length = 1", "history_length = 4", 1)
+        .replacen(
+            "maximum_uncertainty = 0.1",
+            "maximum_uncertainty = 100.0",
+            1,
+        );
+    fs::write(&runtime_bundle_path, runtime_bundle).expect("runtime bundle fixture");
+    let runtime_bundle = ValidatedBundle::load(&runtime_bundle_path, StartupMode::Simulation)
+        .expect("validated runtime bundle");
+    let model = RuntimeModel::load(&selected.onnx_path, &runtime_bundle)
+        .expect("load exact staged graph with tract");
+    let mut events = Vec::new();
+    for index in 0_u32..4 {
+        events.push(RuntimeEvent::ModelSignalSnapshot {
+            monotonic_ms: u64::from(index),
+            values: vec![88.0 - f64::from(index), 44.0 - f64::from(index) / 2.0],
+        });
+    }
+    events.extend([
+        RuntimeEvent::InputSnapshot {
+            monotonic_ms: 4,
+            coolant_c: 85.0,
+            iat_c: 42.5,
+        },
+        RuntimeEvent::ControllerTruth {
+            monotonic_ms: 4,
+            boot_session: 9,
+            configuration_generation: 1,
+            identity_matches: true,
+        },
+        RuntimeEvent::Cycle {
+            monotonic_ms: 5,
+            remaining_cycle_ns: 1_000_000_000,
+        },
+    ]);
+    let outcome =
+        Runtime::new_with_model(runtime_bundle, ExternalAdapters::simulation(events), model)
+            .expect("runtime composition")
+            .run();
+    assert_eq!(outcome.command_source, CommandSource::ModelOptimized);
+    assert!(outcome.effects.iter().any(|effect| matches!(
+        effect,
+        RuntimeEffect::SendCommand {
+            radiator_split_basis_points: 1000 | 5000 | 9000,
+            ..
         }
-    );
-    let staged = model_root.join(format!("{artifact_digest}.bundle"));
-    let bytes = fs::read(staged).expect("atomically staged model bundle");
-    assert_eq!(digest(&bytes), artifact_digest);
+    )));
 }

@@ -12,23 +12,41 @@ fn experiment_is_bounded_and_aborts_without_authority() {
         .join("../../fixtures/experiments/duct-sweep.toml");
     let mut experiment = ExperimentPlan::load(&path).expect("plan").start(100);
     assert_eq!(
-        experiment.advance(100, true, 90.0, true),
+        experiment.advance(100, true, 90.0, true, None),
+        ExperimentDecision::Apply {
+            radiator_split_basis_points: 1000
+        }
+    );
+    assert_eq!(
+        experiment.advance(5000, true, 90.0, true, None),
+        ExperimentDecision::Apply {
+            radiator_split_basis_points: 1000
+        }
+    );
+    assert_eq!(
+        experiment.advance(5001, true, 90.0, true, Some(1000)),
+        ExperimentDecision::Apply {
+            radiator_split_basis_points: 1000
+        }
+    );
+    assert_eq!(
+        experiment.advance(6001, true, 90.0, true, Some(1000)),
+        ExperimentDecision::Apply {
+            radiator_split_basis_points: 1000
+        }
+    );
+    assert_eq!(
+        experiment.advance(6101, true, 90.0, true, Some(1000)),
         ExperimentDecision::Apply {
             radiator_split_basis_points: 3000
         }
     );
     assert_eq!(
-        experiment.advance(1100, true, 90.0, true),
-        ExperimentDecision::Apply {
-            radiator_split_basis_points: 5000
-        }
-    );
-    assert_eq!(
-        experiment.advance(1200, true, 90.0, false),
+        experiment.advance(6200, true, 90.0, false, Some(1000)),
         ExperimentDecision::Abort(ExperimentAbort::AuthorityLost)
     );
     assert_eq!(
-        experiment.advance(1300, true, 90.0, true),
+        experiment.advance(6300, true, 90.0, true, Some(1000)),
         ExperimentDecision::Complete
     );
 }

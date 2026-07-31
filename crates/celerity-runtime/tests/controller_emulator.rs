@@ -1,4 +1,6 @@
-use celerity_protocol::{Command, Configuration, Frame, RuntimeLease, decode, encode};
+use celerity_protocol::{
+    Command, Configuration, DiscoveryProbe, Frame, RuntimeLease, decode, encode,
+};
 use celerity_runtime::{ControllerEmulator, ControllerMode, EmulatorProvisioning};
 
 fn ingest(emulator: &mut ControllerEmulator, now_ms: u64, frame: &Frame) -> Frame {
@@ -45,6 +47,37 @@ fn configured_emulator() -> ControllerEmulator {
     );
     assert!(matches!(response, Frame::ConfigurationAck { .. }));
     emulator
+}
+
+#[test]
+fn discovery_emits_announce_then_capability() {
+    let mut emulator = configured_emulator();
+    let mut payload = [0_u8; 64];
+    let encoded = encode(
+        &Frame::DiscoveryProbe(DiscoveryProbe {
+            protocol_major: 1,
+            protocol_minor: 0,
+            flags: 0,
+            probe_sequence: 4,
+        }),
+        &mut payload,
+    )
+    .expect("probe must encode");
+    let announce = emulator
+        .ingest(0, encoded.can_id, &payload[..encoded.len])
+        .expect("probe must be valid")
+        .expect("announce must be emitted");
+    assert!(matches!(
+        decode(announce.can_id, announce.payload()).expect("announce must decode"),
+        Frame::NodeAnnounce { .. }
+    ));
+    let capability = announce
+        .follow_up()
+        .expect("capability must follow announce");
+    assert!(matches!(
+        decode(capability.can_id, capability.payload()).expect("capability must decode"),
+        Frame::CapabilityReport { .. }
+    ));
 }
 
 #[test]
@@ -182,4 +215,43 @@ fn reboot_never_restores_authority() {
     assert_eq!(emulator.boot_session(), 8);
     assert_eq!(emulator.mode(), ControllerMode::LocalFallback);
     assert!(!emulator.runtime_lease_valid(1));
+}
+
+#[test]
+fn expired_runtime_lease_allows_a_new_daemon_epoch() {
+    let mut emulator = configured_emulator();
+    ingest(
+        &mut emulator,
+        0,
+        &Frame::RuntimeLease {
+            node: 1,
+            message: RuntimeLease {
+                boot_session: 7,
+                configuration_generation: 3,
+                epoch: 9,
+                renewal_sequence: 1,
+                validity_ms: 100,
+            },
+        },
+    );
+
+    emulator.advance_to(100);
+
+    let Frame::RuntimeLeaseAck { message, .. } = ingest(
+        &mut emulator,
+        101,
+        &Frame::RuntimeLease {
+            node: 1,
+            message: RuntimeLease {
+                boot_session: 7,
+                configuration_generation: 3,
+                epoch: 10,
+                renewal_sequence: 1,
+                validity_ms: 100,
+            },
+        },
+    ) else {
+        panic!("expected runtime lease acknowledgement")
+    };
+    assert_eq!(message.result, 1);
 }

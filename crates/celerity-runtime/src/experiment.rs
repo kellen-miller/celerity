@@ -9,6 +9,7 @@ pub struct ExperimentPlan {
     name: String,
     maximum_duration_ms: u64,
     maximum_coolant_c: i16,
+    settling_ms: u64,
     steps: Vec<ExperimentStep>,
 }
 
@@ -47,6 +48,7 @@ impl ExperimentPlan {
             || plan.maximum_duration_ms == 0
             || plan.maximum_duration_ms > 300_000
             || plan.maximum_coolant_c <= 0
+            || plan.settling_ms == 0
             || plan.steps.is_empty()
             || plan
                 .steps
@@ -65,9 +67,16 @@ impl ExperimentPlan {
             plan: self,
             started_ms: now_ms,
             step_index: 0,
-            step_started_ms: now_ms,
+            phase: ExperimentPhase::WaitingForAcceptance,
+            last_observed_ms: now_ms,
             terminal: false,
         }
+    }
+
+    pub(crate) fn commands_within(&self, minimum: u16, maximum: u16) -> bool {
+        self.steps
+            .iter()
+            .all(|step| (minimum..=maximum).contains(&step.radiator_split_basis_points))
     }
 }
 
@@ -87,11 +96,19 @@ pub enum ExperimentAbort {
     DurationExceeded,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExperimentPhase {
+    WaitingForAcceptance,
+    Settling { started_ms: u64 },
+    Holding { started_ms: u64 },
+}
+
 pub struct RunningExperiment {
     plan: ExperimentPlan,
     started_ms: u64,
     step_index: usize,
-    step_started_ms: u64,
+    phase: ExperimentPhase,
+    last_observed_ms: u64,
     terminal: bool,
 }
 
@@ -103,11 +120,12 @@ impl RunningExperiment {
         input_fresh: bool,
         coolant_c: f64,
         authority_active: bool,
+        accepted_basis_points: Option<u16>,
     ) -> ExperimentDecision {
         if self.terminal {
             return ExperimentDecision::Complete;
         }
-        let abort = if now_ms < self.step_started_ms {
+        let abort = if now_ms < self.last_observed_ms {
             Some(ExperimentAbort::TimeRegression)
         } else if now_ms.saturating_sub(self.started_ms) > self.plan.maximum_duration_ms {
             Some(ExperimentAbort::DurationExceeded)
@@ -124,20 +142,43 @@ impl RunningExperiment {
             self.terminal = true;
             return ExperimentDecision::Abort(abort);
         }
-
-        while self.step_index < self.plan.steps.len()
-            && now_ms.saturating_sub(self.step_started_ms)
-                >= self.plan.steps[self.step_index].duration_ms
-        {
-            self.step_started_ms = self
-                .step_started_ms
-                .saturating_add(self.plan.steps[self.step_index].duration_ms);
-            self.step_index += 1;
-        }
+        self.last_observed_ms = now_ms;
         let Some(step) = self.plan.steps.get(self.step_index) else {
             self.terminal = true;
             return ExperimentDecision::Complete;
         };
+        if self.phase != ExperimentPhase::WaitingForAcceptance
+            && accepted_basis_points != Some(step.radiator_split_basis_points)
+        {
+            self.terminal = true;
+            return ExperimentDecision::Abort(ExperimentAbort::AuthorityLost);
+        }
+        self.phase = match self.phase {
+            ExperimentPhase::WaitingForAcceptance
+                if accepted_basis_points == Some(step.radiator_split_basis_points) =>
+            {
+                ExperimentPhase::Settling { started_ms: now_ms }
+            }
+            ExperimentPhase::Settling { started_ms }
+                if now_ms.saturating_sub(started_ms) >= self.plan.settling_ms =>
+            {
+                ExperimentPhase::Holding {
+                    started_ms: started_ms.saturating_add(self.plan.settling_ms),
+                }
+            }
+            ExperimentPhase::Holding { started_ms }
+                if now_ms.saturating_sub(started_ms) >= step.duration_ms =>
+            {
+                self.step_index += 1;
+                if self.step_index == self.plan.steps.len() {
+                    self.terminal = true;
+                    return ExperimentDecision::Complete;
+                }
+                ExperimentPhase::WaitingForAcceptance
+            }
+            phase => phase,
+        };
+        let step = &self.plan.steps[self.step_index];
         ExperimentDecision::Apply {
             radiator_split_basis_points: step.radiator_split_basis_points,
         }

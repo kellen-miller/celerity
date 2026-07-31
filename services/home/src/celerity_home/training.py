@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,12 +30,23 @@ class Recipe:
     output_count: int = 2
 
 
+class NoEligibleTrainingData(RuntimeError):
+    """The admitted corpus is valid but cannot produce isolated examples."""
+
+
 def whole_run_split(run_digests: list[str]) -> dict[str, str]:
     """Assign every immutable Run wholly to a stable train/validation/test split."""
     split: dict[str, str] = {}
     for digest in sorted(set(run_digests)):
         bucket = int(hashlib.sha256(digest.encode()).hexdigest()[:8], 16) % 100
         split[digest] = "train" if bucket < 70 else "validation" if bucket < 85 else "test"
+    if len(split) >= 2 and (
+        not any(value == "train" for value in split.values())
+        or not any(value != "train" for value in split.values())
+    ):
+        ordered = sorted(split)
+        split = {digest: "train" for digest in ordered}
+        split[ordered[-1]] = "validation"
     return split
 
 
@@ -51,6 +63,169 @@ def derive_run_index(run_digests: list[str], output: Path) -> str:
     output.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, output, compression="zstd")
     return hashlib.sha256(output.read_bytes()).hexdigest()
+
+
+def load_training_examples(
+    storage_root: Path,
+    run_digests: list[str],
+    manifests: list[dict[str, object]],
+    recipe: Recipe,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[list[float]]]:
+    """Decode canonical Run protobuf records into causal history/candidate examples."""
+    if len(run_digests) < 2:
+        raise NoEligibleTrainingData("training requires at least two whole Runs")
+    assignments = whole_run_split(run_digests)
+    train_inputs: list[list[float]] = []
+    train_targets: list[list[float]] = []
+    held_inputs: list[list[float]] = []
+    held_targets: list[list[float]] = []
+    observed_values: list[list[float]] = []
+    signals = manifests[0]["model_input_signals"]
+    coolant_index = signals.index("coolant_temperature_c")
+    iat_index = signals.index("air_temperature_c")
+    for run_digest, manifest in zip(run_digests, manifests, strict=True):
+        chunk_digest = str(manifest["chunk_sha256"])
+        records = _decode_run_records(
+            (storage_root / "runs" / run_digest / chunk_digest).read_bytes()
+        )
+        snapshots: list[list[float]] = []
+        accepted_commands: list[tuple[int, float]] = []
+        pending_snapshot_index: int | None = None
+        signal_group: dict[str, float] = {}
+        for source, payload in records:
+            if source == "signal_observation":
+                observation = json.loads(payload)
+                signal_group[observation["signal"]] = float(observation["value"])
+                if all(signal in signal_group for signal in signals):
+                    values = [signal_group.pop(signal) for signal in signals]
+                    if assignments[run_digest] == "train":
+                        observed_values.append(values)
+                    snapshots.append(values)
+                    pending_snapshot_index = len(snapshots) - 1
+            elif source == "control_decision" and pending_snapshot_index is not None:
+                command = json.loads(payload)
+                if command.get("state") == "accepted":
+                    accepted_commands.append(
+                        (
+                            pending_snapshot_index,
+                            float(command["radiator_split_basis_points"]) / 10_000.0,
+                        )
+                    )
+                    pending_snapshot_index = None
+        for index, command in accepted_commands:
+            if index < recipe.history_length - 1 or index + 1 >= len(snapshots):
+                continue
+            history = snapshots[index + 1 - recipe.history_length : index + 1]
+            flattened = [
+                history[offset][signal]
+                for signal in range(recipe.signal_count)
+                for offset in range(recipe.history_length)
+            ]
+            inputs = train_inputs if assignments[run_digest] == "train" else held_inputs
+            targets = train_targets if assignments[run_digest] == "train" else held_targets
+            inputs.append([*flattened, command])
+            next_snapshot = snapshots[index + 1]
+            targets.append([next_snapshot[coolant_index], next_snapshot[iat_index]])
+    if not train_inputs or not held_inputs:
+        raise NoEligibleTrainingData("Runs contain no isolated train and held-out examples")
+    return (
+        np.asarray(train_inputs, dtype=np.float32),
+        np.asarray(train_targets, dtype=np.float32),
+        np.asarray(held_inputs, dtype=np.float32),
+        np.asarray(held_targets, dtype=np.float32),
+        observed_values,
+    )
+
+
+def _decode_run_records(chunk: bytes) -> list[tuple[str, str]]:
+    records: list[tuple[str, str]] = []
+    offset = 0
+    while offset < len(chunk):
+        length, offset = _read_varint(chunk, offset)
+        end = offset + length
+        if end > len(chunk):
+            raise RuntimeError("truncated Run record")
+        source = ""
+        payload = ""
+        monotonic_ns = 0
+        while offset < end:
+            key, offset = _read_varint(chunk, offset)
+            field = key >> 3
+            wire = key & 7
+            if wire == 0:
+                value, offset = _read_varint(chunk, offset)
+                if field == 5:
+                    monotonic_ns = value
+            elif wire == 2:
+                value_length, offset = _read_varint(chunk, offset)
+                value = chunk[offset : offset + value_length]
+                offset += value_length
+                if field == 8:
+                    source = value.decode()
+                elif field == 24:
+                    payload = _decode_embedded_string(value)
+                    source = "control_decision"
+                elif field == 21:
+                    signal, signal_value = _decode_signal_observation(value)
+                    source = "signal_observation"
+                    payload = json.dumps(
+                        {"signal": signal, "value": signal_value, "monotonic_ns": monotonic_ns}
+                    )
+            else:
+                raise RuntimeError(f"unsupported Run protobuf wire type {wire}")
+        records.append((source, payload))
+    return records
+
+
+def _decode_embedded_string(message: bytes) -> str:
+    key, offset = _read_varint(message, 0)
+    if key != ((1 << 3) | 2):
+        raise RuntimeError("invalid encoded Run payload")
+    length, offset = _read_varint(message, offset)
+    return message[offset : offset + length].decode()
+
+
+def _decode_signal_observation(message: bytes) -> tuple[str, float]:
+    offset = 0
+    signal = ""
+    value = float("nan")
+    while offset < len(message):
+        key, offset = _read_varint(message, offset)
+        field = key >> 3
+        wire = key & 7
+        if wire == 0:
+            _, offset = _read_varint(message, offset)
+        elif wire == 1:
+            if offset + 8 > len(message):
+                raise RuntimeError("truncated signal observation")
+            raw = message[offset : offset + 8]
+            offset += 8
+            if field == 2:
+                value = struct.unpack("<d", raw)[0]
+        elif wire == 2:
+            length, offset = _read_varint(message, offset)
+            raw = message[offset : offset + length]
+            offset += length
+            if field == 1:
+                signal = raw.decode()
+        else:
+            raise RuntimeError(f"unsupported signal protobuf wire type {wire}")
+    if not signal or not np.isfinite(value):
+        raise RuntimeError("invalid signal observation")
+    return signal, value
+
+
+def _read_varint(data: bytes, offset: int) -> tuple[int, int]:
+    value = 0
+    shift = 0
+    while offset < len(data) and shift < 70:
+        byte = data[offset]
+        offset += 1
+        value |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            return value, offset
+        shift += 7
+    raise RuntimeError("invalid protobuf varint")
 
 
 class CausalBlock(nn.Module):
@@ -78,9 +253,30 @@ class CausalBlock(nn.Module):
 class CausalTcn(nn.Module):
     """Small fixed-shape causal multi-output thermal network."""
 
-    def __init__(self, recipe: Recipe) -> None:
+    def __init__(
+        self,
+        recipe: Recipe,
+        signal_means: np.ndarray | None = None,
+        signal_scales: np.ndarray | None = None,
+    ) -> None:
         super().__init__()
         self.recipe = recipe
+        means = (
+            np.zeros(recipe.signal_count, dtype=np.float32)
+            if signal_means is None
+            else signal_means.astype(np.float32)
+        )
+        scales = (
+            np.ones(recipe.signal_count, dtype=np.float32)
+            if signal_scales is None
+            else signal_scales.astype(np.float32)
+        )
+        if means.shape != (recipe.signal_count,) or scales.shape != (recipe.signal_count,):
+            raise ValueError("normalization shape must match signal_count")
+        if not np.isfinite(means).all() or not np.isfinite(scales).all() or (scales <= 0).any():
+            raise ValueError("normalization values must be finite with positive scales")
+        self.register_buffer("signal_means", torch.from_numpy(means).reshape(1, -1, 1))
+        self.register_buffer("signal_scales", torch.from_numpy(scales).reshape(1, -1, 1))
         self.input_projection = nn.Conv1d(recipe.signal_count, recipe.channels, 1)
         self.blocks = nn.Sequential(
             *(
@@ -88,22 +284,58 @@ class CausalTcn(nn.Module):
                 for dilation in recipe.dilations
             )
         )
-        self.output_projection = nn.Linear(recipe.channels, recipe.output_count)
+        self.output_projection = nn.Sequential(
+            nn.Linear(recipe.channels + 1, recipe.channels),
+            nn.ReLU(),
+            nn.Linear(recipe.channels, recipe.output_count),
+        )
 
     def forward(self, flat_window: torch.Tensor) -> torch.Tensor:
-        history = flat_window.reshape(
+        history = flat_window[:, :-1].reshape(
             flat_window.shape[0], self.recipe.signal_count, self.recipe.history_length
         )
+        history = (history - self.signal_means) / self.signal_scales
         encoded = self.blocks(self.input_projection(history))
-        return self.output_projection(encoded[..., -1])
+        state_and_candidate = torch.cat((encoded[..., -1], flat_window[:, -1:]), dim=1)
+        return self.output_projection(state_and_candidate)
 
 
-def export_and_compare(output: Path, recipe: Recipe | None = None) -> dict[str, object]:
+def export_and_compare(
+    output: Path,
+    recipe: Recipe | None = None,
+    training_inputs: np.ndarray | None = None,
+    training_targets: np.ndarray | None = None,
+    evaluation_inputs: np.ndarray | None = None,
+    evaluation_targets: np.ndarray | None = None,
+    signal_means: np.ndarray | None = None,
+    signal_scales: np.ndarray | None = None,
+) -> dict[str, object]:
     """Export fixed-shape ONNX and compare it to PyTorch with the ONNX reference evaluator."""
     recipe = recipe or Recipe()
     torch.manual_seed(7)
-    model = CausalTcn(recipe).eval()
-    example = torch.linspace(-1.0, 1.0, recipe.signal_count * recipe.history_length).reshape(1, -1)
+    model = CausalTcn(recipe, signal_means, signal_scales).eval()
+    held_out_mse = None
+    if training_inputs is not None and training_targets is not None:
+        inputs = torch.from_numpy(training_inputs.astype(np.float32))
+        targets = torch.from_numpy(training_targets.astype(np.float32))
+        model.train()
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+        for _ in range(250):
+            optimizer.zero_grad()
+            loss = nn.functional.mse_loss(model(inputs), targets)
+            loss.backward()
+            optimizer.step()
+        model.eval()
+        if evaluation_inputs is None or evaluation_targets is None:
+            raise RuntimeError("fitted export requires isolated evaluation examples")
+        evaluation_values = torch.from_numpy(evaluation_inputs.astype(np.float32))
+        evaluation_expected = torch.from_numpy(evaluation_targets.astype(np.float32))
+        held_out_mse = float(
+            nn.functional.mse_loss(model(evaluation_values), evaluation_expected).detach()
+        )
+    example = torch.linspace(-1.0, 1.0, recipe.signal_count * recipe.history_length + 1).reshape(
+        1, -1
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     torch.onnx.export(
         model,
@@ -125,6 +357,15 @@ def export_and_compare(output: Path, recipe: Recipe | None = None) -> dict[str, 
         "input_shape": list(example.shape),
         "output_shape": list(expected.shape),
         "maximum_parity_error": maximum_error,
+        "held_out_mse": held_out_mse,
+        "normalization": [
+            {"mean": float(mean), "scale": float(scale)}
+            for mean, scale in zip(
+                model.signal_means.detach().numpy().reshape(-1),
+                model.signal_scales.detach().numpy().reshape(-1),
+                strict=True,
+            )
+        ],
         "onnx_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
         "recipe_parameters": json.loads(json.dumps(recipe.__dict__)),
     }

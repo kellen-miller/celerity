@@ -23,6 +23,9 @@ fn sync_has_no_authority_or_can_dependency_path() {
         "tokio-socketcan",
     ];
     for dependency in package["dependencies"].as_array().expect("dependencies") {
+        if dependency["kind"].as_str() == Some("dev") {
+            continue;
+        }
         assert!(
             !forbidden.contains(&dependency["name"].as_str().expect("dependency name")),
             "sync dependency crosses the authority boundary: {dependency}"

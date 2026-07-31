@@ -40,6 +40,19 @@ fn duplicate_command_cannot_extend_deadline() {
 }
 
 #[test]
+fn expired_runtime_lease_allows_a_new_daemon_epoch() {
+    let mut state = configured_state();
+    assert!(state.accept_runtime_lease(0, 7, 3, 9, 1, 100));
+    assert!(state.accept_command(10, 7, 3, 9, 1, 4_000));
+
+    state.advance_to(100);
+
+    assert_eq!(state.mode(), FirmwareMode::LocalFallback);
+    assert_eq!(state.current_epoch(), None);
+    assert!(state.accept_runtime_lease(101, 7, 3, 10, 1, 100));
+}
+
+#[test]
 fn interrupted_configuration_keeps_prior_generation() {
     let mut state = configured_state();
     state.begin_configuration_write(FirmwareConfiguration {

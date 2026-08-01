@@ -252,6 +252,7 @@ fn production_http_upload_trains_and_stages_exact_model() {
     events.extend([
         RuntimeEvent::InputSnapshot {
             monotonic_ms: 4,
+            observed_monotonic_ms: 4,
             coolant_c: 85.0,
             iat_c: 42.5,
         },

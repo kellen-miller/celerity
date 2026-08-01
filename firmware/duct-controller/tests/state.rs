@@ -22,12 +22,12 @@ fn firmware_command_lease_expires_independently() {
     assert!(state.accept_runtime_lease(0, 7, 3, 9, 1, 500));
     assert!(state.accept_command(10, 7, 3, 9, 1, 4_000));
     assert_eq!(state.mode(), FirmwareMode::RemoteAuthority);
-    assert_eq!(state.pwm_microseconds(), 1_400);
+    assert_eq!(state.pwm_microseconds(), Some(1_400));
 
     state.advance_to(111);
     assert_eq!(state.mode(), FirmwareMode::LocalFallback);
     assert!(state.runtime_lease_valid(111));
-    assert_eq!(state.pwm_microseconds(), 1_900);
+    assert_eq!(state.pwm_microseconds(), Some(1_900));
 }
 
 #[test]
@@ -55,20 +55,13 @@ fn expired_runtime_lease_allows_a_new_daemon_epoch() {
 }
 
 #[test]
-fn interrupted_configuration_keeps_prior_generation() {
-    let mut state = configured_state();
-    state.begin_configuration_write(FirmwareConfiguration {
-        generation: 4,
-        fallback_basis_points: 8_000,
-        pwm_endpoint_a_us: 1_100,
-        pwm_endpoint_b_us: 2_100,
-        direction: 1,
-        runtime_lease_ms: 500,
-        command_lease_ms: 100,
-        heartbeat_period_ms: 50,
-    });
-    state.recover_after_interrupted_write();
+fn unconfigured_controller_rejects_authority() {
+    let mut state = ControllerState::new(7, 9_000);
 
-    assert_eq!(state.configuration_generation(), Some(3));
+    assert_eq!(state.configuration_generation(), None);
+    assert_eq!(state.pwm_microseconds(), None);
+    assert!(!state.accept_runtime_lease(0, 7, 1, 10, 1, 500));
+    assert!(!state.accept_command(0, 7, 1, 10, 1, 4_000));
+    assert_eq!(state.mode(), FirmwareMode::LocalFallback);
     assert_eq!(state.accepted_basis_points(), 9_000);
 }

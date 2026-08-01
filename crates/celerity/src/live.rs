@@ -321,7 +321,8 @@ impl LiveRuntime {
             }
             self.last_safety_observed_ms = Some(observed_ms);
             self.ingest(RuntimeEvent::InputSnapshot {
-                monotonic_ms: observed_ms,
+                monotonic_ms: self.monotonic_ms(),
+                observed_monotonic_ms: observed_ms,
                 coolant_c,
                 iat_c,
             })?;

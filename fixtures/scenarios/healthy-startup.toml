@@ -3,6 +3,7 @@ name = "healthy-startup"
 [[events]]
 kind = "input_snapshot"
 monotonic_ms = 0
+observed_monotonic_ms = 0
 coolant_c = 95.0
 iat_c = 50.0
 

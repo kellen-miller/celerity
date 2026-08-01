@@ -41,26 +41,18 @@ def varint(value: int) -> bytes:
     return bytes(encoded)
 
 
-def run_record(sequence: int, source: str, payload: dict[str, object]) -> bytes:
-    source_bytes = source.encode()
-    payload_bytes = json.dumps(payload, separators=(",", ":")).encode()
-    message = (
-        varint(4 << 3)
-        + varint(sequence)
-        + varint((8 << 3) | 2)
-        + varint(len(source_bytes))
-        + source_bytes
-        + varint((26 << 3) | 2)
-        + varint(len(payload_bytes))
-        + payload_bytes
-    )
-    return varint(len(message)) + message
-
-
 def typed_record(sequence: int, payload_field: int, payload: bytes) -> bytes:
+    source = b"test"
     message = (
-        varint(4 << 3)
+        varint(1 << 3)
+        + varint(1)
+        + varint(4 << 3)
         + varint(sequence)
+        + varint(5 << 3)
+        + varint(sequence * 1_000_000)
+        + varint((8 << 3) | 2)
+        + varint(len(source))
+        + source
         + varint((payload_field << 3) | 2)
         + varint(len(payload))
         + payload
@@ -160,6 +152,41 @@ def test_token_auth_and_idempotent_run_admission(home_client: TestClient) -> Non
     assert response.json()["missing_run_digests"] == ["f" * 64]
 
 
+def test_run_admission_rejects_nonmonotonic_records(
+    tmp_path: Path, home_client: TestClient
+) -> None:
+    first = control_record(2, 5_000, "accepted")
+    second = control_record(1, 5_000, "accepted")
+    chunk = first + second
+    chunk_digest = digest(chunk)
+    manifest = json.dumps(
+        {
+            "schema_version": 1,
+            "completion": "complete",
+            "chunk_sha256": chunk_digest,
+        },
+        sort_keys=True,
+    ).encode()
+    run_digest = digest(manifest)
+
+    assert (
+        home_client.put(
+            f"/v1/runs/{run_digest}/chunks/{chunk_digest}",
+            content=chunk,
+            headers=AUTHORIZATION,
+        ).status_code
+        == 204
+    )
+    response = home_client.post(
+        f"/v1/runs/{run_digest}/complete", content=manifest, headers=AUTHORIZATION
+    )
+
+    assert response.status_code == 422
+    assert "sequence is not strictly increasing" in response.json()["detail"]
+    with sqlite3.connect(tmp_path / "home.sqlite3") as connection:
+        assert connection.execute("SELECT count(*) FROM runs").fetchone() == (0,)
+
+
 def test_checked_contract_covers_application_routes_and_notification_events(
     tmp_path: Path,
 ) -> None:
@@ -228,7 +255,48 @@ def test_job_admits_only_complete_runs_and_survives_as_durable_subprocess(
         notification_count = connection.execute(
             "SELECT count(*) FROM notifications WHERE job_id=?", (job_id,)
         ).fetchone()
+        baseline_path = Path(
+            connection.execute(
+                "SELECT path FROM models WHERE digest=?", (job["artifact_digest"],)
+            ).fetchone()[0]
+        )
     assert notification_count == (0,)
+
+    baseline_path.write_bytes(b"not a model bundle")
+    failed = client.post(
+        "/v1/jobs",
+        headers=AUTHORIZATION,
+        json={"run_digests": run_digests, "recipe": "causal-tcn-v1"},
+    )
+    assert failed.status_code == 202
+    failed_id = failed.json()["job_id"]
+    deadline = time.monotonic() + 10
+    failed_job = client.get(f"/v1/jobs/{failed_id}", headers=AUTHORIZATION).json()
+    while time.monotonic() < deadline and failed_job["state"] in {"queued", "running"}:
+        time.sleep(0.05)
+        failed_job = client.get(f"/v1/jobs/{failed_id}", headers=AUTHORIZATION).json()
+    assert failed_job["state"] == "failed"
+    assert "not a zip file" in failed_job["terminal_summary"]
+
+
+def test_job_admission_rejects_a_second_active_worker(
+    tmp_path: Path, home_client: TestClient
+) -> None:
+    run_digest = upload_run(home_client, "active-job-run")
+    with sqlite3.connect(tmp_path / "home.sqlite3") as connection:
+        connection.execute(
+            "INSERT INTO jobs(id, state, recipe, input_digests_json) "
+            "VALUES ('already-running', 'running', 'causal-tcn-v1', '[]')"
+        )
+
+    response = home_client.post(
+        "/v1/jobs",
+        headers=AUTHORIZATION,
+        json={"run_digests": [run_digest], "recipe": "causal-tcn-v1"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "another training job is active"
 
 
 def test_valid_but_ineligible_corpus_finishes_as_no_change(

@@ -67,10 +67,12 @@ fn discovery_emits_announce_then_capability() {
         .ingest(0, encoded.can_id, &payload[..encoded.len])
         .expect("probe must be valid")
         .expect("announce must be emitted");
-    assert!(matches!(
-        decode(announce.can_id, announce.payload()).expect("announce must decode"),
-        Frame::NodeAnnounce { .. }
-    ));
+    let Frame::NodeAnnounce { message, .. } =
+        decode(announce.can_id, announce.payload()).expect("announce must decode")
+    else {
+        panic!("expected node announce")
+    };
+    assert_eq!(message.state_flags, 1);
     let capability = announce
         .follow_up()
         .expect("capability must follow announce");

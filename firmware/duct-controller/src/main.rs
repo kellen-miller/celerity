@@ -8,6 +8,7 @@ use panic_halt as _;
 embassy_stm32::bind_interrupts!(struct Irqs {
     FDCAN1_IT0 => embassy_stm32::can::IT0InterruptHandler<embassy_stm32::peripherals::FDCAN1>;
     FDCAN1_IT1 => embassy_stm32::can::IT1InterruptHandler<embassy_stm32::peripherals::FDCAN1>;
+    RNG => embassy_stm32::rng::InterruptHandler<embassy_stm32::peripherals::RNG>;
 });
 
 #[cfg(target_arch = "arm")]
@@ -24,15 +25,16 @@ async fn main(_spawner: embassy_executor::Spawner) {
     use embassy_stm32::can::filter::{Action, Filter, FilterType, StandardFilterSlot};
     use embassy_stm32::can::{CanConfigurator, OperatingMode};
     use embassy_stm32::gpio::{Level, Output, OutputType, Speed};
+    use embassy_stm32::rng::Rng;
     use embassy_stm32::time::Hertz;
     use embassy_stm32::timer::low_level::CountingMode;
     use embassy_stm32::timer::simple_pwm::{PwmPin, SimplePwm};
     use embassy_stm32::wdg::IndependentWatchdog;
     use embassy_time::{Duration, Instant, with_timeout};
     use embedded_can::{Id, StandardId};
+    use stm32_metapac as pac;
 
     const NODE_ADDRESS: u8 = 1;
-    const BOOT_SESSION: u32 = 1;
     const PWM_PERIOD_US: u32 = 20_000;
 
     let peripherals = embassy_stm32::init(Default::default());
@@ -52,24 +54,29 @@ async fn main(_spawner: embassy_executor::Spawner) {
         CountingMode::EdgeAlignedUp,
     );
     let mut pwm_channel = pwm.ch1();
-    pwm_channel.set_duty_cycle_fully_off();
-
-    // The compiled generation is the recovery record used when neither flash
-    // slot contains a complete commissioned record. A valid CAN Configuration
-    // replaces it only while the controller remains in local fallback.
-    let mut state = ControllerState::new(BOOT_SESSION, 7_500);
-    let _configured = state.configure(FirmwareConfiguration {
-        generation: 1,
-        fallback_basis_points: 7_500,
-        pwm_endpoint_a_us: 1_000,
-        pwm_endpoint_b_us: 2_000,
-        direction: 1,
-        runtime_lease_ms: 500,
-        command_lease_ms: 150,
-        heartbeat_period_ms: 100,
-    });
-    pwm_channel.set_duty_cycle_fraction(u32::from(state.pwm_microseconds()), PWM_PERIOD_US);
+    pwm_channel.set_duty_cycle_fraction(1_750, PWM_PERIOD_US);
     pwm_channel.enable();
+
+    // Establish the powered radiator-protective output before waiting on the
+    // random source used to distinguish this boot from every prior session.
+    pac::PWR.cr1().modify(|register| register.set_dbp(true));
+    while !pac::PWR.cr1().read().dbp() {}
+    let previous_boot_session = pac::TAMP.bkpr(0).read().bkp();
+    let mut random = Rng::new(peripherals.RNG, Irqs);
+    let mut boot_session = random.next_u32();
+    while boot_session == 0 || boot_session == previous_boot_session {
+        boot_session = random.next_u32();
+    }
+    drop(random);
+    pac::TAMP
+        .bkpr(0)
+        .write(|register| register.set_bkp(boot_session));
+    pac::PWR.cr1().modify(|register| register.set_dbp(false));
+
+    // Configuration is intentionally volatile. Every reset creates a fresh
+    // boot session, starts in local fallback, and requires the daemon to
+    // reconcile Configuration before leases or commands can be accepted.
+    let mut state = ControllerState::new(boot_session, 7_500);
 
     let mut can_configurator =
         CanConfigurator::new(peripherals.FDCAN1, peripherals.PA11, peripherals.PA12, Irqs);
@@ -102,7 +109,9 @@ async fn main(_spawner: embassy_executor::Spawner) {
     loop {
         let now_ms = Instant::now().as_millis();
         state.advance_to(now_ms);
-        pwm_channel.set_duty_cycle_fraction(u32::from(state.pwm_microseconds()), PWM_PERIOD_US);
+        if let Some(pwm_microseconds) = state.pwm_microseconds() {
+            pwm_channel.set_duty_cycle_fraction(u32::from(pwm_microseconds), PWM_PERIOD_US);
+        }
         watchdog.pet();
 
         if now_ms >= next_heartbeat_ms {
@@ -112,7 +121,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
             let heartbeat = Frame::Heartbeat {
                 node: NODE_ADDRESS,
                 message: Heartbeat {
-                    boot_session: BOOT_SESSION,
+                    boot_session,
                     configuration_generation: state.configuration_generation().unwrap_or(0),
                     capability_generation: 1,
                     heartbeat_sequence,
@@ -147,7 +156,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
                 let fault = Frame::FaultReport {
                     node: NODE_ADDRESS,
                     message: FaultReport {
-                        boot_session: BOOT_SESSION,
+                        boot_session,
                         fault_sequence,
                         fault_code: 1,
                         severity: 2,
@@ -197,7 +206,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
                         } else {
                             1
                         },
-                        boot_session: BOOT_SESSION,
+                        boot_session,
                         provisioned_identity: 42,
                         firmware_generation: 1,
                         capability_generation: 1,
@@ -208,7 +217,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
                 Frame::CapabilityReport {
                     node: NODE_ADDRESS,
                     message: CapabilityReport {
-                        boot_session: BOOT_SESSION,
+                        boot_session,
                         capability_generation: 1,
                         resource_id: 1,
                         minimum_basis_points: 0,
@@ -236,7 +245,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
         let response = match frame {
             Frame::Configuration { node, message } if node == NODE_ADDRESS => {
-                let accepted = message.boot_session == BOOT_SESSION
+                let accepted = message.boot_session == boot_session
                     && state.configure(FirmwareConfiguration {
                         generation: message.configuration_generation,
                         fallback_basis_points: message.fallback_basis_points,
@@ -254,7 +263,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
                 Some(Frame::ConfigurationAck {
                     node,
                     message: ConfigurationAck {
-                        boot_session: BOOT_SESSION,
+                        boot_session,
                         configuration_generation: message.configuration_generation,
                         digest_prefix: message.digest_prefix,
                         result: if accepted { 1 } else { 2 },
@@ -273,7 +282,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
                 Some(Frame::RuntimeLeaseAck {
                     node,
                     message: RuntimeLeaseAck {
-                        boot_session: BOOT_SESSION,
+                        boot_session,
                         configuration_generation: message.configuration_generation,
                         epoch: message.epoch,
                         renewal_sequence: message.renewal_sequence,
@@ -294,7 +303,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
                 Some(Frame::CommandAck {
                     node,
                     message: CommandAck {
-                        boot_session: BOOT_SESSION,
+                        boot_session,
                         configuration_generation: message.configuration_generation,
                         epoch: message.epoch,
                         command_sequence: message.command_sequence,
@@ -317,7 +326,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
                 Some(Frame::FallbackAck {
                     node,
                     message: FallbackAck {
-                        boot_session: BOOT_SESSION,
+                        boot_session,
                         request_sequence: message.request_sequence,
                         accepted_basis_points: state.accepted_basis_points(),
                         mode: 1,

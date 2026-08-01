@@ -40,7 +40,7 @@ The NUCLEO-G431KB exposes that MCU in a Nano-format board with integrated ST-LIN
 
 Rust supports `thumbv7em-none-eabihf` as a stable [Tier 2 bare-metal target](https://doc.rust-lang.org/rustc/platform-support/thumbv7em-none-eabi.html). Prefer [`embassy-stm32`](https://github.com/embassy-rs/embassy/tree/main/embassy-stm32) because its current STM32G431 support covers FDCAN, PWM/timers, watchdogs, and internal flash. Its [direct and buffered CAN implementations](https://github.com/embassy-rs/embassy/tree/main/embassy-stm32/src/can) support an FD CAN design without introducing a separate controller abstraction.
 
-Keep the firmware lifecycle cohesive: initialize protected outputs, configuration, FDCAN, lease state, PWM, and watchdogs in an obvious order; process commands and CAN errors in the main control flow; and use a timer-driven lease expiry that forces the defined safe actuator state independently of message arrival. Network I/O, flash writes, watchdog servicing, resets, and safe-state transitions should remain visible rather than being hidden behind layers of single-use helpers.
+Keep the firmware lifecycle cohesive: initialize protected outputs, volatile configuration state, FDCAN, lease state, PWM, and watchdogs in an obvious order; process commands and CAN errors in the main control flow; and use a timer-driven lease expiry that forces the defined safe actuator state independently of message arrival. Network I/O, configuration reconciliation, watchdog servicing, resets, and safe-state transitions should remain visible rather than being hidden behind layers of single-use helpers.
 
 [`stm32g4xx-hal`](https://github.com/stm32-rs/stm32g4xx-hal) with [`fdcan`](https://github.com/stm32-rs/fdcan) remains a viable fallback, but it is less active and its repositories retain [open CAN correctness concerns](https://github.com/stm32-rs/stm32g4xx-hal/issues?q=is%3Aissue%20state%3Aopen%20CAN). That makes it a weaker default for safety-relevant control firmware.
 
@@ -62,7 +62,7 @@ The choice is accepted for an installed carrier only after the bench and HIL set
 - lease expiry during silence, malformed or stale commands, task stalls, and resets, with every path reaching the defined safe actuator state;
 - independent watchdog and window-watchdog fault tests, including stalled control and communication paths;
 - PWM frequency, duty, jitter, startup, shutdown, and safe-state timing under maximum interrupt and CAN load;
-- configuration-flash writes interrupted at each power-loss point, proving recovery to a valid prior/default configuration;
+- controller reset and full power-cycle trials proving each new boot session requires fresh configuration reconciliation before authority;
 - TCAN1044AV-Q1 standby and default-state behavior, stuck-dominant protection, and unpowered bus-loading tests;
 - protected-power transient, brownout, reverse-polarity, EMC, operating-temperature, harness fault, TVS, and termination tests required by issue #3.
 

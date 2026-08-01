@@ -509,6 +509,7 @@ name = "duct-controller"
 version = "0.1.0"
 dependencies = [
  "celerity-protocol",
+ "celerity-runtime",
  "cortex-m",
  "cortex-m-rt",
  "embassy-executor",
@@ -519,6 +520,7 @@ dependencies = [
  "panic-halt",
  "serde",
  "serde_json",
+ "stm32-metapac",
 ]
 
 [[package]]

@@ -33,7 +33,6 @@ pub struct ControllerState {
     boot_session: u32,
     immutable_fallback_basis_points: u16,
     active_configuration: Option<FirmwareConfiguration>,
-    staging_configuration: Option<FirmwareConfiguration>,
     runtime_lease: Option<RuntimeLeaseState>,
     command_deadline_ms: Option<u64>,
     last_command_sequence: Option<u32>,
@@ -48,7 +47,6 @@ impl ControllerState {
             boot_session,
             immutable_fallback_basis_points,
             active_configuration: None,
-            staging_configuration: None,
             runtime_lease: None,
             command_deadline_ms: None,
             last_command_sequence: None,
@@ -65,21 +63,9 @@ impl ControllerState {
             return false;
         }
 
-        self.staging_configuration = Some(configuration);
-        self.active_configuration = self.staging_configuration.take();
+        self.active_configuration = Some(configuration);
         self.accepted_basis_points = configuration.fallback_basis_points;
         true
-    }
-
-    pub fn begin_configuration_write(&mut self, configuration: FirmwareConfiguration) {
-        if valid_configuration(configuration) {
-            self.staging_configuration = Some(configuration);
-        }
-    }
-
-    pub fn recover_after_interrupted_write(&mut self) {
-        self.staging_configuration = None;
-        self.select_fallback();
     }
 
     pub fn revoke_authority(&mut self) {
@@ -204,23 +190,23 @@ impl ControllerState {
     }
 
     #[must_use]
-    pub fn pwm_microseconds(&self) -> u16 {
-        let Some(configuration) = self.active_configuration else {
-            return 0;
-        };
+    pub fn pwm_microseconds(&self) -> Option<u16> {
+        let configuration = self.active_configuration?;
         let span = configuration
             .pwm_endpoint_b_us
             .abs_diff(configuration.pwm_endpoint_a_us);
         let offset = u32::from(span) * u32::from(self.accepted_basis_points) / 10_000;
         let offset = u16::try_from(offset).unwrap_or(u16::MAX);
-        match (
-            configuration.direction,
-            configuration.pwm_endpoint_a_us <= configuration.pwm_endpoint_b_us,
-        ) {
-            (1, true) | (2, false) => configuration.pwm_endpoint_a_us.saturating_add(offset),
-            (1, false) | (2, true) => configuration.pwm_endpoint_a_us.saturating_sub(offset),
-            _ => 0,
-        }
+        Some(
+            match (
+                configuration.direction,
+                configuration.pwm_endpoint_a_us <= configuration.pwm_endpoint_b_us,
+            ) {
+                (1, true) | (2, false) => configuration.pwm_endpoint_a_us.saturating_add(offset),
+                (1, false) | (2, true) => configuration.pwm_endpoint_a_us.saturating_sub(offset),
+                _ => 0,
+            },
+        )
     }
 
     fn select_fallback(&mut self) {

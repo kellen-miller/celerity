@@ -7,7 +7,7 @@ Every item below is **unexecuted**. Hardware-free CI is not evidence for it.
 - [ ] Confirm target flash/stack margin and worst-case executor timing on ARM.
 - [ ] Measure FDCAN receive/transmit, error, bus-off, and recovery behavior.
 - [ ] Measure PWM cadence/jitter and watchdog/local-fallback latency under load.
-- [ ] Interrupt flash configuration writes and verify the prior record remains valid.
+- [ ] Reset and power-cycle the controller repeatedly; verify each new boot session remains in local fallback until discovery and volatile configuration reconciliation complete.
 - [ ] Measure model inference ceiling and required cycle margin on the target.
 
 ## Electrical and fail-silent boundary

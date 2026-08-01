@@ -24,6 +24,14 @@ from celerity_home.training import (
 )
 
 
+def _connect(database: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(database, timeout=5)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys=ON")
+    connection.execute("PRAGMA busy_timeout=5000")
+    return connection
+
+
 def classify_evaluation(
     maximum_parity_error: float,
     already_staged: bool,
@@ -45,8 +53,7 @@ def classify_evaluation(
 def run(storage_root: Path, job_id: str) -> None:
     """Train and package one immutable, self-describing model bundle."""
     database = storage_root / "home.sqlite3"
-    connection = sqlite3.connect(database)
-    connection.row_factory = sqlite3.Row
+    connection = _connect(database)
     job = connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
     if job is None:
         raise RuntimeError(f"unknown job {job_id}")
@@ -165,30 +172,27 @@ def run(storage_root: Path, job_id: str) -> None:
         baseline = connection.execute(
             "SELECT path FROM models WHERE digest=? AND state='staged'", (desired["value"],)
         ).fetchone()
-        if baseline is not None:
-            try:
-                with zipfile.ZipFile(baseline["path"]) as archive:
-                    baseline_manifest = json.loads(archive.read("manifest.json"))
-                    baseline_model_bytes = archive.read("model.onnx")
-                baseline_contract_matches = (
-                    baseline_manifest.get("signal_order") == contract["model_input_signals"]
-                    and baseline_manifest.get("sample_period_ms") == contract["sample_period_ms"]
-                    and baseline_manifest.get("history_length") == contract["model_history_length"]
-                    and baseline_manifest.get("command_lattice") == contract["command_lattice"]
-                    and baseline_manifest.get("compatibility", {}).get("model_abi")
-                    == contract["model_abi"]
-                )
-                if baseline_contract_matches:
-                    evaluator = ReferenceEvaluator(onnx.load_from_string(baseline_model_bytes))
-                    prediction = np.concatenate(
-                        [
-                            evaluator.run(None, {"thermal_history": row.reshape(1, -1)})[0]
-                            for row in held_inputs
-                        ]
-                    )
-                    baseline_mse = float(np.mean((prediction - held_targets) ** 2))
-            except (OSError, ValueError, zipfile.BadZipFile, KeyError):
-                baseline_mse = None
+        if baseline is None:
+            raise RuntimeError("desired baseline model is absent or not staged")
+        with zipfile.ZipFile(baseline["path"]) as archive:
+            baseline_manifest = json.loads(archive.read("manifest.json"))
+            baseline_model_bytes = archive.read("model.onnx")
+        baseline_contract_matches = (
+            baseline_manifest.get("signal_order") == contract["model_input_signals"]
+            and baseline_manifest.get("sample_period_ms") == contract["sample_period_ms"]
+            and baseline_manifest.get("history_length") == contract["model_history_length"]
+            and baseline_manifest.get("command_lattice") == contract["command_lattice"]
+            and baseline_manifest.get("compatibility", {}).get("model_abi") == contract["model_abi"]
+        )
+        if not baseline_contract_matches:
+            raise RuntimeError("desired baseline model contract is incompatible")
+        evaluator = ReferenceEvaluator(onnx.load_from_string(baseline_model_bytes))
+        prediction = np.concatenate(
+            [evaluator.run(None, {"thermal_history": row.reshape(1, -1)})[0] for row in held_inputs]
+        )
+        baseline_mse = float(np.mean((prediction - held_targets) ** 2))
+        if not np.isfinite(baseline_mse):
+            raise RuntimeError("desired baseline evaluation is not finite")
     candidate_mse = float(evaluation["held_out_mse"])
     calibration_error = candidate_mse**0.5
     materially_improves = baseline_mse is None or candidate_mse < baseline_mse - max(
@@ -196,7 +200,7 @@ def run(storage_root: Path, job_id: str) -> None:
     )
     state = classify_evaluation(
         float(evaluation["maximum_parity_error"]),
-        existing is not None and existing["state"] == "staged",
+        existing is not None,
         materially_improves,
         calibration_error,
         float(contract["maximum_calibration_error"]),
@@ -232,7 +236,7 @@ def run(storage_root: Path, job_id: str) -> None:
                 "summary": f"recipe {job['recipe']} rejected",
             }
             connection.execute(
-                "INSERT INTO notifications(event_id, job_id, payload_json, state) "
+                "INSERT OR IGNORE INTO notifications(event_id, job_id, payload_json, state) "
                 "VALUES (?, ?, ?, 'pending')",
                 (str(job_id), job_id, json.dumps(payload, sort_keys=True)),
             )
@@ -248,7 +252,7 @@ def main() -> None:
         run(arguments.storage_root, arguments.job_id)
     except Exception as error:
         database = arguments.storage_root / "home.sqlite3"
-        connection = sqlite3.connect(database)
+        connection = _connect(database)
         payload = {
             "schema_version": 1,
             "event_id": str(arguments.job_id),

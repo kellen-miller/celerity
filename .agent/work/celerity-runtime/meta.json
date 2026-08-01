@@ -4,7 +4,7 @@
   "stage": "implementation",
   "state": "active",
   "created_at": "2026-07-31T17:45:15Z",
-  "updated_at": "2026-07-31T22:32:00Z",
+  "updated_at": "2026-08-01T00:18:33Z",
   "wayfinder_map_title": "Design the Celerity vehicle control runtime",
   "wayfinder_map_url": "https://github.com/kellen-miller/celerity/issues/1",
   "wayfinder_state": "completed",
@@ -20,7 +20,10 @@
     "plan_review": "plan-review.html",
     "adversarial_review": "adversarial/plan-review.md",
     "adversarial_review_prompt": "adversarial/plan-review-prompt.md",
-    "adversarial_review_stream": "adversarial/plan-review.anthropic.jsonl"
+    "adversarial_review_stream": "adversarial/plan-review.anthropic.jsonl",
+    "implementation_adversarial_review": "adversarial/implementation-review.md",
+    "implementation_adversarial_review_prompt": "adversarial/implementation-review-prompt.md",
+    "implementation_adversarial_review_stream": "adversarial/implementation-review.anthropic.jsonl"
   },
   "plan_review": {
     "revision": 1,
@@ -105,6 +108,79 @@
       }
     ]
   },
+  "implementation_adversarial_review": {
+    "event_count": 1,
+    "status": "completed",
+    "review_scope": "implementation",
+    "author_provider": "OpenAI",
+    "reviewer_provider": "Anthropic",
+    "actual_model": "claude-opus-4-8",
+    "actual_reasoning_effort": "medium",
+    "unavailable_capability_fallback": "none",
+    "independence": "cross_provider",
+    "review_artifact": "adversarial/implementation-review.md",
+    "prompt_artifact": "adversarial/implementation-review-prompt.md",
+    "stream_artifact": "adversarial/implementation-review.anthropic.jsonl",
+    "exact_status_delimiter_verified": true,
+    "issues_found": 8,
+    "critical_count": 0,
+    "high_count": 2,
+    "medium_count": 4,
+    "low_count": 2,
+    "confidence": "high",
+    "blocking_at_review": true,
+    "disposition_status": "resolved",
+    "dispositions": [
+      {
+        "id": 1,
+        "severity": "high",
+        "disposition": "accepted",
+        "outcome": "Runtime events now carry current monotonic ingest time separately from sensor observation time used for staleness, preventing valid live I/O order from latching a false hard fault."
+      },
+      {
+        "id": 2,
+        "severity": "high",
+        "disposition": "accepted_with_hardware_appropriate_fix",
+        "outcome": "STM32 firmware selects a fresh nonzero hardware-RNG boot session, rejects the immediately prior TAMP backup-domain value, and establishes safe fallback before waiting for randomness."
+      },
+      {
+        "id": 3,
+        "severity": "medium",
+        "disposition": "accepted_alternative",
+        "outcome": "Configuration is explicitly volatile; each fresh boot session starts in local fallback and requires discovery plus full configuration reconciliation before leases or commands. Unused flash-persistence code and claims were removed."
+      },
+      {
+        "id": 4,
+        "severity": "medium",
+        "disposition": "accepted",
+        "outcome": "Missing, unstaged, incompatible, unreadable, or nonfinite desired baselines fail candidate evaluation closed; only the intentional no-desired-baseline bootstrap case may stage without comparison."
+      },
+      {
+        "id": 5,
+        "severity": "medium",
+        "disposition": "accepted",
+        "outcome": "One canonical Run v1 decoder validates protobuf framing, schema major, source and typed-payload cardinality, strict sequence increase, monotonic time, UTF-8, and signal validity at HTTP admission and corpus load."
+      },
+      {
+        "id": 6,
+        "severity": "medium",
+        "disposition": "accepted",
+        "outcome": "SQLite uses WAL, a busy timeout, an immediate transaction and a one-active-job unique index; recovery validates PID start time, deterministic duplicate models converge to no-change, and notifications are idempotent."
+      },
+      {
+        "id": 7,
+        "severity": "low",
+        "disposition": "accepted",
+        "outcome": "A direct firmware/emulator equivalence test compares configuration, leases, command acceptance, mode, split, and expiry, while firmware golden conformance re-encodes and byte-compares every vector."
+      },
+      {
+        "id": 8,
+        "severity": "low",
+        "disposition": "accepted",
+        "outcome": "Vehicle bearer tokens are compared with hmac.compare_digest."
+      }
+    ]
+  },
   "phase_evidence": {
     "planning": {
       "actual_model": "gpt-5.6-sol",
@@ -128,29 +204,33 @@
       "status": "active",
       "reopen_reason": "Closeout review found that celerityd did not execute the runtime lifecycle and the executor could not select a model command.",
       "pull_request": 17,
-      "head_commit": "87d5d49",
+      "head_commit": "e55df1c",
       "local_validation": {
         "status": "passed",
-        "completed_at": "2026-07-31T22:32:00Z",
+        "completed_at": "2026-08-01T00:18:33Z",
         "checks": [
           "./scripts/check-rust --portable",
           "./scripts/check-python",
           "./scripts/check-e2e",
           "./scripts/check-artifacts",
           "./scripts/check-site",
+          "native Linux container: cargo clippy --locked --workspace --all-targets -- -D warnings",
+          "native Linux/amd64 container with vcan-powertrain and vcan-controller: cargo test --locked --workspace",
+          "native Linux/amd64 CPython 3.13 container: Ruff and 16 home tests",
           "git diff --check"
         ],
         "local_limitations": [
           "ARM64 GNU link deferred to Linux CI because the macOS host has no aarch64-linux-gnu-gcc",
-          "vCAN and host systemd lifecycle deferred to Linux CI"
+          "host systemd lifecycle deferred to Linux CI"
         ]
       },
       "ci": {
-        "workflow_run_id": 30664026585,
-        "status": "passed",
-        "linux_duration": "12m28s",
-        "macos_portable_duration": "5m36s",
-        "ubuntu_portable_duration": "5m21s"
+        "initial_green_run_id": 30664026585,
+        "initial_green_head": "87d5d49",
+        "fresh_run_id": 30673118789,
+        "fresh_head": "e55df1c",
+        "fresh_status": "passed",
+        "review_fix_status": "validated_locally_uncommitted"
       }
     }
   }

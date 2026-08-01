@@ -46,6 +46,7 @@ fn healthy_events() -> Vec<RuntimeEvent> {
     vec![
         RuntimeEvent::InputSnapshot {
             monotonic_ms: 0,
+            observed_monotonic_ms: 0,
             coolant_c: 95.0,
             iat_c: 50.0,
         },
@@ -149,6 +150,34 @@ fn repeated_logical_time_has_identical_semantics() {
 }
 
 #[test]
+fn earlier_signal_observation_does_not_regress_ingest_time() {
+    let events = vec![
+        RuntimeEvent::ControllerTruth {
+            monotonic_ms: 2,
+            boot_session: 7,
+            configuration_generation: 3,
+            identity_matches: true,
+        },
+        RuntimeEvent::InputSnapshot {
+            monotonic_ms: 3,
+            observed_monotonic_ms: 0,
+            coolant_c: 95.0,
+            iat_c: 50.0,
+        },
+        RuntimeEvent::Cycle {
+            monotonic_ms: 4,
+            remaining_cycle_ns: 1_000_000_000,
+        },
+    ];
+    let outcome = Runtime::new(bundle(), ExternalAdapters::simulation(events))
+        .expect("matching composition")
+        .run();
+
+    assert!(!outcome.hard_fault_latched);
+    assert_eq!(outcome.final_feature_authority, FeatureAuthority::Arming);
+}
+
+#[test]
 fn stale_input_revokes_authority_and_stops_renewal() {
     let mut events = healthy_events();
     events.push(RuntimeEvent::Cycle {
@@ -198,6 +227,7 @@ fn stale_command_acknowledgement_stops_lease_renewal() {
     events.extend([
         RuntimeEvent::InputSnapshot {
             monotonic_ms: 44,
+            observed_monotonic_ms: 44,
             coolant_c: 95.0,
             iat_c: 50.0,
         },
@@ -229,6 +259,7 @@ fn accepted_command_acknowledgement_refreshes_controller_truth() {
     events.extend([
         RuntimeEvent::InputSnapshot {
             monotonic_ms: 42,
+            observed_monotonic_ms: 42,
             coolant_c: 95.0,
             iat_c: 50.0,
         },
@@ -256,6 +287,7 @@ fn experiment_waits_for_authority_and_rejection_aborts_once() {
     let events = vec![
         RuntimeEvent::InputSnapshot {
             monotonic_ms: 0,
+            observed_monotonic_ms: 0,
             coolant_c: 95.0,
             iat_c: 50.0,
         },

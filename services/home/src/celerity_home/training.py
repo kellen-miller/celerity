@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import struct
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +14,8 @@ import pyarrow.parquet as pq
 import torch
 from onnx.reference import ReferenceEvaluator
 from torch import nn
+
+from celerity_home.run import decode_run_records
 
 # Both model outputs are temperatures. This remains far below source sensor resolution while
 # allowing harmless floating-point differences between supported ONNX/PyTorch platforms.
@@ -89,16 +90,16 @@ def load_training_examples(
     iat_index = signals.index("air_temperature_c")
     for run_digest, manifest in zip(run_digests, manifests, strict=True):
         chunk_digest = str(manifest["chunk_sha256"])
-        records = _decode_run_records(
+        records = decode_run_records(
             (storage_root / "runs" / run_digest / chunk_digest).read_bytes()
         )
         snapshots: list[list[float]] = []
         accepted_commands: list[tuple[int, float]] = []
         pending_snapshot_index: int | None = None
         signal_group: dict[str, float] = {}
-        for source, payload in records:
-            if source == "signal_observation":
-                observation = json.loads(payload)
+        for record in records:
+            if record.kind == "signal_observation":
+                observation = json.loads(record.payload)
                 signal_group[observation["signal"]] = float(observation["value"])
                 if all(signal in signal_group for signal in signals):
                     values = [signal_group.pop(signal) for signal in signals]
@@ -106,8 +107,8 @@ def load_training_examples(
                         observed_values.append(values)
                     snapshots.append(values)
                     pending_snapshot_index = len(snapshots) - 1
-            elif source == "control_decision" and pending_snapshot_index is not None:
-                command = json.loads(payload)
+            elif record.kind == "control_decision" and pending_snapshot_index is not None:
+                command = json.loads(record.payload)
                 if command.get("state") == "accepted":
                     accepted_commands.append(
                         (
@@ -139,97 +140,6 @@ def load_training_examples(
         np.asarray(held_targets, dtype=np.float32),
         observed_values,
     )
-
-
-def _decode_run_records(chunk: bytes) -> list[tuple[str, str]]:
-    records: list[tuple[str, str]] = []
-    offset = 0
-    while offset < len(chunk):
-        length, offset = _read_varint(chunk, offset)
-        end = offset + length
-        if end > len(chunk):
-            raise RuntimeError("truncated Run record")
-        source = ""
-        payload = ""
-        monotonic_ns = 0
-        while offset < end:
-            key, offset = _read_varint(chunk, offset)
-            field = key >> 3
-            wire = key & 7
-            if wire == 0:
-                value, offset = _read_varint(chunk, offset)
-                if field == 5:
-                    monotonic_ns = value
-            elif wire == 2:
-                value_length, offset = _read_varint(chunk, offset)
-                value = chunk[offset : offset + value_length]
-                offset += value_length
-                if field == 8:
-                    source = value.decode()
-                elif field == 24:
-                    payload = _decode_embedded_string(value)
-                    source = "control_decision"
-                elif field == 21:
-                    signal, signal_value = _decode_signal_observation(value)
-                    source = "signal_observation"
-                    payload = json.dumps(
-                        {"signal": signal, "value": signal_value, "monotonic_ns": monotonic_ns}
-                    )
-            else:
-                raise RuntimeError(f"unsupported Run protobuf wire type {wire}")
-        records.append((source, payload))
-    return records
-
-
-def _decode_embedded_string(message: bytes) -> str:
-    key, offset = _read_varint(message, 0)
-    if key != ((1 << 3) | 2):
-        raise RuntimeError("invalid encoded Run payload")
-    length, offset = _read_varint(message, offset)
-    return message[offset : offset + length].decode()
-
-
-def _decode_signal_observation(message: bytes) -> tuple[str, float]:
-    offset = 0
-    signal = ""
-    value = float("nan")
-    while offset < len(message):
-        key, offset = _read_varint(message, offset)
-        field = key >> 3
-        wire = key & 7
-        if wire == 0:
-            _, offset = _read_varint(message, offset)
-        elif wire == 1:
-            if offset + 8 > len(message):
-                raise RuntimeError("truncated signal observation")
-            raw = message[offset : offset + 8]
-            offset += 8
-            if field == 2:
-                value = struct.unpack("<d", raw)[0]
-        elif wire == 2:
-            length, offset = _read_varint(message, offset)
-            raw = message[offset : offset + length]
-            offset += length
-            if field == 1:
-                signal = raw.decode()
-        else:
-            raise RuntimeError(f"unsupported signal protobuf wire type {wire}")
-    if not signal or not np.isfinite(value):
-        raise RuntimeError("invalid signal observation")
-    return signal, value
-
-
-def _read_varint(data: bytes, offset: int) -> tuple[int, int]:
-    value = 0
-    shift = 0
-    while offset < len(data) and shift < 70:
-        byte = data[offset]
-        offset += 1
-        value |= (byte & 0x7F) << shift
-        if byte < 0x80:
-            return value, offset
-        shift += 7
-    raise RuntimeError("invalid protobuf varint")
 
 
 class CausalBlock(nn.Module):

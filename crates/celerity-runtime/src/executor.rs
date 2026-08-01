@@ -24,6 +24,7 @@ pub enum CommandSource {
 pub enum RuntimeEvent {
     InputSnapshot {
         monotonic_ms: u64,
+        observed_monotonic_ms: u64,
         coolant_c: f64,
         iat_c: f64,
     },
@@ -232,7 +233,7 @@ impl RuntimeSession {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct InputSnapshot {
-    monotonic_ms: u64,
+    observed_monotonic_ms: u64,
     coolant_c: f64,
     iat_c: f64,
 }
@@ -306,13 +307,14 @@ impl ExecutorState {
         self.last_monotonic_ms = Some(now_ms);
         match event {
             RuntimeEvent::InputSnapshot {
-                monotonic_ms,
+                observed_monotonic_ms,
                 coolant_c,
                 iat_c,
+                ..
             } => {
                 if coolant_c.is_finite() && iat_c.is_finite() {
                     self.input = Some(InputSnapshot {
-                        monotonic_ms,
+                        observed_monotonic_ms,
                         coolant_c,
                         iat_c,
                     });
@@ -439,16 +441,18 @@ impl ExecutorState {
             self.select_fallback();
             return;
         };
-        let healthy = now_ms.saturating_sub(input.monotonic_ms) <= self.maximum_input_age_ms
+        let healthy = now_ms.saturating_sub(input.observed_monotonic_ms)
+            <= self.maximum_input_age_ms
             && now_ms.saturating_sub(controller.monotonic_ms) <= self.maximum_input_age_ms
             && controller.identity_matches
             && controller.configuration_generation > 0;
         if !healthy {
-            let reason = if now_ms.saturating_sub(input.monotonic_ms) > self.maximum_input_age_ms {
-                ExperimentAbort::StaleInput
-            } else {
-                ExperimentAbort::AuthorityLost
-            };
+            let reason =
+                if now_ms.saturating_sub(input.observed_monotonic_ms) > self.maximum_input_age_ms {
+                    ExperimentAbort::StaleInput
+                } else {
+                    ExperimentAbort::AuthorityLost
+                };
             self.abort_experiment(reason);
             self.select_fallback();
             return;

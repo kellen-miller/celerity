@@ -1,4 +1,4 @@
-use celerity_protocol::Frame;
+use celerity_protocol::{Frame, encode};
 use duct_controller::{ControllerState, FirmwareConfiguration, FirmwareMode};
 use serde::Deserialize;
 
@@ -33,6 +33,16 @@ fn firmware_native_state_consumes_shared_raw_vectors() {
             celerity_protocol::decode(can_id, &payload).expect("firmware protocol decode")
         })
         .collect::<Vec<_>>();
+
+    for (frame, vector) in decoded.iter().zip(&golden.vectors) {
+        let mut payload = [0_u8; 64];
+        let encoded = encode(frame, &mut payload).expect("firmware protocol encode");
+        assert_eq!(
+            encoded.can_id,
+            u16::from_str_radix(vector.can_id.trim_start_matches("0x"), 16).expect("golden CAN ID")
+        );
+        assert_eq!(hex::encode(&payload[..encoded.len]), vector.payload_hex);
+    }
 
     let configuration = decoded.iter().find_map(|frame| match frame {
         Frame::Configuration { message, .. } => Some(message),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import sqlite3
@@ -20,6 +21,8 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
+
+from celerity_home.run import RunFormatError, decode_run_records
 
 
 class ReconcileRequest(BaseModel):
@@ -46,9 +49,10 @@ def _digest(data: bytes) -> str:
 
 
 def _connect(database: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(database)
+    connection = sqlite3.connect(database, timeout=5)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys=ON")
+    connection.execute("PRAGMA busy_timeout=5000")
     return connection
 
 
@@ -56,6 +60,7 @@ def migrate(database: Path) -> None:
     """Create the explicit schema owned by the single home application."""
     database.parent.mkdir(parents=True, exist_ok=True)
     with _connect(database) as connection:
+        connection.execute("PRAGMA journal_mode=WAL")
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS runs (
@@ -87,6 +92,7 @@ def migrate(database: Path) -> None:
               recipe TEXT NOT NULL,
               input_digests_json TEXT NOT NULL,
               pid INTEGER,
+              pid_start_ticks TEXT,
               stdout_path TEXT,
               stderr_path TEXT,
               artifact_digest TEXT,
@@ -102,20 +108,24 @@ def migrate(database: Path) -> None:
               last_error TEXT,
               FOREIGN KEY(job_id) REFERENCES jobs(id)
             );
+            CREATE UNIQUE INDEX IF NOT EXISTS one_active_job
+              ON jobs ((1)) WHERE state IN ('queued', 'running');
             """
         )
 
 
-def _process_is_running(pid: int | None) -> bool:
-    if pid is None:
-        return False
+def _process_start_ticks(pid: int) -> str | None:
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return fields[19]
+    except (FileNotFoundError, IndexError, OSError):
+        return None
+
+
+def _owned_process_is_running(pid: int | None, expected_start_ticks: str | None) -> bool:
+    if pid is None or expected_start_ticks is None:
         return False
-    except PermissionError:
-        return True
-    return True
+    return _process_start_ticks(pid) == expected_start_ticks
 
 
 def _launch_managed_job(
@@ -141,7 +151,9 @@ def _launch_managed_job(
         )
     with _transaction(database) as connection:
         connection.execute(
-            "UPDATE jobs SET state='running', pid=? WHERE id=?", (process.pid, job_id)
+            "UPDATE jobs SET state='running', pid=?, pid_start_ticks=? "
+            "WHERE id=? AND state IN ('queued', 'running')",
+            (process.pid, _process_start_ticks(process.pid), job_id),
         )
 
 
@@ -150,12 +162,12 @@ def recover_managed_jobs(storage_root: Path) -> int:
     database = storage_root / "home.sqlite3"
     with _connect(database) as connection:
         jobs = connection.execute(
-            "SELECT id, pid, stdout_path, stderr_path FROM jobs "
+            "SELECT id, pid, pid_start_ticks, stdout_path, stderr_path FROM jobs "
             "WHERE state IN ('queued', 'running') ORDER BY created_at, id"
         ).fetchall()
     recovered = 0
     for job in jobs:
-        if _process_is_running(job["pid"]):
+        if _owned_process_is_running(job["pid"], job["pid_start_ticks"]):
             continue
         _launch_managed_job(
             storage_root,
@@ -172,8 +184,12 @@ def recover_managed_jobs(storage_root: Path) -> int:
 def _transaction(database: Path) -> Iterator[sqlite3.Connection]:
     connection = _connect(database)
     try:
-        with connection:
-            yield connection
+        connection.execute("BEGIN IMMEDIATE")
+        yield connection
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
     finally:
         connection.close()
 
@@ -227,7 +243,9 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
         return {"status": "ready"}
 
     def authenticate(authorization: str | None = Header(default=None)) -> None:
-        if authorization != f"Bearer {vehicle_token}":
+        if authorization is None or not hmac.compare_digest(
+            authorization, f"Bearer {vehicle_token}"
+        ):
             raise HTTPException(status_code=401, detail="invalid vehicle token")
 
     @app.post("/v1/reconcile", dependencies=[Depends(authenticate)])
@@ -404,8 +422,13 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
                 status_code=422, detail="only complete Run v1 manifests are admitted"
             )
         chunk_path = storage_root / "runs" / run_digest / chunk_digest
-        if not chunk_path.exists() or _digest(chunk_path.read_bytes()) != chunk_digest:
+        chunk_bytes = chunk_path.read_bytes() if chunk_path.exists() else b""
+        if not chunk_bytes or _digest(chunk_bytes) != chunk_digest:
             raise HTTPException(status_code=422, detail="manifest chunk is absent or corrupt")
+        try:
+            decode_run_records(chunk_bytes)
+        except RunFormatError as error:
+            raise HTTPException(status_code=422, detail=f"invalid Run chunk: {error}") from error
         with _transaction(database) as connection:
             existing = connection.execute(
                 "SELECT manifest_json FROM runs WHERE digest=?", (run_digest,)
@@ -433,6 +456,10 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
         if not request.run_digests:
             raise HTTPException(status_code=422, detail="job requires at least one Run")
         with _transaction(database) as connection:
+            if connection.execute(
+                "SELECT 1 FROM jobs WHERE state IN ('queued', 'running') LIMIT 1"
+            ).fetchone():
+                raise HTTPException(status_code=409, detail="another training job is active")
             admitted = {
                 row["digest"]
                 for row in connection.execute(

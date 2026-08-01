@@ -111,7 +111,10 @@ impl ControllerEmulator {
                         protocol_major: 1,
                         protocol_minor: 0,
                         lifecycle: if self.configuration.is_some() { 2 } else { 1 },
-                        state_flags: 0,
+                        state_flags: match self.mode {
+                            ControllerMode::LocalFallback => 1,
+                            ControllerMode::RemoteAuthority => 2,
+                        },
                         boot_session: self.provisioning.boot_session,
                         provisioned_identity: self.provisioning.identity,
                         firmware_generation: self.provisioning.firmware_generation,

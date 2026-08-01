@@ -1,8 +1,7 @@
 .worktrees/
 .agent/active
-.agent/work/**/plan-review.html
-.agent/work/**/implementation-briefing.html
-.agent/work/**/adversarial/*.anthropic.jsonl
+.agent/work/**/adversarial
+.agent/work/**/*.html
 target/
 .tmp/
 __pycache__/

@@ -2,9 +2,9 @@
   "id": "celerity-runtime",
   "title": "Build the Celerity vehicle control runtime",
   "stage": "implementation",
-  "state": "active",
+  "state": "completed",
   "created_at": "2026-07-31T17:45:15Z",
-  "updated_at": "2026-08-01T00:23:43Z",
+  "updated_at": "2026-08-01T01:44:39Z",
   "wayfinder_map_title": "Design the Celerity vehicle control runtime",
   "wayfinder_map_url": "https://github.com/kellen-miller/celerity/issues/1",
   "wayfinder_state": "completed",
@@ -24,7 +24,8 @@
     "implementation_adversarial_review": "adversarial/implementation-review.md",
     "implementation_adversarial_review_prompt": "adversarial/implementation-review-prompt.md",
     "implementation_adversarial_review_stream": "adversarial/implementation-review.anthropic.jsonl",
-    "hardware_free_report": "../../../docs/validation/hardware-free-report.md"
+    "hardware_free_report": "../../../docs/validation/hardware-free-report.md",
+    "implementation_briefing": "implementation-briefing.html"
   },
   "plan_review": {
     "revision": 1,
@@ -202,10 +203,11 @@
       "unavailable_capability_fallback": "none",
       "started_at": "2026-07-31T18:24:13Z",
       "reopened_at": "2026-07-31T21:03:48Z",
-      "status": "active",
+      "status": "completed",
       "reopen_reason": "Closeout review found that celerityd did not execute the runtime lifecycle and the executor could not select a model command.",
       "pull_request": 17,
-      "head_commit": "47283e6",
+      "head_commit": "4abc0ea",
+      "completed_at": "2026-08-01T01:44:39Z",
       "normal_closeout_review": {
         "event_count": 1,
         "status": "completed",
@@ -248,7 +250,46 @@
         "macos_portable_duration": "3m54s",
         "ubuntu_portable_duration": "4m03s",
         "review_fix_status": "passed",
-        "evidence_head_status": "pending_commit"
+        "evidence_run_id": 30675580185,
+        "evidence_head": "4abc0ea",
+        "evidence_head_status": "passed",
+        "evidence_linux_duration": "1m45s",
+        "evidence_macos_portable_duration": "2m22s",
+        "evidence_ubuntu_portable_duration": "3m35s"
+      },
+      "implementation_briefing": {
+        "status": "completed",
+        "artifact_tracked": false,
+        "source_snapshot_head": "4abc0ea00cd276f54b5f6362582f9cdb3eadcbfd",
+        "renderer_fingerprint": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7",
+        "html_sha256": "7deb9e89f615d9fd376b147c1141903a440123c45a1e60d8b9e6323f5415c8c9",
+        "author_model": "gpt-5.6-terra",
+        "author_reasoning_effort": "high",
+        "unavailable_capability_fallback": "none",
+        "browser_validation": {
+          "status": "passed",
+          "viewports": [
+            "390x844",
+            "1280x900"
+          ],
+          "checks": [
+            "ownership selection",
+            "flow switching and next/previous navigation",
+            "retrieval feedback and source reference",
+            "copy path and keyboard focus",
+            "zero horizontal overflow",
+            "zero console warnings or errors"
+          ]
+        },
+        "lavish": {
+          "session_url": "http://127.0.0.1:4387/session/a3b60eae4e4aa539",
+          "status": "completed",
+          "session_ended": true,
+          "ended_by": "user",
+          "feedback": "Looks good",
+          "completed_at": "2026-08-01T01:44:39Z",
+          "share_invoked": false
+        }
       }
     }
   }

@@ -4,7 +4,7 @@
   "stage": "implementation",
   "state": "active",
   "created_at": "2026-07-31T17:45:15Z",
-  "updated_at": "2026-08-01T00:18:33Z",
+  "updated_at": "2026-08-01T00:23:43Z",
   "wayfinder_map_title": "Design the Celerity vehicle control runtime",
   "wayfinder_map_url": "https://github.com/kellen-miller/celerity/issues/1",
   "wayfinder_state": "completed",
@@ -23,7 +23,8 @@
     "adversarial_review_stream": "adversarial/plan-review.anthropic.jsonl",
     "implementation_adversarial_review": "adversarial/implementation-review.md",
     "implementation_adversarial_review_prompt": "adversarial/implementation-review-prompt.md",
-    "implementation_adversarial_review_stream": "adversarial/implementation-review.anthropic.jsonl"
+    "implementation_adversarial_review_stream": "adversarial/implementation-review.anthropic.jsonl",
+    "hardware_free_report": "../../../docs/validation/hardware-free-report.md"
   },
   "plan_review": {
     "revision": 1,
@@ -204,10 +205,23 @@
       "status": "active",
       "reopen_reason": "Closeout review found that celerityd did not execute the runtime lifecycle and the executor could not select a model command.",
       "pull_request": 17,
-      "head_commit": "e55df1c",
+      "head_commit": "47283e6",
+      "normal_closeout_review": {
+        "event_count": 1,
+        "status": "completed",
+        "selected_skill": "review-recent-work",
+        "reviewer_provider": "OpenAI",
+        "actual_model": "gpt-5.6-sol",
+        "actual_reasoning_effort": "not_durably_recorded",
+        "unavailable_capability_fallback": "none",
+        "priority_zero_count": 1,
+        "priority_one_count": 1,
+        "blocking": true,
+        "outcome": "Implementation reopened; the production live runtime, model command path, Run lifecycle, and end-to-end evidence were completed and validated before adversarial review."
+      },
       "local_validation": {
         "status": "passed",
-        "completed_at": "2026-08-01T00:18:33Z",
+        "completed_at": "2026-08-01T00:23:43Z",
         "checks": [
           "./scripts/check-rust --portable",
           "./scripts/check-python",
@@ -227,10 +241,14 @@
       "ci": {
         "initial_green_run_id": 30664026585,
         "initial_green_head": "87d5d49",
-        "fresh_run_id": 30673118789,
-        "fresh_head": "e55df1c",
+        "fresh_run_id": 30675238377,
+        "fresh_head": "47283e6",
         "fresh_status": "passed",
-        "review_fix_status": "validated_locally_uncommitted"
+        "linux_duration": "2m14s",
+        "macos_portable_duration": "3m54s",
+        "ubuntu_portable_duration": "4m03s",
+        "review_fix_status": "passed",
+        "evidence_head_status": "pending_commit"
       }
     }
   }

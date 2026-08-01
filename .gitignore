@@ -1,6 +1,7 @@
 .worktrees/
 .agent/active
 .agent/work/**/plan-review.html
+.agent/work/**/implementation-briefing.html
 .agent/work/**/adversarial/*.anthropic.jsonl
 target/
 .tmp/

@@ -6,7 +6,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-celerity-protocol = { path = "../../crates/celerity-protocol" }
+control-protocol = { path = "../../crates/control-protocol" }
 
 [target.'cfg(target_arch = "arm")'.dependencies]
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
@@ -19,7 +19,7 @@ panic-halt = "1.0.0"
 stm32-metapac = { version = "21.0.0", features = ["stm32g431kb"] }
 
 [dev-dependencies]
-celerity-runtime = { path = "../../crates/celerity-runtime" }
+control-core = { path = "../../crates/control-core" }
 hex = "0.4.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

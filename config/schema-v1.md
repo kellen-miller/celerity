@@ -18,6 +18,11 @@ bounds, timing/ordering violations, insufficient Run free-space thresholds,
 model ABI mismatch, and mode mismatch. Environment variables may supply only
 deployment paths and secrets, never control behavior.
 
+The required `powertrain.cantcu` table is tagged by `mode`. `disabled` accepts
+no base ID. `default` requires the commissioned decimal base ID for CANTCU's
+seven-frame Default CAN Datastream. Validation rejects standard-ID overflow or
+overlap with every Haltech Broadcast v2 ID decoded by this generation.
+
 The `sync` section declares spool ownership, retention, home interface,
 expected default gateway, home API URL, and credential path. Home presence means
 the configured Linux interface is up and its default route uses the configured

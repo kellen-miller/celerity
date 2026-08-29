@@ -11,11 +11,12 @@ thermal-envelope validation, or road/track acceptance.
 
 ## Repository shape
 
-- `crates/celerity-protocol`: `no_std` exact CAN v1 codec and golden vectors.
-- `crates/celerity-runtime`: configuration, executor, controller emulator, Run,
-  replay, ONNX inference, optimizer, and startup-only A/B model slots.
-- `crates/celerity`: thin runtime, simulation/replay, and diagnostics binaries.
-- `crates/celerity-sync`: authority-free Run/model reconciliation with SQLite.
+- `crates/control-protocol`: `no_std` exact CAN v1 codec and golden vectors.
+- `crates/control-core`: configuration, powertrain decoding, executor, controller
+  emulator, Run, replay, ONNX inference, optimizer, and startup-only A/B model slots.
+- `crates/vehicle-runtime`: Linux CAN adapters plus runtime, simulation/replay,
+  and diagnostics binaries.
+- `crates/sync`: authority-free Run/model reconciliation with SQLite.
 - `firmware/duct-controller`: STM32G431 Embassy image and host conformance.
 - `services/home`: FastAPI, SQLite/filesystem archive, managed jobs, models, and
   bounded webhook delivery.
@@ -41,8 +42,8 @@ interface separation; it does not prove physical listen-only behavior.
 Run the production runtime logic with synthetic evidence:
 
 ```sh
-cargo run -p celerity --bin celerity -- simulate config/examples/simulation.toml
-cargo run -p celerity --bin celerity -- replay .tmp/runs/healthy-startup --verify
+cargo run -p vehicle-runtime --bin celerity -- simulate config/examples/simulation.toml
+cargo run -p vehicle-runtime --bin celerity -- replay .tmp/runs/healthy-startup --verify
 ```
 
 See [configuration](docs/configuration.md), [vehicle services](docs/service-install.md),

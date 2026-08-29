@@ -8,6 +8,9 @@ cycle_ms = 20
 [powertrain]
 decoder_generation = 1
 
+[powertrain.cantcu]
+mode = "disabled"
+
 [controllers.duct]
 address = 1
 identity = 1

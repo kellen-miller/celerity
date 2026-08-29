@@ -1,9 +1,9 @@
 [workspace]
 members = [
-  "crates/celerity",
-  "crates/celerity-protocol",
-  "crates/celerity-runtime",
-  "crates/celerity-sync",
+  "crates/control-core",
+  "crates/control-protocol",
+  "crates/sync",
+  "crates/vehicle-runtime",
   "firmware/duct-controller",
 ]
 resolver = "2"

@@ -188,60 +188,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "celerity"
-version = "0.1.0"
-dependencies = [
- "celerity-protocol",
- "celerity-runtime",
- "nix",
- "sd-notify",
- "serde",
- "serde_json",
- "signal-hook",
- "socketcan",
- "tempfile",
-]
-
-[[package]]
-name = "celerity-protocol"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
-name = "celerity-runtime"
-version = "0.1.0"
-dependencies = [
- "celerity-protocol",
- "fs4",
- "prost",
- "prost-build",
- "protoc-bin-vendored",
- "serde",
- "serde_json",
- "sha2",
- "toml",
- "tract-onnx",
-]
-
-[[package]]
-name = "celerity-sync"
-version = "0.1.0"
-dependencies = [
- "celerity-runtime",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "signal-hook",
- "tempfile",
- "toml",
- "zip",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -297,6 +243,29 @@ name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+
+[[package]]
+name = "control-core"
+version = "0.1.0"
+dependencies = [
+ "control-protocol",
+ "fs4",
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml",
+ "tract-onnx",
+]
+
+[[package]]
+name = "control-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "cordyceps"
@@ -508,8 +477,8 @@ checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
 name = "duct-controller"
 version = "0.1.0"
 dependencies = [
- "celerity-protocol",
- "celerity-runtime",
+ "control-core",
+ "control-protocol",
  "cortex-m",
  "cortex-m-rt",
  "embassy-executor",
@@ -2776,6 +2745,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "sync"
+version = "0.1.0"
+dependencies = [
+ "control-core",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "signal-hook",
+ "tempfile",
+ "toml",
+ "zip",
+]
+
+[[package]]
 name = "sync_wrapper"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3335,6 +3320,21 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "vehicle-runtime"
+version = "0.1.0"
+dependencies = [
+ "control-core",
+ "control-protocol",
+ "nix",
+ "sd-notify",
+ "serde",
+ "serde_json",
+ "signal-hook",
+ "socketcan",
+ "tempfile",
+]
 
 [[package]]
 name = "void"

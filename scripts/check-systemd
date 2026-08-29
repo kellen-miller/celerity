@@ -28,7 +28,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cargo build --release -p celerity -p celerity-sync
+cargo build --release -p vehicle-runtime -p sync
 sudo install -m 0755 target/release/celerityd "$runtime_binary"
 sudo install -m 0755 target/release/celerity-sync "$sync_binary"
 sudo install -d -m 0755 "$config_root"

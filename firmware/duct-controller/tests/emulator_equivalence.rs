@@ -1,5 +1,5 @@
-use celerity_protocol::{Command, Configuration, Frame, RuntimeLease, decode, encode};
-use celerity_runtime::{ControllerEmulator, ControllerMode, EmulatorProvisioning};
+use control_core::{ControllerEmulator, ControllerMode, EmulatorProvisioning};
+use control_protocol::{Command, Configuration, Frame, RuntimeLease, decode, encode};
 use duct_controller::{ControllerState, FirmwareConfiguration, FirmwareMode};
 
 fn ingest(emulator: &mut ControllerEmulator, now_ms: u64, frame: &Frame) -> Frame {

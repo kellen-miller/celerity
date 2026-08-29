@@ -17,7 +17,7 @@ embassy_stm32::bind_interrupts!(struct Irqs {
     entry = "cortex_m_rt::entry"
 )]
 async fn main(_spawner: embassy_executor::Spawner) {
-    use celerity_protocol::{
+    use control_protocol::{
         CapabilityReport, CommandAck, ConfigurationAck, FallbackAck, FaultReport, Frame, Heartbeat,
         NodeAnnounce, RuntimeLeaseAck, decode, encode,
     };
@@ -194,7 +194,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
                 Frame::NodeAnnounce {
                     node: NODE_ADDRESS,
                     message: NodeAnnounce {
-                        protocol_major: celerity_protocol::PROTOCOL_MAJOR,
+                        protocol_major: control_protocol::PROTOCOL_MAJOR,
                         protocol_minor: 0,
                         lifecycle: if state.configuration_generation().is_some() {
                             2

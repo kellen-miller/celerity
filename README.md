@@ -46,6 +46,7 @@ cargo run -p vehicle-runtime --bin celerity -- simulate config/examples/simulati
 cargo run -p vehicle-runtime --bin celerity -- replay .tmp/runs/healthy-startup --verify
 ```
 
-See [configuration](docs/configuration.md), [vehicle services](docs/service-install.md),
+See [architecture decisions](docs/adr/README.md),
+[configuration](docs/configuration.md), [vehicle services](docs/service-install.md),
 [home deployment](docs/home-deployment.md), and the
 [first physical deployment checklist](docs/validation/first-deployment-checklist.md).

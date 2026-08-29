@@ -124,10 +124,13 @@ The one normal closeout review found the original missing production runtime
 and model-command composition; those blocking gaps were implemented before
 this validation. The one cross-provider implementation adversarial review used
 Anthropic Claude Opus and produced eight findings: two high, four medium, and
-two low. All eight are resolved and recorded in
-`.agent/work/celerity-runtime/adversarial/implementation-review.md` and
-`.agent/work/celerity-runtime/meta.json`. Neither completed review boundary was
-reopened.
+two low. All eight are resolved. Their durable architectural outcomes are
+preserved in the [architecture decision records](../adr/README.md), including
+controller boot reconciliation, event time, immutable Runs, and the home
+service; exact behavior remains enforced by normative contracts and conformance
+tests. Local review transcripts and orchestration metadata remain under the
+ignored `.agent/` directory, not in repository documentation. Neither completed
+review boundary was reopened.
 
 ## Explicitly unclaimed
 

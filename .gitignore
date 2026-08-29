@@ -1,7 +1,5 @@
 .worktrees/
-.agent/active
-.agent/work/**/adversarial
-.agent/work/**/*.html
+.agent/
 target/
 .tmp/
 __pycache__/

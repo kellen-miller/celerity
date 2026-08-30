@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package celerity.run.v1;
+
+message RunEvent {
+  uint32 schema_major = 1;
+  uint32 schema_minor = 2;
+  bytes run_id = 3;
+  uint64 sequence = 4;
+  uint64 monotonic_ns = 5;
+  optional uint64 source_monotonic_ns = 6;
+  uint64 ingestion_monotonic_ns = 7;
+  string source = 8;
+
+  oneof payload {
+    RawCanFrame raw_can = 20;
+    SignalObservation signal_observation = 21;
+    ConditionTransition condition_transition = 22;
+    AuthorityTransition authority_transition = 23;
+    ControlDecision control_decision = 24;
+    ExperimentEvent experiment_event = 25;
+    LifecycleEvent lifecycle_event = 26;
+    StorageEvent storage_event = 27;
+    TimeAnchor time_anchor = 28;
+    Annotation annotation = 29;
+  }
+}
+
+message RawCanFrame {
+  string channel = 1;
+  Direction direction = 2;
+  uint32 id = 3;
+  bool extended = 4;
+  bool fd = 5;
+  bool bit_rate_switch = 6;
+  bool error_state_indicator = 7;
+  bytes data = 8;
+  optional uint64 hardware_timestamp_ns = 9;
+  uint64 receive_overflow_count = 10;
+  uint64 dropped_count = 11;
+}
+
+message SignalObservation {
+  string signal = 1;
+  double value = 2;
+  string unit = 3;
+  string reference = 4;
+  Quality quality = 5;
+  string reason = 6;
+  uint64 source_event_sequence = 7;
+  uint64 decoder_generation = 8;
+  uint64 age_ns = 9;
+}
+
+message ConditionTransition { string encoded = 1; }
+message AuthorityTransition { string encoded = 1; }
+message ControlDecision { string encoded = 1; }
+message ExperimentEvent { string encoded = 1; }
+message LifecycleEvent { string encoded = 1; }
+message StorageEvent { string encoded = 1; }
+message TimeAnchor { string encoded = 1; }
+message Annotation { string encoded = 1; }
+
+enum Direction {
+  DIRECTION_INVALID = 0;
+  DIRECTION_RECEIVE = 1;
+  DIRECTION_TRANSMIT = 2;
+}
+
+enum Quality {
+  QUALITY_INVALID = 0;
+  QUALITY_VALID = 1;
+  QUALITY_INVALID_VALUE = 2;
+  QUALITY_UNKNOWN = 3;
+}

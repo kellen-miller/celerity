@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$(uname -s)" != "Linux" ]]; then
+  echo "check-linux requires Linux" >&2
+  exit 2
+fi
+
+for interface in vcan-powertrain vcan-controller; do
+  ip link show "$interface" >/dev/null
+done
+
+./scripts/check-rust
+./scripts/check-systemd

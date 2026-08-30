@@ -1,0 +1,73 @@
+schema_version = 1
+name = "synthetic-duct-sweep"
+maximum_duration_ms = 20000
+maximum_coolant_c = 110
+settling_ms = 100
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 1000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 3000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 5000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 7000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 9000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 7000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 5000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 3000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 1000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 3000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 5000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 7000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 9000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 7000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 5000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 3000
+
+[[steps]]
+duration_ms = 1000
+radiator_split_basis_points = 1000

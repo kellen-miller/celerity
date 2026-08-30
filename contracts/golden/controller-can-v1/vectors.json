@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "vectors": [
+    {
+      "can_id": "0x080",
+      "name": "discovery-probe",
+      "payload_hex": "0100000001000000"
+    },
+    {
+      "can_id": "0x041",
+      "name": "fault-report",
+      "payload_hex": "010000000200000003000100040000000000000005000000"
+    },
+    {
+      "can_id": "0x101",
+      "name": "command-minimum",
+      "payload_hex": "010000000200000003000000000000000400000000000000"
+    },
+    {
+      "can_id": "0x13f",
+      "name": "command-maximum",
+      "payload_hex": "ffffffffffffffffffffffffffffffffffffffff1027ff00"
+    },
+    {
+      "can_id": "0x141",
+      "name": "command-ack",
+      "payload_hex": "0100000002000000030000000000000004000000881301010101640005000000"
+    },
+    {
+      "can_id": "0x181",
+      "name": "runtime-lease",
+      "payload_hex": "0100000002000000030000000000000004000000c8000000"
+    },
+    {
+      "can_id": "0x1c1",
+      "name": "runtime-lease-ack",
+      "payload_hex": "010000000200000003000000000000000400000001000000"
+    },
+    {
+      "can_id": "0x201",
+      "name": "heartbeat",
+      "payload_hex": "0100000002000000030000000400000005000000000000000600000088130100"
+    },
+    {
+      "can_id": "0x241",
+      "name": "fallback-request",
+      "payload_hex": "01000000020000000000000003000000"
+    },
+    {
+      "can_id": "0x281",
+      "name": "fallback-ack",
+      "payload_hex": "01000000020000002823010101000000"
+    },
+    {
+      "can_id": "0x2c1",
+      "name": "configuration",
+      "payload_hex": "01000000020000002823e803d0070100c800640032001400f401e80303000000"
+    },
+    {
+      "can_id": "0x301",
+      "name": "configuration-ack",
+      "payload_hex": "01000000020000000300000001000000"
+    },
+    {
+      "can_id": "0x341",
+      "name": "node-announce",
+      "payload_hex": "0100010002000000030000000000000004000000050000000600000007000000"
+    },
+    {
+      "can_id": "0x381",
+      "name": "capability-report",
+      "payload_hex": "010000000200000003000000e80328230100320000000000"
+    }
+  ]
+}

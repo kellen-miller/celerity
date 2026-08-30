@@ -1,0 +1,39 @@
+[project]
+name = "celerity-home"
+version = "0.1.0"
+description = "Celerity Run admission, training, and model lifecycle"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "numpy>=2.3,<3",
+  "onnx>=1.18,<2",
+  "onnxscript>=0.5,<1",
+  "pyarrow>=21,<24",
+  "torch>=2.8,<3",
+  "uvicorn>=0.35,<1",
+]
+
+[dependency-groups]
+dev = [
+  "pyyaml>=6,<7",
+  "pytest>=8.4.1,<9",
+  "ruff>=0.12.7,<0.13",
+]
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/celerity_home"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

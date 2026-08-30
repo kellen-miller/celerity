@@ -1,0 +1,77 @@
+schema_version = 1
+generation = 1
+mode = "simulation"
+
+[runtime]
+cycle_ms = 20
+
+[powertrain]
+decoder_generation = 1
+
+[powertrain.cantcu]
+mode = "disabled"
+
+[controllers.duct]
+address = 1
+identity = 1
+configuration_generation = 1
+capability_generation = 1
+resource_id = 1
+minimum_basis_points = 1000
+maximum_basis_points = 9000
+maximum_command_rate_hz = 50
+fallback_basis_points = 9000
+pwm_endpoint_a_us = 1000
+pwm_endpoint_b_us = 2000
+direction = 1
+runtime_lease_ms = 100
+command_lease_ms = 50
+heartbeat_period_ms = 20
+acknowledgement_deadline_ms = 20
+normal_slew_basis_points_per_second = 1000
+protection_slew_basis_points_per_second = 2000
+digest_prefix = 1
+
+[duct]
+radiator_split_minimum = 0.1
+radiator_split_maximum = 0.9
+coolant_breakpoints_c = [80.0, 95.0, 105.0]
+iat_breakpoints_c = [30.0, 50.0, 70.0]
+policy_basis_points = [[1000, 2000, 3000], [4000, 5000, 6000], [7000, 8000, 9000]]
+
+[model]
+required = false
+slots_root = ".tmp/models"
+abi = "thermal-v1"
+input_signals = ["coolant_temperature_c", "air_temperature_c"]
+history_length = 1
+warmup_iterations = 3
+maximum_uncertainty = 0.1
+maximum_ood_score = 0.1
+required_post_work_ns = 1
+hard_coolant_ceiling_c = 110.0
+coolant_target_c = 80.0
+coolant_input_minimum_c = 60.0
+coolant_input_maximum_c = 120.0
+iat_input_minimum_c = 0.0
+iat_input_maximum_c = 100.0
+command_lattice = [1000, 5000, 9000]
+
+[run_storage]
+root = ".tmp/runs"
+minimum_free_bytes = 1048576
+
+[diagnostics]
+socket = ".tmp/celerityd.sock"
+
+[sync]
+spool_root = ".tmp/runs"
+retention_count = 2
+home_interface = "home0"
+expected_default_gateway = "192.0.2.1"
+home_api_url = "https://home.invalid"
+credential_path = ".tmp/home-token"
+
+[composition]
+kind = "simulation"
+scenario = "fixtures/scenarios/healthy-startup.toml"

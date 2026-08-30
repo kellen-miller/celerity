@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+artifact_root="$(mktemp -d)"
+trap 'rm -rf "$artifact_root"' EXIT
+
+cargo run --quiet -p control-protocol --features std \
+  --bin write-golden-vectors -- "$artifact_root/controller"
+uv run --project services/home python -m celerity_home.export_fixture \
+  --output "$artifact_root/model"
+
+cmp contracts/golden/controller-can-v1/vectors.json "$artifact_root/controller/vectors.json"
+cmp contracts/golden/model-v1/identity.onnx "$artifact_root/model/identity.onnx"
+cmp contracts/golden/model-v1/manifest.json "$artifact_root/model/manifest.json"
+helm lint deploy/helm/celerity-home \
+  --set externalSecrets.secretStoreName=onepassword
+helm template celerity-home deploy/helm/celerity-home \
+  --namespace celerity \
+  --set externalSecrets.secretStoreName=onepassword >"$artifact_root/home.yaml"
+test -s "$artifact_root/home.yaml"
+helm package deploy/helm/celerity-home --destination "$artifact_root" >/dev/null
+test -s "$artifact_root/celerity-home-0.1.0.tgz"

@@ -1,0 +1,25 @@
+image:
+  repository: ghcr.io/kellen-miller/celerity-home
+  digest: sha256:replace-with-release-digest
+  pullPolicy: IfNotPresent
+
+storageRoot: /var/lib/celerity-home
+
+persistence:
+  size: 20Gi
+  storageClassName: ""
+
+externalSecrets:
+  secretStoreName: ""
+  refreshInterval: 1h
+  itemName: celerity-home
+  vehicleTokenProperty: vehicle-token
+  webhookUrlProperty: webhook-url
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 4Gi

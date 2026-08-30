@@ -1,0 +1,9 @@
+{
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.check.allTargets": true,
+  "rust-analyzer.cargo.allTargets": true,
+  "rust-analyzer.linkedProjects": [
+    "Cargo.toml",
+    "firmware/duct-controller/Cargo.toml"
+  ]
+}

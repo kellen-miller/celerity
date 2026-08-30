@@ -1,0 +1,32 @@
+name = "healthy-startup"
+
+[[events]]
+kind = "input_snapshot"
+monotonic_ms = 0
+observed_monotonic_ms = 0
+coolant_c = 95.0
+iat_c = 50.0
+
+[[events]]
+kind = "controller_truth"
+monotonic_ms = 1
+boot_session = 7
+configuration_generation = 3
+identity_matches = true
+
+[[events]]
+kind = "cycle"
+monotonic_ms = 2
+remaining_cycle_ns = 20000000
+
+[[events]]
+kind = "command_acknowledged"
+monotonic_ms = 3
+boot_session = 7
+command_sequence = 1
+accepted = true
+
+[[events]]
+kind = "cycle"
+monotonic_ms = 4
+remaining_cycle_ns = 20000000

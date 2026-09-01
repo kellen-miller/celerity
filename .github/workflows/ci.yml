@@ -31,7 +31,18 @@ jobs:
         with:
           node-version: 26
           cache: npm
-          cache-dependency-path: site/package-lock.json
+          cache-dependency-path: crates/vehicle-ui/web/package-lock.json
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: crates/vehicle-ui/web
+      - name: Install Chromium on macOS
+        if: runner.os == 'macOS'
+        run: npx playwright install chromium
+        working-directory: crates/vehicle-ui/web
+      - name: Install Chromium on Linux
+        if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+        working-directory: crates/vehicle-ui/web
       - uses: Azure/setup-helm@v5.0.1
         with:
           version: v4.2.3
@@ -48,7 +59,7 @@ jobs:
       - run: ./scripts/check-rust --portable
       - run: ./scripts/check-python
       - run: ./scripts/check-e2e
-      - run: ./scripts/check-site
+      - run: ./scripts/check-ui
       - run: ./scripts/check-artifacts
 
   linux:

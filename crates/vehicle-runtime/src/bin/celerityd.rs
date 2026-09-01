@@ -4,20 +4,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         env, io,
         path::{Path, PathBuf},
         sync::{
-            Arc, RwLock,
+            Arc,
             atomic::{AtomicBool, Ordering},
         },
         thread,
-        time::{Duration, SystemTime, UNIX_EPOCH},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
     use control_core::{Completion, ModelSlots, RuntimeModel, StartupMode, ValidatedBundle};
     use sd_notify::NotifyState;
     use signal_hook::consts::{SIGINT, SIGTERM};
 
-    let argument = env::args()
-        .nth(1)
-        .ok_or_else(|| io::Error::other("usage: celerityd <live-bundle.toml>"))?;
+    let mut arguments = env::args().skip(1);
+    let argument = arguments.next().ok_or_else(|| {
+        io::Error::other(
+            "usage: celerityd <live-bundle.toml> | celerityd --systemd-vcan-check <live-bundle.toml>",
+        )
+    })?;
     if argument == "--systemd-supervisor-check" {
         let stopping = Arc::new(AtomicBool::new(false));
         signal_hook::flag::register(SIGTERM, Arc::clone(&stopping))?;
@@ -37,6 +40,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             NotifyState::Status("test-only supervisor check stopped"),
         ])?;
         return Ok(());
+    }
+
+    let (argument, systemd_vcan_check) = if argument == "--systemd-vcan-check" {
+        let bundle = arguments.next().ok_or_else(|| {
+            io::Error::other("usage: celerityd --systemd-vcan-check <live-bundle.toml>")
+        })?;
+        (bundle, true)
+    } else {
+        (argument, false)
+    };
+    if arguments.next().is_some() {
+        return Err(io::Error::other("celerityd accepts exactly one live bundle").into());
     }
 
     let bundle = ValidatedBundle::load(Path::new(&argument), StartupMode::Live)
@@ -93,13 +108,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stopping = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(SIGTERM, Arc::clone(&stopping))?;
     signal_hook::flag::register(SIGINT, Arc::clone(&stopping))?;
-    let diagnostics_snapshot = Arc::new(RwLock::new(
-        vehicle_runtime::DiagnosticsSnapshot::startup_fallback(),
-    ));
-    let diagnostics = vehicle_runtime::serve_diagnostics(
+    let diagnostics_store = vehicle_diagnostics::DiagnosticsStore::new(
+        vehicle_diagnostics::DiagnosticsSnapshot::startup_fallback(),
+        bundle.cycle_ms(),
+        Instant::now(),
+    );
+    let diagnostics = vehicle_diagnostics::serve_diagnostics(
         &socket,
         Arc::clone(&stopping),
-        Arc::clone(&diagnostics_snapshot),
+        diagnostics_store.clone(),
     )?;
 
     let epoch = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())
@@ -107,14 +124,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ^ u64::from(std::process::id());
     let epoch = epoch.max(1);
     let run_id = format!("live-{epoch:016x}");
-    let mut runtime = vehicle_runtime::LiveRuntime::open(
-        bundle,
-        model,
-        selected.as_ref().map(|selected| selected.digest.as_str()),
-        epoch,
-        &run_id,
-        diagnostics_snapshot,
-    )
+    let mut runtime = if systemd_vcan_check {
+        vehicle_runtime::LiveRuntime::open_virtual_hardware_free(
+            bundle,
+            model,
+            selected.as_ref().map(|selected| selected.digest.as_str()),
+            epoch,
+            &run_id,
+            diagnostics_store,
+        )
+    } else {
+        vehicle_runtime::LiveRuntime::open(
+            bundle,
+            model,
+            selected.as_ref().map(|selected| selected.digest.as_str()),
+            epoch,
+            &run_id,
+            diagnostics_store,
+        )
+    }
     .map_err(io::Error::other)?;
     if let Some(selected) = &selected {
         slots

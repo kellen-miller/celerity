@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "state": "stale",
+  "consecutive_failures": 2,
+  "last_success_age_ms": 1400,
+  "snapshot": {
+    "schema_version": 2,
+    "runtime_update_age_ms": 20,
+    "runtime_update_stale_after_ms": 100,
+    "global_authority": "active",
+    "feature_authority": "active",
+    "command_source": "model_optimized",
+    "accepted_radiator_split_command": {
+      "basis_points": 9000,
+      "source": "model_optimized"
+    },
+    "coolant_temperature": {
+      "degrees_celsius": 100.0,
+      "observation_age_ms": 20
+    },
+    "intake_air_temperature": {
+      "degrees_celsius": 40.0,
+      "observation_age_ms": 25
+    },
+    "controller_runtime_lease_health": {
+      "state": "healthy"
+    },
+    "controller_command_ack_health": {
+      "state": "healthy"
+    },
+    "run_storage_health": "healthy"
+  }
+}

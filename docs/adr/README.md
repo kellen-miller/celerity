@@ -12,3 +12,4 @@ Normative wire formats, schemas, and configuration remain in `contracts/` and
 - [0006: Activate learned models only at startup](0006-activate-models-only-at-startup.md)
 - [0007: Run vehicle services directly under systemd](0007-run-vehicle-services-under-systemd.md)
 - [0008: Keep the home service operationally small](0008-keep-the-home-service-small.md)
+- [0009: Keep local status outside live authority](0009-keep-local-status-outside-live-authority.md)

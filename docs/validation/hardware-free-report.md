@@ -1,144 +1,138 @@
 # Hardware-free validation report
 
-- Date: 2026-08-01
-- Base commit: `a993404`
-- Branch: `feat/celerity-runtime`
-- Validated implementation PR/head: #17 / `47283e6`
-- GitHub Actions run: `30675238377`
-- Configuration fixtures: `config/examples/simulation.toml`, `config/examples/replay.toml`
-- Contract schemas: controller CAN v1, Run v1, home v1, model bundle v1
+- Date: 2026-09-01
+- Base commit: `04abe23935987546c644d69bd2dd91fdca7e4773`
+- Branch: `feat/telemetry-ui`
+- Validation scope: local uncommitted implementation
+- GitHub Actions for this implementation: not run; pending push
 
 ## Support contract
 
-Linux is the sole vehicle runtime and deployment target. The macOS portable job
-is developer feedback for platform-independent logic because development may
-happen from a Mac; it does not claim macOS CAN, systemd, firmware, or vehicle
-support. No Raspberry Pi assumption exists in the runtime contract.
+Linux is the sole vehicle runtime/deployment target. macOS portable results are
+developer feedback for platform-independent logic; they do not claim macOS CAN,
+systemd, firmware, or vehicle support. Local Linux containers below are explicit
+software evidence, not CI, installed-system, electrical, display, road, or track
+evidence.
 
-## Executed locally
+## Executed on macOS
 
-The checked-in developer gates passed on macOS:
+The checked-in gates passed:
 
 ```sh
 ./scripts/check-rust --portable
 ./scripts/check-python
 ./scripts/check-e2e
-./scripts/check-site
+./scripts/check-ui
 ./scripts/check-artifacts
 git diff --check
+git diff --cached --check
 ```
 
-Those commands executed 63 portable Rust tests with one intentionally ignored
-Linux-only production HTTP test, 16 Python tests, two site tests, a real
-production HTTP/TCN/ONNX/model-slot exercise, deterministic artifact checks,
-the STM32G431 embedded release build, Helm lint/render/package checks, and the
-static SvelteKit build. Rustfmt and Clippy passed with warnings denied; Ruff,
-Prettier, ESLint, and `svelte-check` passed. The generated controller vectors
-and model fixture reproduced without a checked-in diff.
+The Rust gate passed rustfmt, workspace Clippy with warnings denied, 73 tests,
+workspace build, and the STM32G431 release build. One production HTTP test is
+intentionally ignored there and passed through `check-e2e`. The host ARM64 GNU
+link step explicitly skipped because `aarch64-linux-gnu-gcc` is unavailable.
 
-A privileged Linux/amd64 container with `vcan-powertrain` and
-`vcan-controller` also passed:
+Python passed 16 tests. End-to-end validation passed one Rust production HTTP/
+TCN/ONNX exercise, six model-slot tests, and 12 home application tests. Helm
+lint/render/package and deterministic controller/model artifact comparisons
+passed.
 
-```sh
-cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo test --locked --workspace
-```
+The UI gate used plain Node 26/npm and passed Prettier, ESLint, `svelte-check`
+with zero errors/warnings, three Vitest cases, five `vehicle-ui` Rust tests, and
+14 Chromium cases. Rust regenerated and byte-compared all five status goldens;
+Vite rebuilt and byte-compared the single embedded HTML file and rejected
+trailing blanks in both tracked and freshly generated output. Playwright
+launched the production `celerity-ui` binary, rendered that embedded asset,
+and observed its inline-only CSP plus `nosniff`. The HTTP smoke test also
+returned initial unavailable JSON and 403 for a non-loopback Host.
 
-The Linux-only tests proved that the production receive surface did not
-transmit to either vCAN interface and that real kernel sockets carried a model
-command through controller acknowledgement while sealing the Run. This is
-application/interface-separation evidence only; `vcan` does not prove physical
-listen-only wiring or on-wire fail-silence.
+The final staged-output audit selected exact-pinned Terser 5.51.2 through
+Vite's supported minifier setting. A direct evaluation of the emitted Svelte
+runtime string proved its cooked eight-character whitespace set unchanged;
+only the physical source representation changed to remove trailing blanks.
 
-## Behavior proved
+## Executed in local Linux/ARM64 containers
 
-- The fixed CAN FD codec, controller emulator, and firmware-native state use
-  the same messages and byte-compare every golden vector. A direct equivalence
-  test compares configuration, Runtime Lease, Command Lease, accepted command,
-  mode, split, and expiry behavior.
-- Firmware establishes the compiled powered radiator-protective PWM before
-  waiting for hardware RNG. It selects a fresh nonzero boot session distinct
-  from the immediately prior TAMP backup-domain value, remains logically
-  unconfigured, and rejects leases and commands until volatile Configuration
-  reconciliation succeeds.
-- The live single-writer path distinguishes event-ingest monotonic time from
-  sensor-observation time. Older-but-valid observations drive staleness without
-  appearing to regress executor order or latching a false hard fault.
-- Accepted `CommandAck` frames refresh exact controller truth, and controller
-  emulator/firmware heartbeats use the configured period. Command and Runtime
-  leases expire independently and either loss restores controller-local
-  fallback.
-- Startup-only model selection validates digest, ABI, shape, self-test, OOD,
-  uncertainty, and cycle budget. A real ONNX model reaches the Rust `tract`
-  predictor, finite-control-set optimizer, actuator Command, accepted ACK, Run
-  seal, and acknowledgement-gated promotion evidence.
-- Immutable Run admission verifies the manifest/chunk digests and canonical
-  Run v1 protobuf framing, schema major, source, exactly one typed payload,
-  strict sequence order, monotonic time, UTF-8, and finite signal values before
-  inserting the Run or exposing it to training.
-- An absent desired baseline is the intentional bootstrap case. A configured
-  desired baseline that is missing, unstaged, incompatible, unreadable, or
-  nonfinite fails candidate evaluation closed.
-- The home application uses SQLite WAL, a five-second busy timeout, an
-  immediate transaction for active-job admission, and a partial unique index
-  for one queued/running job. PID ownership includes Linux process start time;
-  deterministic duplicate model results converge to `no_change`; notification
-  writes are idempotent and webhook failure cannot alter job results.
-- `celerity-sync` remains authority-isolated, uploads exact complete Runs,
-  retains data until exact acknowledgement, stages only the inactive slot, and
-  preserves the only known-good rollback artifact.
-- Simulation, replay, experiment bounds, Run recovery, model absence,
-  corruption, later-startup activation, and known-good rollback execute through
-  the production policy and storage paths rather than alternate mocks.
+The following local container evidence passed:
 
-## Executed in GitHub Actions
+- Before closeout review, Node 26 rebuilt the single-file panel byte-identically
+  to two macOS builds: SHA-256
+  `c5eb8ecf72659533bfa1352190bc31df077f88feb2ad02d4ac2365dfb51edc07`.
+- After the final staged-output correction, Node 26 on local Linux/ARM64
+  rebuilt the panel byte-identically to the macOS tracked asset: SHA-256
+  `6e4df8e21b49fcf9bf39cbe8852de36f60ac52121da00a072afc75e79e671a76`.
+- Rust 1.97.1 compiled Linux tests for `vehicle-runtime`,
+  `vehicle-diagnostics`, and `vehicle-ui`.
+- A native Linux/ARM64 release build linked `vehicle-runtime`,
+  `vehicle-diagnostics`, `vehicle-ui`, and `sync`.
+- A privileged Linux/ARM64 container created distinct `vcan-powertrain` and
+  `vcan-controller` interfaces. The live composition test passed through real
+  kernel sockets, the production model command, full accepted command and
+  Runtime Lease acknowledgements, typed diagnostics, producer-age staleness,
+  shutdown evidence clearing, and Run sealing.
+- Ubuntu 24.04 `systemd-analyze verify` passed all three production units after
+  creating the real `celerity-diagnostics` group and `celerity-ui` identity.
+- A separate local Linux/ARM64 container booted systemd as PID 1 and passed
+  `./scripts/check-linux`. The lifecycle retained the supervisor watchdog test,
+  ran the real celerityd socket/Run path over the explicit vCAN evidence mode,
+  and proved both service start orders. State remained `0700 root:root`, the
+  unit-owned runtime directory remained `0750 root:celerity-diagnostics`, and
+  the socket was `0660 root:celerity-diagnostics`.
+- The production viewer identity and authorized CLI read the socket; a real
+  nonmember received `EACCES`; the viewer identity received permission denial
+  reading a root-selected Run. The viewer listened only on 127.0.0.1:8080,
+  exposed the expected hardening properties, remained active then became
+  unavailable when celerityd stopped, and could stop/fail/restart without
+  changing celerityd PID or restart count. Repeated bind failure stayed within
+  its start limit. Trap cleanup removed every created identity and test path.
+- After implementation adversarial review, the Linux/ARM64 PID1 lifecycle
+  passed again and then removed the viewer identity, diagnostics group, and
+  tmpfiles fragment. celerityd still became active and served schema 2 with
+  `0750 root:root` on its unit-owned runtime directory and `0660 root:root` on
+  the socket, then removed the runtime directory on stop.
 
-PR #17 implementation head `47283e6` passed GitHub Actions run
-`30675238377` in all three jobs:
+## Viewer behavior proved
 
-- Linux passed in 2m14s. `./scripts/check-linux` included the actual ARM64 GNU
-  link, embedded G431 build, production vCAN receive-only and live-composition
-  tests, exact systemd unit verification, readiness/watchdog/bounded-stop/
-  `SIGKILL` restart behavior, and trap cleanup.
-- macOS portable passed in 3m54s as the non-authoritative developer check.
-- Ubuntu portable passed in 4m03s, including the language gates, vCAN-enabled
-  portable Rust surface, home end-to-end lifecycle, site, Helm, and generated
-  artifact checks.
+- `celerityd` publishes the typed schema through a bounded read-only Unix
+  socket. Silent, malformed, disconnected, and nonresponsive peers cannot
+  wedge shutdown or terminate later status requests.
+- Producer freshness is monotonic and separate from observer failures. The
+  observer retains two misses, removes values on the third, preserves last-read
+  age, and recovers on success.
+- The viewer dependency closure excludes `control-core`, `control-protocol`,
+  `socketcan`, Run machinery, and tract/ONNX. HTTP reads only in-memory state;
+  diagnostics I/O remains outside its lock and request path.
+- Loopback Host validation, GET-only routes, 403/404/405 behavior, no CORS,
+  cache/security headers, and localhost binding are covered by Rust tests.
+- Browser fixtures cover current, producer-stale, observer-stale, unavailable,
+  unknown, and observer-unreachable transitions. Ages include signal,
+  producer, observer, and browser elapsed time; the command is an accepted
+  ratio with two decimals, never a requested position, airflow, or percentage.
+- Closeout review tightened the browser boundary so current/stale envelopes
+  with null last-success age are invalid. Both states have focused coverage;
+  the asset regenerated at that review boundary was SHA-256
+  `5dd1becb31d4fdefbfbcfc4d1511dbaf1e26051139729c38674db2d89e849281`.
 
-The macOS job emitted an unrelated Homebrew tap-trust annotation for an
-installed runner tap; every Celerity step passed.
+## Browser evidence
 
-## Deployment artifact
+Playwright produced wide 1440x900 and narrow 700x900 images for current,
+producer-stale, observer-stale, unavailable, unknown, and observer-unreachable
+states under `.agent/work/local-status-viewer/evidence/ui/`. All twelve were
+manually inspected: text, qualifiers, and state icons are readable; values are
+visible; wide/narrow hierarchy is coherent; and no clipping, overlap,
+horizontal scroll, or vertical overflow is present. Automated contrast,
+stable accessible-name, keyboard skip-link, layout, and axe checks passed. Axe
+automation is not screen-reader evidence. The final macOS embedded asset is
+SHA-256 `6e4df8e21b49fcf9bf39cbe8852de36f60ac52121da00a072afc75e79e671a76`.
 
-`deploy/helm/celerity-home` owns separate Deployment, Service, PVC, ConfigMap,
-and ExternalSecret templates for one application replica with filesystem and
-SQLite storage. The ExternalSecret refers to an infrastructure-supplied,
-pre-existing External Secrets Operator 1Password `ClusterSecretStore` and
-materializes only the vehicle token and HTTPS webhook URL. No static
-Kubernetes Secret is rendered. Chart lint, render, and package checks passed;
-the chart was not installed because deployment requires separate authority.
+## Explicitly pending or unclaimed
 
-## Review evidence
-
-The one normal closeout review found the original missing production runtime
-and model-command composition; those blocking gaps were implemented before
-this validation. The one cross-provider implementation adversarial review used
-Anthropic Claude Opus and produced eight findings: two high, four medium, and
-two low. All eight are resolved. Their durable architectural outcomes are
-preserved in the [architecture decision records](../adr/README.md), including
-controller boot reconciliation, event time, immutable Runs, and the home
-service; exact behavior remains enforced by normative contracts and conformance
-tests. Local review transcripts and orchestration metadata remain under the
-ignored `.agent/` directory, not in repository documentation. Neither completed
-review boundary was reopened.
-
-## Explicitly unclaimed
-
-This report does not claim live Haltech/CANTCU decode validation on this car;
-physical zero-drive fail-silence; FDCAN electrical behavior; controller, servo,
-or model timing under target load; protected power, grounding, EMC, or thermal
-behavior; passive radiator-biased return; mechanism travel, settling,
-backlash, or obstruction behavior; real model accuracy or safe thermal
-envelope; installation; road acceptance; or track acceptance. Those remain the
-unexecuted physical/HIL/commissioning items in
-`docs/validation/first-deployment-checklist.md`.
+GitHub Actions has not run for this implementation. Local final macOS/Linux
+asset-byte equality passed, but CI confirmation remains pending. The PID1
+lifecycle above is local-container evidence, not a production host or
+installed vehicle. No real
+CAN hardware, electrical fail-silence, target timing, physical display,
+seated-distance sunlight/night legibility, glare, installed-resolution fit,
+vehicle-trained model quality, thermal-envelope, road, or track claim is made.
+Those remain unchecked in `docs/validation/first-deployment-checklist.md`.

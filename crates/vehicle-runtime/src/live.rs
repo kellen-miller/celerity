@@ -1,6 +1,5 @@
 use std::{
     collections::BTreeMap,
-    sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
@@ -14,8 +13,28 @@ use control_protocol::{
     Command, Configuration, DiscoveryProbe, FallbackRequest, Frame, RuntimeLease,
 };
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+use vehicle_diagnostics::{
+    AcceptedRadiatorSplitCommand, DiagnosticStatus, DiagnosticUnknownReason, DiagnosticsSnapshot,
+    DiagnosticsStore, ObservedTemperature, RunStorageHealth,
+};
 
-use crate::{ActuatorCanTransport, DiagnosticsSnapshot, PowertrainCanReceiver};
+use crate::{ActuatorCanTransport, PowertrainCanReceiver};
+
+const COMMAND_ACK_SUMMARY_WINDOW: Duration = Duration::from_secs(2);
+
+#[derive(Clone, Copy)]
+struct SentCommand {
+    sequence: u32,
+    basis_points: u16,
+    source: CommandSource,
+    sent_at: Instant,
+}
+
+#[derive(Clone, Copy)]
+struct SentRuntimeLease {
+    sequence: u32,
+    sent_at: Instant,
+}
 
 pub struct LiveRuntime {
     bundle: ValidatedBundle,
@@ -25,7 +44,7 @@ pub struct LiveRuntime {
     actuator: ActuatorCanTransport,
     session: RuntimeSession,
     writer: Option<RunWriter>,
-    diagnostics: Arc<RwLock<DiagnosticsSnapshot>>,
+    diagnostics: DiagnosticsStore,
     started: Instant,
     epoch: u64,
     boot_session: Option<u32>,
@@ -38,7 +57,14 @@ pub struct LiveRuntime {
     signal_values: BTreeMap<String, (f64, u64, u64)>,
     last_safety_observed_ms: Option<u64>,
     storage_degraded: bool,
-    last_sent_command: Option<(u32, u16, CommandSource)>,
+    last_sent_command: Option<SentCommand>,
+    last_accepted_radiator_split_command: Option<AcceptedRadiatorSplitCommand>,
+    last_matching_command_ack_at: Option<Instant>,
+    last_command_ack_miss_at: Option<Instant>,
+    lease_renewal_expected: bool,
+    lease_renewal_expected_since: Option<Instant>,
+    last_sent_runtime_lease: Option<SentRuntimeLease>,
+    last_matching_runtime_lease_ack_at: Option<Instant>,
 }
 
 struct LiveCanBoundaries {
@@ -60,7 +86,7 @@ impl LiveRuntime {
         model_bundle_digest: Option<&str>,
         epoch: u64,
         run_id: &str,
-        diagnostics: Arc<RwLock<DiagnosticsSnapshot>>,
+        diagnostics: DiagnosticsStore,
     ) -> Result<Self, String> {
         if bundle.mode() != StartupMode::Live {
             return Err("celerityd authority requires mode=live".to_owned());
@@ -97,7 +123,7 @@ impl LiveRuntime {
         model_bundle_digest: Option<&str>,
         epoch: u64,
         run_id: &str,
-        diagnostics: Arc<RwLock<DiagnosticsSnapshot>>,
+        diagnostics: DiagnosticsStore,
     ) -> Result<Self, String> {
         if bundle.mode() != StartupMode::Live {
             return Err("virtual integration still requires a live bundle".to_owned());
@@ -129,7 +155,7 @@ impl LiveRuntime {
         model_bundle_digest: Option<&str>,
         epoch: u64,
         run_id: &str,
-        diagnostics: Arc<RwLock<DiagnosticsSnapshot>>,
+        diagnostics: DiagnosticsStore,
         boundaries: LiveCanBoundaries,
     ) -> Result<Self, String> {
         if epoch == 0 {
@@ -181,6 +207,13 @@ impl LiveRuntime {
             last_safety_observed_ms: None,
             storage_degraded: false,
             last_sent_command: None,
+            last_accepted_radiator_split_command: None,
+            last_matching_command_ack_at: None,
+            last_command_ack_miss_at: None,
+            lease_renewal_expected: false,
+            lease_renewal_expected_since: None,
+            last_sent_runtime_lease: None,
+            last_matching_runtime_lease_ack_at: None,
         };
         runtime.send_controller_frame(&Frame::DiscoveryProbe(DiscoveryProbe {
             protocol_major: control_protocol::PROTOCOL_MAJOR,
@@ -388,6 +421,7 @@ impl LiveRuntime {
             Ok(frame) => frame,
             Err(error) => {
                 self.record("actuator_can_rejected", &error);
+                self.clear_controller_diagnostics();
                 self.ingest(RuntimeEvent::ControllerUnavailable {
                     monotonic_ms: self.monotonic_ms(),
                 })?;
@@ -422,6 +456,9 @@ impl LiveRuntime {
                         || message.configuration_generation
                             == self.controller.configuration_generation);
                 if valid {
+                    if self.boot_session != Some(message.boot_session) {
+                        self.clear_controller_diagnostics();
+                    }
                     if self.writer.as_ref().is_some_and(|writer| {
                         writer.record_firmware_generation(message.firmware_generation)
                             == EnqueueResult::Degraded
@@ -434,6 +471,7 @@ impl LiveRuntime {
                     self.configured = false;
                 } else {
                     self.record("controller_announce_rejected", &format!("{message:?}"));
+                    self.clear_controller_diagnostics();
                     self.boot_session = None;
                     self.announced_boot_session = None;
                     self.capability_boot_session = None;
@@ -456,6 +494,7 @@ impl LiveRuntime {
                     self.configure_reconciled_controller()?;
                 } else {
                     self.record("controller_capability_rejected", &format!("{message:?}"));
+                    self.clear_controller_diagnostics();
                     self.ingest(RuntimeEvent::ControllerUnavailable {
                         monotonic_ms: self.monotonic_ms(),
                     })?;
@@ -489,6 +528,9 @@ impl LiveRuntime {
                     && message.configuration_generation == self.controller.configuration_generation
                     && message.capability_generation == self.controller.capability_generation
                     && state_consistent;
+                if !truth_matches {
+                    self.clear_controller_diagnostics();
+                }
                 self.ingest(RuntimeEvent::ControllerTruth {
                     monotonic_ms: self.monotonic_ms(),
                     boot_session: message.boot_session,
@@ -497,13 +539,13 @@ impl LiveRuntime {
                 })?;
             }
             Frame::CommandAck { node, message } if node == self.controller.address => {
-                let accepted = self.last_sent_command.is_some_and(|(sequence, value, _)| {
+                let accepted = self.last_sent_command.is_some_and(|command| {
                     Some(message.boot_session) == self.boot_session
                         && message.configuration_generation
                             == self.controller.configuration_generation
                         && message.epoch == self.epoch
-                        && message.command_sequence == sequence
-                        && message.accepted_basis_points == value
+                        && message.command_sequence == command.sequence
+                        && message.accepted_basis_points == command.basis_points
                         && message.mode == 2
                         && message.fault_latch == 1
                         && message.result == 1
@@ -515,10 +557,13 @@ impl LiveRuntime {
                     command_sequence: message.command_sequence,
                     accepted,
                 })?;
-                if accepted
-                    && let Some((sequence, radiator_split_basis_points, source)) =
-                        self.last_sent_command
-                {
+                if accepted && let Some(command) = self.last_sent_command.take() {
+                    self.last_matching_command_ack_at = Some(Instant::now());
+                    self.last_accepted_radiator_split_command =
+                        Some(AcceptedRadiatorSplitCommand {
+                            basis_points: command.basis_points,
+                            source: map_command_source(command.source),
+                        });
                     self.event_sequence = self.event_sequence.saturating_add(1);
                     self.enqueue_record(RunRecord::control(
                         self.event_sequence,
@@ -527,15 +572,31 @@ impl LiveRuntime {
                             "schema_version": 1,
                             "state": "accepted",
                             "epoch": self.epoch,
-                            "sequence": sequence,
-                            "radiator_split_basis_points": radiator_split_basis_points,
-                            "source": format!("{source:?}"),
+                            "sequence": command.sequence,
+                            "radiator_split_basis_points": command.basis_points,
+                            "source": format!("{:?}", command.source),
                         })
                         .to_string(),
                     ));
+                } else if !accepted {
+                    self.last_command_ack_miss_at = Some(Instant::now());
+                    self.last_sent_command = None;
+                }
+            }
+            Frame::RuntimeLeaseAck { node, message } if node == self.controller.address => {
+                if self.last_sent_runtime_lease.is_some_and(|lease| {
+                    Some(message.boot_session) == self.boot_session
+                        && message.configuration_generation
+                            == self.controller.configuration_generation
+                        && message.epoch == self.epoch
+                        && message.renewal_sequence == lease.sequence
+                        && message.result == 1
+                }) {
+                    self.last_matching_runtime_lease_ack_at = Some(Instant::now());
                 }
             }
             Frame::FaultReport { node, .. } if node == self.controller.address => {
+                self.clear_controller_diagnostics();
                 self.ingest(RuntimeEvent::SharedHardFault {
                     monotonic_ms: self.monotonic_ms(),
                 })?;
@@ -606,12 +667,30 @@ impl LiveRuntime {
                             validity_ms: self.controller.runtime_lease_ms,
                         },
                     })?;
+                    let now = Instant::now();
+                    if !self.lease_renewal_expected {
+                        self.lease_renewal_expected_since = Some(now);
+                    }
+                    self.lease_renewal_expected = true;
+                    self.last_sent_runtime_lease = Some(SentRuntimeLease {
+                        sequence,
+                        sent_at: now,
+                    });
                 }
                 RuntimeEffect::SendCommand {
                     sequence,
                     radiator_split_basis_points,
                 } => {
                     let source = self.session.outcome().command_source;
+                    let now = Instant::now();
+                    if self.last_sent_command.is_some_and(|command| {
+                        now.saturating_duration_since(command.sent_at)
+                            >= Duration::from_millis(u64::from(
+                                self.controller.acknowledgement_deadline_ms,
+                            ))
+                    }) {
+                        self.last_command_ack_miss_at = Some(now);
+                    }
                     self.event_sequence = self.event_sequence.saturating_add(1);
                     self.enqueue_record(RunRecord::control(
                         self.event_sequence,
@@ -640,9 +719,15 @@ impl LiveRuntime {
                             flags: 0,
                         },
                     })?;
-                    self.last_sent_command = Some((sequence, radiator_split_basis_points, source));
+                    self.last_sent_command = Some(SentCommand {
+                        sequence,
+                        basis_points: radiator_split_basis_points,
+                        source,
+                        sent_at: now,
+                    });
                 }
                 RuntimeEffect::RequestFallback => {
+                    self.clear_controller_diagnostics();
                     if let Some(boot_session) = self.boot_session {
                         self.fallback_sequence = self.fallback_sequence.wrapping_add(1);
                         self.send_controller_frame(&Frame::FallbackRequest {
@@ -663,9 +748,13 @@ impl LiveRuntime {
                         &event,
                     ));
                 }
-                RuntimeEffect::RecordAuthority(_)
-                | RuntimeEffect::StopLeaseRenewal
-                | RuntimeEffect::RecordHardFault => {}
+                RuntimeEffect::StopLeaseRenewal => {
+                    self.lease_renewal_expected = false;
+                    self.lease_renewal_expected_since = None;
+                    self.last_sent_runtime_lease = None;
+                    self.last_matching_runtime_lease_ack_at = None;
+                }
+                RuntimeEffect::RecordAuthority(_) | RuntimeEffect::RecordHardFault => {}
             }
         }
         Ok(())
@@ -719,34 +808,115 @@ impl LiveRuntime {
     }
 
     fn update_diagnostics(&self) -> Result<(), String> {
+        let now = Instant::now();
+        let now_ms = self.monotonic_ms();
         let outcome = self.session.outcome();
-        let mut snapshot = self
-            .diagnostics
-            .write()
-            .map_err(|error| error.to_string())?;
         let global_authority = if outcome.hard_fault_latched {
-            "hard_fault"
+            vehicle_diagnostics::GlobalAuthority::HardFault
         } else if outcome.final_feature_authority == FeatureAuthority::Active {
-            "active"
+            vehicle_diagnostics::GlobalAuthority::Active
         } else {
-            "fallback"
+            vehicle_diagnostics::GlobalAuthority::Fallback
         };
-        global_authority.clone_into(&mut snapshot.global_authority);
         let feature_authority = match outcome.final_feature_authority {
-            FeatureAuthority::Fallback => "fallback",
-            FeatureAuthority::Arming => "arming",
-            FeatureAuthority::Active => "active",
+            FeatureAuthority::Fallback => vehicle_diagnostics::FeatureAuthority::Fallback,
+            FeatureAuthority::Arming => vehicle_diagnostics::FeatureAuthority::Arming,
+            FeatureAuthority::Active => vehicle_diagnostics::FeatureAuthority::Active,
         };
-        feature_authority.clone_into(&mut snapshot.feature_authority);
-        let command_source = match outcome.command_source {
-            CommandSource::ControllerLocalFallback => "controller_local_fallback",
-            CommandSource::Deterministic => "deterministic",
-            CommandSource::ModelOptimized => "model_optimized",
-            CommandSource::Experiment => "experiment",
+        let controller_runtime_lease_health =
+            if outcome.final_feature_authority == FeatureAuthority::Fallback {
+                DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback)
+            } else if !self.lease_renewal_expected {
+                DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotRenewing)
+            } else if self
+                .last_matching_runtime_lease_ack_at
+                .is_some_and(|acknowledged_at| {
+                    now.saturating_duration_since(acknowledged_at)
+                        <= Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
+                })
+            {
+                DiagnosticStatus::Healthy
+            } else if self
+                .lease_renewal_expected_since
+                .is_some_and(|expected_since| {
+                    now.saturating_duration_since(expected_since)
+                        > Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
+                })
+                || self.last_sent_runtime_lease.is_some_and(|lease| {
+                    now.saturating_duration_since(lease.sent_at)
+                        > Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
+                })
+            {
+                DiagnosticStatus::Unhealthy
+            } else {
+                DiagnosticStatus::Unknown(DiagnosticUnknownReason::AwaitingEvidence)
+            };
+        let controller_command_ack_health =
+            if outcome.final_feature_authority == FeatureAuthority::Fallback {
+                DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback)
+            } else if self.last_command_ack_miss_at.is_some_and(|missed_at| {
+                now.saturating_duration_since(missed_at) < COMMAND_ACK_SUMMARY_WINDOW
+            }) {
+                DiagnosticStatus::Unhealthy
+            } else if self
+                .last_matching_command_ack_at
+                .is_some_and(|acknowledged_at| {
+                    now.saturating_duration_since(acknowledged_at) < COMMAND_ACK_SUMMARY_WINDOW
+                })
+            {
+                DiagnosticStatus::Healthy
+            } else if let Some(command) = self.last_sent_command {
+                if now.saturating_duration_since(command.sent_at)
+                    > Duration::from_millis(u64::from(self.controller.acknowledgement_deadline_ms))
+                {
+                    DiagnosticStatus::Unhealthy
+                } else {
+                    DiagnosticStatus::Unknown(DiagnosticUnknownReason::AwaitingEvidence)
+                }
+            } else {
+                DiagnosticStatus::Unknown(DiagnosticUnknownReason::NoOutstandingCommand)
+            };
+        let observed_temperature = |signal: &str| {
+            self.signal_values
+                .get(signal)
+                .filter(|(degrees_celsius, _, _)| degrees_celsius.is_finite())
+                .map(|(degrees_celsius, observed_ms, _)| ObservedTemperature {
+                    degrees_celsius: *degrees_celsius,
+                    observation_age_ms: now_ms.saturating_sub(*observed_ms),
+                })
         };
-        command_source.clone_into(&mut snapshot.command_source);
-        snapshot.lease_renewal = outcome.final_feature_authority != FeatureAuthority::Fallback;
-        Ok(())
+        self.diagnostics.publish(
+            DiagnosticsSnapshot {
+                schema_version: 2,
+                runtime_update_age_ms: 0,
+                runtime_update_stale_after_ms: 0,
+                global_authority,
+                feature_authority,
+                command_source: map_command_source(outcome.command_source),
+                accepted_radiator_split_command: self.last_accepted_radiator_split_command,
+                coolant_temperature: observed_temperature("coolant_temperature_c"),
+                intake_air_temperature: observed_temperature("air_temperature_c"),
+                controller_runtime_lease_health,
+                controller_command_ack_health,
+                run_storage_health: if self.storage_degraded {
+                    RunStorageHealth::Degraded
+                } else {
+                    RunStorageHealth::Healthy
+                },
+            },
+            now,
+        )
+    }
+
+    fn clear_controller_diagnostics(&mut self) {
+        self.last_sent_command = None;
+        self.last_accepted_radiator_split_command = None;
+        self.last_matching_command_ack_at = None;
+        self.last_command_ack_miss_at = None;
+        self.lease_renewal_expected = false;
+        self.lease_renewal_expected_since = None;
+        self.last_sent_runtime_lease = None;
+        self.last_matching_runtime_lease_ack_at = None;
     }
 
     #[must_use]
@@ -765,9 +935,13 @@ impl LiveRuntime {
     ///
     /// Returns an error for final CAN transmission or Run sealing failure.
     pub fn shutdown(mut self) -> Result<RunManifest, String> {
+        self.clear_controller_diagnostics();
         self.ingest(RuntimeEvent::Shutdown {
             monotonic_ms: self.monotonic_ms(),
         })?;
+        if let Err(error) = self.update_diagnostics() {
+            eprintln!("shutdown diagnostics publication failed: {error}");
+        }
         let manifest = self
             .writer
             .take()
@@ -782,5 +956,16 @@ impl LiveRuntime {
 
     fn monotonic_ms(&self) -> u64 {
         u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+}
+
+fn map_command_source(source: CommandSource) -> vehicle_diagnostics::CommandSource {
+    match source {
+        CommandSource::ControllerLocalFallback => {
+            vehicle_diagnostics::CommandSource::ControllerLocalFallback
+        }
+        CommandSource::Deterministic => vehicle_diagnostics::CommandSource::Deterministic,
+        CommandSource::ModelOptimized => vehicle_diagnostics::CommandSource::ModelOptimized,
+        CommandSource::Experiment => vehicle_diagnostics::CommandSource::Experiment,
     }
 }

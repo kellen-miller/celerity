@@ -16,7 +16,7 @@ cargo build --workspace
 
 if [[ "$portable" == false ]] || command -v aarch64-linux-gnu-gcc >/dev/null; then
   cargo build --release --target aarch64-unknown-linux-gnu \
-    -p vehicle-runtime -p sync
+    -p vehicle-runtime -p vehicle-diagnostics -p vehicle-ui -p sync
 else
   echo "skipping ARM64 link: aarch64-linux-gnu-gcc is unavailable"
 fi

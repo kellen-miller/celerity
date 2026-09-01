@@ -6,20 +6,6 @@ mod live;
 #[cfg(target_os = "linux")]
 pub use live::LiveRuntime;
 
-use std::{
-    fs,
-    io::{Read, Write},
-    path::Path,
-    sync::{
-        Arc, RwLock,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
-    time::Duration,
-};
-
-use serde::{Deserialize, Serialize};
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LiveNetdeviceError {
     SameInterface,
@@ -429,108 +415,6 @@ pub struct ReceivedCanFrame {
 pub enum TimestampSource {
     RawHardware,
     SoftwareFallback,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct DiagnosticsSnapshot {
-    pub schema_version: u32,
-    pub supervisor: String,
-    pub global_authority: String,
-    pub feature_authority: String,
-    pub command_source: String,
-    pub lease_renewal: bool,
-}
-
-impl DiagnosticsSnapshot {
-    #[must_use]
-    pub fn startup_fallback() -> Self {
-        Self {
-            schema_version: 1,
-            supervisor: "running".to_owned(),
-            global_authority: "fallback".to_owned(),
-            feature_authority: "fallback".to_owned(),
-            command_source: "controller_local_fallback".to_owned(),
-            lease_renewal: false,
-        }
-    }
-}
-
-#[cfg(unix)]
-/// Starts the read-only diagnostics socket worker.
-///
-/// # Errors
-///
-/// Returns an error when the socket cannot be prepared, bound, or configured.
-pub fn serve_diagnostics(
-    socket_path: &Path,
-    stopping: Arc<AtomicBool>,
-    snapshot: Arc<RwLock<DiagnosticsSnapshot>>,
-) -> Result<thread::JoinHandle<Result<(), String>>, std::io::Error> {
-    use std::os::unix::net::UnixListener;
-
-    if let Some(parent) = socket_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    if socket_path.exists() {
-        fs::remove_file(socket_path)?;
-    }
-    let listener = UnixListener::bind(socket_path)?;
-    listener.set_nonblocking(true)?;
-    let socket_path = socket_path.to_path_buf();
-    thread::Builder::new()
-        .name("celerity-read-only-diagnostics".to_owned())
-        .spawn(move || {
-            while !stopping.load(Ordering::Relaxed) {
-                match listener.accept() {
-                    Ok((mut stream, _)) => {
-                        let mut request = [0_u8; 64];
-                        let read = stream
-                            .read(&mut request)
-                            .map_err(|error| error.to_string())?;
-                        if &request[..read] != b"status\n" {
-                            stream
-                                .write_all(b"{\"error\":\"read-only status request required\"}\n")
-                                .map_err(|error| error.to_string())?;
-                            continue;
-                        }
-                        let current = snapshot.read().map_err(|error| error.to_string())?;
-                        let mut response =
-                            serde_json::to_vec(&*current).map_err(|error| error.to_string())?;
-                        response.push(b'\n');
-                        stream
-                            .write_all(&response)
-                            .map_err(|error| error.to_string())?;
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(20));
-                    }
-                    Err(error) => return Err(error.to_string()),
-                }
-            }
-            drop(listener);
-            fs::remove_file(socket_path).map_err(|error| error.to_string())?;
-            Ok(())
-        })
-}
-
-#[cfg(unix)]
-/// Reads one typed status snapshot from the diagnostics socket.
-///
-/// # Errors
-///
-/// Returns an error for socket, protocol, or JSON failures.
-pub fn read_diagnostics(socket_path: &Path) -> Result<DiagnosticsSnapshot, String> {
-    use std::os::unix::net::UnixStream;
-
-    let mut stream = UnixStream::connect(socket_path).map_err(|error| error.to_string())?;
-    stream
-        .write_all(b"status\n")
-        .map_err(|error| error.to_string())?;
-    let mut response = Vec::new();
-    stream
-        .read_to_end(&mut response)
-        .map_err(|error| error.to_string())?;
-    serde_json::from_slice(&response).map_err(|error| error.to_string())
 }
 
 #[cfg(all(test, target_os = "linux"))]

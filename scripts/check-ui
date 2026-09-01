@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ui_root=crates/vehicle-ui/web
+fixture_root="$ui_root/fixtures/status"
+check_root=$(mktemp -d)
+trap 'rm -rf "$check_root"' EXIT
+
+npm --prefix "$ui_root" ci
+npm --prefix "$ui_root" run format:check
+npm --prefix "$ui_root" run lint
+npm --prefix "$ui_root" run check
+npm --prefix "$ui_root" run test
+
+cargo run --quiet -p vehicle-ui --example write_status_goldens -- \
+  "$check_root/status"
+for fixture in current stale producer-stale unavailable unknown; do
+  cmp "$fixture_root/$fixture.json" "$check_root/status/$fixture.json"
+done
+
+CELERITY_UI_OUT_DIR="$check_root/assets" npm --prefix "$ui_root" run build
+for asset in \
+  crates/vehicle-ui/assets/index.html \
+  "$check_root/assets/index.html"; do
+  if LC_ALL=C grep -Eq '[[:blank:]]+$' "$asset"; then
+    echo "generated UI asset contains trailing whitespace: $asset" >&2
+    exit 1
+  fi
+done
+cmp crates/vehicle-ui/assets/index.html "$check_root/assets/index.html"
+
+cargo test -p vehicle-ui
+npm --prefix "$ui_root" run test:browser

@@ -3,8 +3,8 @@
 - Date: 2026-09-01
 - Base commit: `04abe23935987546c644d69bd2dd91fdca7e4773`
 - Branch: `feat/telemetry-ui`
-- Validation scope: local uncommitted implementation
-- GitHub Actions for this implementation: not run; pending push
+- Validated implementation commit: `5e2e568643a46139c0b95c592022d5cde75dffe3`
+- GitHub Actions: PR #18, run `33565971839`, all three jobs passed
 
 ## Support contract
 
@@ -114,6 +114,20 @@ The following local container evidence passed:
   the asset regenerated at that review boundary was SHA-256
   `5dd1becb31d4fdefbfbcfc4d1511dbaf1e26051139729c38674db2d89e849281`.
 
+## Executed in GitHub Actions
+
+PR #18 implementation commit `5e2e568643a46139c0b95c592022d5cde75dffe3`
+passed GitHub Actions run `33565971839`:
+
+- Linux passed `./scripts/check-linux` in 2m36s.
+- macOS 15 portable passed the Rust, Python, end-to-end, UI/browser, and
+  artifact gates in 4m15s.
+- Ubuntu 24.04 portable passed the same gates, including vCAN-enabled portable
+  coverage, in 4m21s.
+
+This is CI evidence for the committed software and generated asset. It is not
+physical vehicle, display, electrical, road, or track evidence.
+
 ## Browser evidence
 
 Playwright produced wide 1440x900 and narrow 700x900 images for current,
@@ -128,11 +142,9 @@ SHA-256 `6e4df8e21b49fcf9bf39cbe8852de36f60ac52121da00a072afc75e79e671a76`.
 
 ## Explicitly pending or unclaimed
 
-GitHub Actions has not run for this implementation. Local final macOS/Linux
-asset-byte equality passed, but CI confirmation remains pending. The PID1
-lifecycle above is local-container evidence, not a production host or
-installed vehicle. No real
-CAN hardware, electrical fail-silence, target timing, physical display,
+The PID1 lifecycle above is local-container evidence, not a production host or
+installed vehicle. No real CAN hardware, electrical fail-silence, target
+timing, physical display,
 seated-distance sunlight/night legibility, glare, installed-resolution fit,
 vehicle-trained model quality, thermal-envelope, road, or track claim is made.
 Those remain unchecked in `docs/validation/first-deployment-checklist.md`.

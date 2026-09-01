@@ -3,7 +3,7 @@
 use std::{
     fs,
     sync::{
-        Arc, Mutex, RwLock,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -18,7 +18,10 @@ use control_protocol::{Frame, decode, encode};
 use socketcan::{
     CanFdFrame, CanFdSocket, CanFrame, CanSocket, EmbeddedFrame, Frame as SocketCanFrame, Socket,
 };
-use vehicle_runtime::DiagnosticsSnapshot;
+use vehicle_diagnostics::{
+    CommandSource as DiagnosticCommandSource, DiagnosticStatus, DiagnosticUnknownReason,
+    DiagnosticsSnapshot, DiagnosticsStore, RunStorageHealth,
+};
 
 #[test]
 fn live_kernel_sockets_drive_model_command_and_seal_run() {
@@ -38,8 +41,31 @@ fn live_kernel_sockets_drive_model_command_and_seal_run() {
     let model_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../contracts/golden/model-v1/identity.onnx");
     let model = RuntimeModel::load(&model_path, &bundle).expect("production model");
-    let diagnostics = Arc::new(RwLock::new(DiagnosticsSnapshot::startup_fallback()));
+    let diagnostics = DiagnosticsStore::new(
+        DiagnosticsSnapshot::startup_fallback(),
+        20,
+        std::time::Instant::now(),
+    );
     let stopping = Arc::new(AtomicBool::new(false));
+    let diagnostics_socket = temporary.path().join("runtime-diagnostics.sock");
+    let diagnostics_worker = vehicle_diagnostics::serve_diagnostics(
+        &diagnostics_socket,
+        Arc::clone(&stopping),
+        diagnostics.clone(),
+    )
+    .expect("diagnostics server");
+    let startup =
+        vehicle_diagnostics::read_diagnostics(&diagnostics_socket).expect("startup diagnostics");
+    assert!(startup.accepted_radiator_split_command.is_none());
+    assert!(startup.coolant_temperature.is_none());
+    assert_eq!(
+        startup.controller_runtime_lease_health,
+        DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback)
+    );
+    assert_eq!(
+        startup.controller_command_ack_health,
+        DiagnosticStatus::Unknown(DiagnosticUnknownReason::NoOutstandingCommand)
+    );
     let observed_commands = Arc::new(Mutex::new(Vec::new()));
     let controller = spawn_controller(Arc::clone(&stopping), Arc::clone(&observed_commands));
 
@@ -49,7 +75,7 @@ fn live_kernel_sockets_drive_model_command_and_seal_run() {
         Some("fixture-model-bundle"),
         99,
         "live-kernel",
-        Arc::clone(&diagnostics),
+        diagnostics,
     )
     .expect("production loop must bind vcan");
     for _ in 0..4 {
@@ -61,11 +87,45 @@ fn live_kernel_sockets_drive_model_command_and_seal_run() {
     assert_eq!(outcome.command_source, CommandSource::ModelOptimized);
     assert_eq!(outcome.accepted_basis_points, Some(9_000));
     assert!(observed_commands.lock().expect("commands").contains(&9_000));
+    let snapshot =
+        vehicle_diagnostics::read_diagnostics(&diagnostics_socket).expect("diagnostics snapshot");
     assert_eq!(
-        diagnostics.read().expect("diagnostics").command_source,
-        "model_optimized"
+        snapshot.command_source,
+        DiagnosticCommandSource::ModelOptimized
     );
+    assert_eq!(
+        snapshot
+            .accepted_radiator_split_command
+            .expect("accepted command")
+            .basis_points,
+        9_000
+    );
+    assert_eq!(
+        snapshot.controller_runtime_lease_health,
+        DiagnosticStatus::Healthy
+    );
+    assert_eq!(
+        snapshot.controller_command_ack_health,
+        DiagnosticStatus::Healthy
+    );
+    assert_eq!(snapshot.run_storage_health, RunStorageHealth::Healthy);
+    let coolant = snapshot
+        .coolant_temperature
+        .expect("finite coolant temperature")
+        .degrees_celsius;
+    assert!((coolant - 100.0).abs() < f64::EPSILON);
+    thread::sleep(Duration::from_millis(120));
+    let delayed =
+        vehicle_diagnostics::read_diagnostics(&diagnostics_socket).expect("delayed diagnostics");
+    assert!(delayed.runtime_update_age_ms >= delayed.runtime_update_stale_after_ms);
     let manifest = runtime.shutdown().expect("Run must seal");
+    let stopped =
+        vehicle_diagnostics::read_diagnostics(&diagnostics_socket).expect("shutdown diagnostics");
+    assert!(stopped.accepted_radiator_split_command.is_none());
+    assert_eq!(
+        stopped.controller_runtime_lease_health,
+        DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback)
+    );
     assert_eq!(manifest.completion, Completion::Complete);
     assert!(runs.join("live-kernel/manifest.json").is_file());
     assert!(runs.join("live-kernel").join(manifest.chunk_file).is_file());
@@ -75,6 +135,10 @@ fn live_kernel_sockets_drive_model_command_and_seal_run() {
     stopping.store(true, Ordering::Relaxed);
     send_controller_wakeup();
     controller.join().expect("controller thread");
+    diagnostics_worker
+        .join()
+        .expect("diagnostics thread")
+        .expect("diagnostics result");
 }
 
 fn spawn_controller(

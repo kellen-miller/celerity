@@ -1,0 +1,27 @@
+[Unit]
+Description=Celerity local vehicle status viewer
+After=local-fs.target
+StartLimitIntervalSec=30
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=celerity-ui
+Group=celerity-diagnostics
+ExecStart=/usr/local/bin/celerity-ui
+Restart=on-failure
+RestartSec=1s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateDevices=yes
+PrivateTmp=yes
+InaccessiblePaths=-/etc/celerity -/var/lib/celerity
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target

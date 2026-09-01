@@ -15,12 +15,15 @@ thermal-envelope validation, or road/track acceptance.
 - `crates/control-core`: configuration, powertrain decoding, executor, controller
   emulator, Run, replay, ONNX inference, optimizer, and startup-only A/B model slots.
 - `crates/vehicle-runtime`: Linux CAN adapters plus runtime, simulation/replay,
-  and diagnostics binaries.
+  and vehicle binaries.
+- `crates/vehicle-diagnostics`: typed read-only status contract and bounded
+  Unix-socket transport.
+- `crates/vehicle-ui`: loopback-only Rust status observer, embedded local
+  Svelte panel, and `celerity-ui` binary.
 - `crates/sync`: authority-free Run/model reconciliation with SQLite.
 - `firmware/duct-controller`: STM32G431 Embassy image and host conformance.
 - `services/home`: FastAPI, SQLite/filesystem archive, managed jobs, models, and
   bounded webhook delivery.
-- `site`: static public architecture walkthrough, never a driver interface.
 - `contracts`: fixed controller, Run, home API, webhook, configuration, and
   model-bundle v1 boundaries.
 
@@ -31,13 +34,17 @@ Install the checked-in Rust toolchain, `uv`, and Node/npm, then run:
 ```sh
 ./scripts/check-rust --portable
 ./scripts/check-python
-./scripts/check-site
+./scripts/check-ui
 ```
 
 Linux CI additionally creates separate `vcan-powertrain` and
 `vcan-controller` interfaces and runs `./scripts/check-linux`, including exact
 systemd-unit lifecycle checks and the ARM64 link. `vcan` demonstrates software
 interface separation; it does not prove physical listen-only behavior.
+
+The local panel is built into `celerity-ui`; Node is a build/CI dependency,
+not a vehicle runtime dependency. With the independently managed viewer
+enabled on the vehicle host, open `http://127.0.0.1:8080/` locally.
 
 Run the production runtime logic with synthetic evidence:
 

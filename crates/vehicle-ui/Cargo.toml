@@ -1,0 +1,22 @@
+[package]
+name = "vehicle-ui"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tiny_http = "0.12.0"
+vehicle-diagnostics = { path = "../vehicle-diagnostics" }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[[bin]]
+name = "celerity-ui"
+path = "src/main.rs"
+
+[lints]
+workspace = true

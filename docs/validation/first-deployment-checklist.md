@@ -23,6 +23,14 @@ Every item below is **unexecuted**. Hardware-free CI is not evidence for it.
 - [ ] Run bounded coolant/IAT experiments with explicit abort conditions.
 - [ ] Establish the safe thermal envelope before enabling model-assisted commands.
 
+## Display
+
+- [ ] Check viewer legibility at seated distance in direct sun and at night.
+- [ ] Check glare and reflections at the installed display angle.
+- [ ] Confirm every viewer state fits the actual display without scrolling.
+- [ ] Measure celerityd cycle timing with the viewer closed and open; prove the
+      viewer does not perturb control-loop timing.
+
 ## Installed vehicle
 
 - [ ] Validate live Haltech/CANTCU decoding on this car against independent instruments.

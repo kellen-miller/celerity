@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "state": "unavailable",
+  "consecutive_failures": 3,
+  "last_success_age_ms": 4300,
+  "snapshot": null
+}

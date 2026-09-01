@@ -8,8 +8,8 @@ version.workspace = true
 [dependencies]
 control-core = { path = "../control-core" }
 control-protocol = { path = "../control-protocol" }
-serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+vehicle-diagnostics = { path = "../vehicle-diagnostics" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 sd-notify = "0.5.0"

@@ -10,15 +10,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(io::Error::other("usage: celerityctl status --socket <path>").into());
     }
     let snapshot =
-        vehicle_runtime::read_diagnostics(Path::new(socket)).map_err(io::Error::other)?;
-    println!(
-        "supervisor={} global_authority={} feature_authority={} source={} lease_renewal={}",
-        snapshot.supervisor,
-        snapshot.global_authority,
-        snapshot.feature_authority,
-        snapshot.command_source,
-        snapshot.lease_renewal,
-    );
+        vehicle_diagnostics::read_diagnostics(Path::new(socket)).map_err(io::Error::other)?;
+    println!("{}", serde_json::to_string_pretty(&snapshot)?);
     Ok(())
 }
 

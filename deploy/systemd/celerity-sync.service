@@ -7,7 +7,6 @@ RequiresMountsFor=/var/lib/celerity
 Type=simple
 ExecStart=/usr/local/bin/celerity-sync /etc/celerity/celerity.toml
 Environment=CELERITY_HOME_TOKEN_PATH=/etc/celerity/home-token
-StateDirectory=celerity
 TimeoutStopSec=5s
 Restart=on-failure
 RestartSec=5s

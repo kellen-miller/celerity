@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "state": "current",
+  "consecutive_failures": 0,
+  "last_success_age_ms": 40,
+  "snapshot": {
+    "schema_version": 2,
+    "runtime_update_age_ms": 15,
+    "runtime_update_stale_after_ms": 100,
+    "global_authority": "fallback",
+    "feature_authority": "fallback",
+    "command_source": "controller_local_fallback",
+    "accepted_radiator_split_command": null,
+    "coolant_temperature": null,
+    "intake_air_temperature": null,
+    "controller_runtime_lease_health": {
+      "state": "unknown",
+      "reason": "not_expected_in_fallback"
+    },
+    "controller_command_ack_health": {
+      "state": "unknown",
+      "reason": "no_outstanding_command"
+    },
+    "run_storage_health": "unknown"
+  }
+}

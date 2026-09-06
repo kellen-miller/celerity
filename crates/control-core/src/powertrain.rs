@@ -35,6 +35,84 @@ pub enum PowertrainDecodeError {
     WrongLength,
 }
 
+/// Published Haltech ECU Broadcast v2 message layouts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HaltechFrame {
+    EngineLoadAndPressure,
+    FuelAndOilPressure,
+    WheelSpeeds,
+    EngineLimiting,
+    VehicleSpeed,
+    BatteryAndBarometricPressure,
+    ExhaustGasTemperatureGroup { group: u8 },
+    AmbientAir,
+    PreIntercoolerBoostPressure,
+    FluidTemperatures,
+    DrivelineTemperatures,
+    ThermoFansAndCheckEngine,
+    GenericSensorGroup { group: u8 },
+    EcuTemperature,
+    EngineProtection,
+    EngineState,
+    CalculatedAirTemperature,
+}
+
+impl HaltechFrame {
+    fn from_id(can_id: u16) -> Option<Self> {
+        Some(match can_id {
+            0x360 => Self::EngineLoadAndPressure,
+            0x361 => Self::FuelAndOilPressure,
+            0x36c => Self::WheelSpeeds,
+            0x36e => Self::EngineLimiting,
+            0x370 => Self::VehicleSpeed,
+            0x372 => Self::BatteryAndBarometricPressure,
+            0x373..=0x375 => Self::ExhaustGasTemperatureGroup {
+                group: (can_id - 0x373) as u8,
+            },
+            0x376 => Self::AmbientAir,
+            0x377 => Self::PreIntercoolerBoostPressure,
+            0x3e0 => Self::FluidTemperatures,
+            0x3e1 => Self::DrivelineTemperatures,
+            0x3e4 => Self::ThermoFansAndCheckEngine,
+            0x3e7..=0x3e9 => Self::GenericSensorGroup {
+                group: (can_id - 0x3e7) as u8,
+            },
+            0x469 => Self::EcuTemperature,
+            0x6f3 => Self::EngineProtection,
+            0x6f4 => Self::EngineState,
+            0x6f7 => Self::CalculatedAirTemperature,
+            _ => return None,
+        })
+    }
+}
+
+/// Relative message layouts in the documented CANTCU Default CAN Datastream.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CantcuFrame {
+    EngineAndPedal,
+    TorqueAndShift,
+    DrivenWheelAndShifter,
+    DigitalIo,
+    AnalogInputs,
+    ShiftStatus,
+    TargetRpmAndDeltas,
+}
+
+impl CantcuFrame {
+    fn from_id(base_id: u16, can_id: u16) -> Option<Self> {
+        Some(match can_id.checked_sub(base_id)? {
+            0 => Self::EngineAndPedal,
+            1 => Self::TorqueAndShift,
+            2 => Self::DrivenWheelAndShifter,
+            3 => Self::DigitalIo,
+            4 => Self::AnalogInputs,
+            5 => Self::ShiftStatus,
+            6 => Self::TargetRpmAndDeltas,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PowertrainDecoder {
     cantcu: Option<CantcuDefaultStream>,
@@ -90,7 +168,7 @@ impl CantcuDefaultStream {
         if last > 0x7ff {
             return Err(PowertrainDecodeError::InvalidCantcuBase);
         }
-        if (base_id..=last).any(is_haltech_id) {
+        if (base_id..=last).any(|can_id| HaltechFrame::from_id(can_id).is_some()) {
             return Err(PowertrainDecodeError::CantcuIdCollision);
         }
         Ok(Self { base_id })
@@ -109,14 +187,14 @@ fn decode_powertrain_frame(
     payload: &[u8],
     cantcu: Option<CantcuDefaultStream>,
 ) -> Result<DecodedPowertrainFrame, PowertrainDecodeError> {
-    if is_haltech_id(can_id) {
+    if let Some(frame) = HaltechFrame::from_id(can_id) {
         if payload.len() != 8 {
             return Err(PowertrainDecodeError::WrongLength);
         }
         let be = |offset: usize| u16::from_be_bytes([payload[offset], payload[offset + 1]]);
         let mut signals = Vec::new();
-        match can_id {
-            0x360 => {
+        match frame {
+            HaltechFrame::EngineLoadAndPressure => {
                 signals.push(signal("engine_rpm", f64::from(be(0))));
                 signals.push(signal("map_kpa_absolute", f64::from(be(2)) / 10.0));
                 signals.push(signal("throttle_percent", f64::from(be(4)) / 10.0));
@@ -125,7 +203,7 @@ fn decode_powertrain_frame(
                     f64::from(be(6)) / 10.0 - 101.3,
                 ));
             }
-            0x361 => {
+            HaltechFrame::FuelAndOilPressure => {
                 signals.push(signal(
                     "fuel_pressure_kpa_gauge",
                     f64::from(be(0)) / 10.0 - 101.3,
@@ -136,7 +214,7 @@ fn decode_powertrain_frame(
                 ));
                 signals.push(signal("engine_demand_percent", f64::from(be(4)) / 10.0));
             }
-            0x36c => {
+            HaltechFrame::WheelSpeeds => {
                 for (index, name) in [
                     "wheel_speed_front_left_kph",
                     "wheel_speed_front_right_kph",
@@ -149,17 +227,19 @@ fn decode_powertrain_frame(
                     signals.push(signal(name, f64::from(be(index * 2)) / 10.0));
                 }
             }
-            0x36e => signals.push(signal(
+            HaltechFrame::EngineLimiting => signals.push(signal(
                 "engine_limiting_active",
                 if be(0) != 0 { 1.0 } else { 0.0 },
             )),
-            0x370 => signals.push(signal("vehicle_speed_kph", f64::from(be(0)) / 10.0)),
-            0x372 => {
+            HaltechFrame::VehicleSpeed => {
+                signals.push(signal("vehicle_speed_kph", f64::from(be(0)) / 10.0));
+            }
+            HaltechFrame::BatteryAndBarometricPressure => {
                 signals.push(signal("battery_voltage_v", f64::from(be(0)) / 10.0));
                 signals.push(signal("barometric_pressure_kpa", f64::from(be(6)) / 10.0));
             }
-            0x373..=0x375 => {
-                let first = usize::from(can_id - 0x373) * 4 + 1;
+            HaltechFrame::ExhaustGasTemperatureGroup { group } => {
+                let first = usize::from(group) * 4 + 1;
                 for index in 0..4 {
                     signals.push(signal(
                         egt_name(first + index),
@@ -167,15 +247,15 @@ fn decode_powertrain_frame(
                     ));
                 }
             }
-            0x376 => signals.push(signal(
+            HaltechFrame::AmbientAir => signals.push(signal(
                 "ambient_air_temperature_c",
                 f64::from(be(0)) / 10.0 - 273.1,
             )),
-            0x377 => signals.push(signal(
+            HaltechFrame::PreIntercoolerBoostPressure => signals.push(signal(
                 "pre_intercooler_boost_pressure_kpa",
                 f64::from(be(0)) / 10.0,
             )),
-            0x3e0 => {
+            HaltechFrame::FluidTemperatures => {
                 for (offset, name) in [
                     "coolant_temperature_c",
                     "air_temperature_c",
@@ -188,7 +268,7 @@ fn decode_powertrain_frame(
                     signals.push(signal(name, f64::from(be(offset * 2)) / 10.0 - 273.1));
                 }
             }
-            0x3e1 => {
+            HaltechFrame::DrivelineTemperatures => {
                 signals.push(signal(
                     "gearbox_oil_temperature_c",
                     f64::from(be(0)) / 10.0 - 273.1,
@@ -202,15 +282,15 @@ fn decode_powertrain_frame(
                     f64::from(be(6)) / 10.0 - 273.1,
                 ));
             }
-            0x3e4 => {
+            HaltechFrame::ThermoFansAndCheckEngine => {
                 signals.push(signal("thermo_fan_1", bool_value(payload[3] & 0x01 != 0)));
                 signals.push(signal("thermo_fan_2", bool_value(payload[3] & 0x02 != 0)));
                 signals.push(signal("thermo_fan_3", bool_value(payload[3] & 0x04 != 0)));
                 signals.push(signal("thermo_fan_4", bool_value(payload[3] & 0x08 != 0)));
                 signals.push(signal("check_engine", bool_value(payload[7] & 0x80 != 0)));
             }
-            0x3e7..=0x3e9 => {
-                let first = usize::from(can_id - 0x3e7) * 4 + 1;
+            HaltechFrame::GenericSensorGroup { group } => {
+                let first = usize::from(group) * 4 + 1;
                 for index in 0..(11 - first).min(4) {
                     signals.push(signal(
                         generic_sensor_name(first + index),
@@ -218,17 +298,20 @@ fn decode_powertrain_frame(
                     ));
                 }
             }
-            0x469 => signals.push(signal("ecu_temperature_c", f64::from(be(0)) / 10.0 - 273.1)),
-            0x6f3 => {
+            HaltechFrame::EcuTemperature => {
+                signals.push(signal("ecu_temperature_c", f64::from(be(0)) / 10.0 - 273.1));
+            }
+            HaltechFrame::EngineProtection => {
                 signals.push(signal("engine_protection_severity", f64::from(payload[5])));
                 signals.push(signal("engine_protection_obd_reason", f64::from(be(6))));
             }
-            0x6f4 => signals.push(signal("engine_state", f64::from(payload[1] & 0x0f))),
-            0x6f7 => signals.push(signal(
+            HaltechFrame::EngineState => {
+                signals.push(signal("engine_state", f64::from(payload[1] & 0x0f)));
+            }
+            HaltechFrame::CalculatedAirTemperature => signals.push(signal(
                 "calculated_air_temperature_c",
                 f64::from(be(4)) / 10.0 - 273.1,
             )),
-            _ => {}
         }
         return Ok(DecodedPowertrainFrame {
             can_id,
@@ -239,7 +322,7 @@ fn decode_powertrain_frame(
     }
 
     if let Some(stream) = cantcu
-        && (stream.base_id..=stream.base_id + 6).contains(&can_id)
+        && let Some(frame) = CantcuFrame::from_id(stream.base_id, can_id)
     {
         if payload.len() != 8 {
             return Err(PowertrainDecodeError::WrongLength);
@@ -247,15 +330,15 @@ fn decode_powertrain_frame(
         let le = |offset: usize| u16::from_le_bytes([payload[offset], payload[offset + 1]]);
         let signed = |offset: usize| i16::from_le_bytes([payload[offset], payload[offset + 1]]);
         let mut signals = Vec::new();
-        match can_id - stream.base_id {
-            0 => {
+        match frame {
+            CantcuFrame::EngineAndPedal => {
                 signals.push(signal("cantcu_engine_rpm", f64::from(le(0))));
                 signals.push(signal("cantcu_input_rpm", f64::from(le(2))));
                 signals.push(signal("cantcu_output_rpm", f64::from(le(4))));
                 signals.push(signal("cantcu_pedal_percent", f64::from(payload[6])));
                 signals.push(signal("cantcu_brake_switch", f64::from(payload[7])));
             }
-            1 => {
+            CantcuFrame::TorqueAndShift => {
                 signals.push(signal("cantcu_engine_torque_nm", f64::from(signed(0))));
                 signals.push(signal("cantcu_target_torque_nm", f64::from(signed(2))));
                 signals.push(signal("cantcu_shift_in_progress", f64::from(payload[4])));
@@ -263,7 +346,7 @@ fn decode_powertrain_frame(
                 signals.push(signal("cantcu_shift_cut_percent", f64::from(payload[6])));
                 signals.push(signal("cantcu_blip_percent", f64::from(payload[7])));
             }
-            2 => {
+            CantcuFrame::DrivenWheelAndShifter => {
                 signals.push(signal("cantcu_driven_wheel_speed", f64::from(le(0))));
                 signals.push(signal("cantcu_gear", f64::from(payload[2].cast_signed())));
                 signals.push(signal("cantcu_shifter_state", f64::from(payload[3])));
@@ -273,12 +356,12 @@ fn decode_powertrain_frame(
                 ));
                 signals.push(signal("cantcu_paddles", f64::from(payload[7])));
             }
-            3 => {
+            CantcuFrame::DigitalIo => {
                 for (index, value) in payload.iter().enumerate() {
                     signals.push(signal(cantcu_digital_name(index), f64::from(*value)));
                 }
             }
-            4 => {
+            CantcuFrame::AnalogInputs => {
                 for index in 0..4 {
                     signals.push(signal(
                         cantcu_analog_name(index),
@@ -286,7 +369,7 @@ fn decode_powertrain_frame(
                     ));
                 }
             }
-            5 => {
+            CantcuFrame::ShiftStatus => {
                 signals.push(signal("cantcu_last_shift_time_ms", f64::from(le(0))));
                 signals.push(signal(
                     "cantcu_oil_temperature_c",
@@ -299,12 +382,11 @@ fn decode_powertrain_frame(
                     f64::from(le(6)) / 1_000.0,
                 ));
             }
-            6 => {
+            CantcuFrame::TargetRpmAndDeltas => {
                 signals.push(signal("cantcu_target_rpm", f64::from(le(0))));
                 signals.push(signal("cantcu_delta_rpm", f64::from(signed(2))));
                 signals.push(signal("cantcu_delta_torque_nm", f64::from(signed(4))));
             }
-            _ => unreachable!("validated seven-frame range"),
         }
         return Ok(DecodedPowertrainFrame {
             can_id,
@@ -320,26 +402,6 @@ fn decode_powertrain_frame(
         signals: Vec::new(),
         raw: payload.to_vec(),
     })
-}
-
-const fn is_haltech_id(can_id: u16) -> bool {
-    matches!(
-        can_id,
-        0x360
-            | 0x361
-            | 0x36c
-            | 0x36e
-            | 0x370
-            | 0x372..=0x377
-            | 0x3e0
-            | 0x3e1
-            | 0x3e4
-            | 0x3e7..=0x3e9
-            | 0x469
-            | 0x6f3
-            | 0x6f4
-            | 0x6f7
-    )
 }
 
 const fn signal(name: &'static str, value: f64) -> DecodedSignal {
@@ -392,4 +454,36 @@ const fn cantcu_analog_name(index: usize) -> &'static str {
         "cantcu_analog_input_3_v",
         "cantcu_analog_input_4_v",
     ][index]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CantcuFrame, HaltechFrame};
+
+    #[test]
+    fn haltech_ids_map_to_named_frames() {
+        assert_eq!(
+            HaltechFrame::from_id(0x3e0),
+            Some(HaltechFrame::FluidTemperatures)
+        );
+        assert_eq!(
+            HaltechFrame::from_id(0x375),
+            Some(HaltechFrame::ExhaustGasTemperatureGroup { group: 2 })
+        );
+        assert_eq!(HaltechFrame::from_id(0x3e6), None);
+    }
+
+    #[test]
+    fn cantcu_ids_map_to_named_relative_frames() {
+        assert_eq!(
+            CantcuFrame::from_id(0x500, 0x505),
+            Some(CantcuFrame::ShiftStatus)
+        );
+        assert_eq!(
+            CantcuFrame::from_id(0x500, 0x506),
+            Some(CantcuFrame::TargetRpmAndDeltas)
+        );
+        assert_eq!(CantcuFrame::from_id(0x500, 0x4ff), None);
+        assert_eq!(CantcuFrame::from_id(0x500, 0x507), None);
+    }
 }

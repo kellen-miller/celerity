@@ -17,7 +17,7 @@ struct GoldenVector {
 #[test]
 fn firmware_native_state_consumes_shared_raw_vectors() {
     let golden: GoldenFile = serde_json::from_str(include_str!(
-        "../../../contracts/golden/controller-can-v1/vectors.json"
+        "../../../testdata/protocol/controller-can-v1/vectors.json"
     ))
     .expect("shared golden vectors");
     assert_eq!(golden.schema_version, 1);

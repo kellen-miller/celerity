@@ -38,8 +38,30 @@ fn live_kernel_sockets_drive_model_command_and_seal_run() {
     )
     .expect("live bundle");
     let bundle = ValidatedBundle::load(&bundle_path, StartupMode::Live).expect("valid live bundle");
-    let model_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../contracts/golden/model-v1/identity.onnx");
+    let model_directory = temporary.path().join("model");
+    fs::create_dir_all(&model_directory).expect("model directory");
+    let model_path = model_directory.join("identity.onnx");
+    fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../testdata/models/identity.onnx"),
+        &model_path,
+    )
+    .expect("model fixture");
+    fs::write(
+        model_directory.join("manifest.json"),
+        br#"{
+  "calibration_error": 0.01,
+  "input_ranges": [
+    {"minimum": 60.0, "maximum": 120.0},
+    {"minimum": 0.0, "maximum": 100.0}
+  ],
+  "normalization": [
+    {"mean": 90.0, "scale": 10.0},
+    {"mean": 40.0, "scale": 10.0}
+  ]
+}"#,
+    )
+    .expect("model manifest");
     let model = RuntimeModel::load(&model_path, &bundle).expect("production model");
     let diagnostics = DiagnosticsStore::new(
         DiagnosticsSnapshot::startup_fallback(),

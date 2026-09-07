@@ -15,8 +15,30 @@ fn bundle() -> ValidatedBundle {
     ValidatedBundle::load(&source, StartupMode::Simulation).expect("valid fixture")
 }
 
-fn model_fixture() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../contracts/golden/model-v1/identity.onnx")
+fn model_fixture() -> (tempfile::TempDir, PathBuf) {
+    let directory = tempfile::tempdir().expect("model fixture directory");
+    let model_path = directory.path().join("identity.onnx");
+    fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx"),
+        &model_path,
+    )
+    .expect("model fixture");
+    fs::write(
+        directory.path().join("manifest.json"),
+        br#"{
+  "calibration_error": 0.01,
+  "input_ranges": [
+    {"minimum": 60.0, "maximum": 120.0},
+    {"minimum": 0.0, "maximum": 100.0}
+  ],
+  "normalization": [
+    {"mean": 90.0, "scale": 10.0},
+    {"mean": 40.0, "scale": 10.0}
+  ]
+}"#,
+    )
+    .expect("model manifest");
+    (directory, model_path)
 }
 
 fn experiment_bundle() -> ValidatedBundle {
@@ -107,7 +129,8 @@ fn healthy_events_reach_deterministic_authority_in_fixed_order() {
 #[test]
 fn startup_selected_model_reaches_the_production_command_effect() {
     let bundle = bundle();
-    let model = RuntimeModel::load(&model_fixture(), &bundle).expect("startup model");
+    let (_model_directory, model_path) = model_fixture();
+    let model = RuntimeModel::load(&model_path, &bundle).expect("startup model");
     let outcome = Runtime::new_with_model(
         bundle,
         ExternalAdapters::simulation(healthy_events()),
@@ -128,7 +151,8 @@ fn startup_selected_model_reaches_the_production_command_effect() {
 #[test]
 fn unacknowledged_model_command_is_not_acceptance_evidence() {
     let bundle = bundle();
-    let model = RuntimeModel::load(&model_fixture(), &bundle).expect("startup model");
+    let (_model_directory, model_path) = model_fixture();
+    let model = RuntimeModel::load(&model_path, &bundle).expect("startup model");
     let events = healthy_events().into_iter().take(4).collect();
     let outcome = Runtime::new_with_model(bundle, ExternalAdapters::simulation(events), model)
         .expect("matching composition")

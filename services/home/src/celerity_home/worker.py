@@ -9,6 +9,7 @@ import sqlite3
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import onnx
@@ -59,8 +60,8 @@ def run(storage_root: Path, job_id: str) -> None:
         raise RuntimeError(f"unknown job {job_id}")
     output = storage_root / "jobs" / job_id
     output.mkdir(parents=True, exist_ok=True)
-    run_digests = json.loads(job["input_digests_json"])
-    manifests = [
+    run_digests: list[str] = json.loads(job["input_digests_json"])
+    manifests: list[dict[str, Any]] = [
         json.loads(
             connection.execute(
                 "SELECT manifest_json FROM runs WHERE digest=?", (digest,)
@@ -76,7 +77,7 @@ def run(storage_root: Path, job_id: str) -> None:
         "command_lattice",
         "maximum_calibration_error",
     )
-    contract = {field: manifests[0].get(field) for field in contract_fields}
+    contract: dict[str, Any] = {field: manifests[0].get(field) for field in contract_fields}
     if any(not contract[field] for field in contract_fields) or any(
         manifest.get(field) != contract[field]
         for manifest in manifests
@@ -109,7 +110,7 @@ def run(storage_root: Path, job_id: str) -> None:
         [max(float(np.std(values)), 1e-6) for values in zip(*observed_values, strict=True)],
         dtype=np.float32,
     )
-    evaluation = export_and_compare(
+    evaluation: dict[str, Any] = export_and_compare(
         model_path,
         recipe,
         training_inputs,
@@ -188,7 +189,13 @@ def run(storage_root: Path, job_id: str) -> None:
             raise RuntimeError("desired baseline model contract is incompatible")
         evaluator = ReferenceEvaluator(onnx.load_from_string(baseline_model_bytes))
         prediction = np.concatenate(
-            [evaluator.run(None, {"thermal_history": row.reshape(1, -1)})[0] for row in held_inputs]
+            [
+                cast(
+                    list[np.ndarray],
+                    evaluator.run(None, {"thermal_history": row.reshape(1, -1)}),
+                )[0]
+                for row in held_inputs
+            ]
         )
         baseline_mse = float(np.mean((prediction - held_targets) ** 2))
         if not np.isfinite(baseline_mse):

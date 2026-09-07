@@ -28,7 +28,7 @@ pub struct StatusObserver {
 
 impl StatusObserver {
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             snapshot: None,
             last_success_at: None,

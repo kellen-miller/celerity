@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cargo test -p sync --test end_to_end -- --ignored --nocapture
-cargo test -p control-core --test model_slots
+cargo test -p sync --all-features --test end_to_end -- --ignored --nocapture
+cargo test -p control-core --all-features --test model_slots
 uv run --project services/home pytest services/home/tests/test_application.py

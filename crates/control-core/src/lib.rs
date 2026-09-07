@@ -1,11 +1,11 @@
 //! Deterministic vehicle authority and evidence lifecycle.
 
-mod configuration;
+pub(crate) mod configuration;
 mod controller;
 mod executor;
 mod experiment;
 mod model;
-mod powertrain;
+pub(crate) mod powertrain;
 mod run;
 mod scenario;
 

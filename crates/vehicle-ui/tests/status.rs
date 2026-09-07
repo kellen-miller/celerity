@@ -70,7 +70,7 @@ fn producer_age_controls_success_state_and_recovery() {
     assert_eq!(recovered.consecutive_failures, 0);
 }
 
-fn fresh_snapshot() -> DiagnosticsSnapshot {
+const fn fresh_snapshot() -> DiagnosticsSnapshot {
     let mut snapshot = DiagnosticsSnapshot::startup_fallback();
     snapshot.runtime_update_age_ms = 20;
     snapshot.runtime_update_stale_after_ms = 100;

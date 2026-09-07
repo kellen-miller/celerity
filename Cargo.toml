@@ -22,6 +22,16 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+# Clippy explicitly rejects `restriction` as a blanket group. Its opinionated
+# style rules are enabled selectively only when they fit this runtime.
 cast_possible_truncation = "allow"
+derive_partial_eq_without_eq = "allow"
 needless_pass_by_value = "allow"
+# Internal modules deliberately keep crate-scoped APIs without exposing
+# implementation modules as public package surface.
+redundant_pub_crate = "allow"
 too_many_lines = "allow"
+multiple_crate_versions = "allow"
+cargo_common_metadata = "allow"

@@ -88,20 +88,21 @@ pub fn run_http(
 }
 
 fn valid_loopback_host(value: &str) -> bool {
-    let (host, port) = if let Some(remainder) = value.strip_prefix("[::1]") {
-        ("[::1]", remainder.strip_prefix(':'))
-    } else if let Some((host, port)) = value.split_once(':') {
-        (host, Some(port))
-    } else {
-        (value, None)
-    };
+    let (host, port) = value.strip_prefix("[::1]").map_or_else(
+        || {
+            value
+                .split_once(':')
+                .map_or((value, None), |(host, port)| (host, Some(port)))
+        },
+        |remainder| ("[::1]", remainder.strip_prefix(':')),
+    );
     if !matches!(host, "localhost" | "127.0.0.1" | "[::1]") {
         return false;
     }
-    match port {
-        Some(port) => !port.is_empty() && port.parse::<u16>().is_ok_and(|port| port > 0),
-        None => value == host,
-    }
+    port.map_or_else(
+        || value == host,
+        |port| !port.is_empty() && port.parse::<u16>().is_ok_and(|port| port > 0),
+    )
 }
 
 fn text_response(status: u16, body: &str) -> Response<std::io::Cursor<Vec<u8>>> {

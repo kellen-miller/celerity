@@ -58,7 +58,7 @@ enum HaltechFrame {
 }
 
 impl HaltechFrame {
-    fn from_id(can_id: u16) -> Option<Self> {
+    const fn from_id(can_id: u16) -> Option<Self> {
         Some(match can_id {
             0x360 => Self::EngineLoadAndPressure,
             0x361 => Self::FuelAndOilPressure,

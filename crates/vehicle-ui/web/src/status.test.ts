@@ -4,11 +4,13 @@ import currentFixture from "../fixtures/status/current.json";
 import producerStaleFixture from "../fixtures/status/producer-stale.json";
 import unavailableFixture from "../fixtures/status/unavailable.json";
 import unknownFixture from "../fixtures/status/unknown.json";
+import { StatusEnvelope as ProtoStatusEnvelope } from "./generated/celerity/v1/celerity";
 import {
   commandRatio,
   diagnosticStatusLabel,
   initialView,
   invalidResponseView,
+  encodeStatusEnvelope,
   parseStatusEnvelope,
   temperatureAgeNow,
   unreachableView,
@@ -52,6 +54,24 @@ describe("status contract", () => {
     const unreachable = unreachableView(accepted, 1_100);
     expect(unreachable.envelope.last_success_age_ms).toBe(1_125);
     expect(unreachable.reason).toBe("LOCAL OBSERVER UNREACHABLE");
+  });
+
+  test("validates bounds on protobuf numeric fields", () => {
+    const command = ProtoStatusEnvelope.decode(
+      encodeStatusEnvelope(currentFixture),
+    );
+    command.snapshot!.accepted_radiator_split_command!.basis_points = 10_001;
+    expect(() =>
+      parseStatusEnvelope(ProtoStatusEnvelope.encode(command).finish()),
+    ).toThrow("basis points");
+
+    const temperature = ProtoStatusEnvelope.decode(
+      encodeStatusEnvelope(currentFixture),
+    );
+    temperature.snapshot!.coolant_temperature!.degrees_celsius = Number.NaN;
+    expect(() =>
+      parseStatusEnvelope(ProtoStatusEnvelope.encode(temperature).finish()),
+    ).toThrow("temperature must be finite");
   });
 
   test("renders truthful end-to-end age, command ratio, and unknown reasons", () => {

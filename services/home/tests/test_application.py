@@ -36,6 +36,7 @@ from celerity.v1.celerity_pb2 import (
 )
 from celerity_home import worker
 from celerity_home.application import create_app, deliver_notifications, migrate
+from celerity_home.run import RunFormatError, decode_run_records
 from celerity_home.training import MAXIMUM_PARITY_ERROR, Recipe, load_training_examples
 from celerity_home.worker import classify_evaluation
 
@@ -102,6 +103,139 @@ def canonical_chunk(offset: float = 0.0) -> bytes:
             sequence += 1
             records.extend(control_record(sequence, [1000, 5000, 9000][index % 3], "accepted"))
     return bytes(records)
+
+
+def test_migrate_converts_legacy_json_contract_storage(tmp_path: Path) -> None:
+    database = tmp_path / "home.sqlite3"
+    legacy_manifest = json.dumps(
+        {
+            "schema_version": 1,
+            "run_id": "legacy-run",
+            "completion": "complete",
+            "chunk_file": "events.chunk",
+            "chunk_sha256": "a" * 64,
+            "chunks": [{"file": "events.chunk", "sha256": "a" * 64}],
+            "configuration_generation": 1,
+            "configuration_sha256": "b" * 64,
+            "model_bundle_digest": None,
+            "protocol_major": 1,
+            "firmware_generation": 1,
+            "decoder_generation": 1,
+            "model_abi": "thermal-v1",
+            "model_input_signals": ["coolant_temperature_c", "air_temperature_c"],
+            "model_history_length": 4,
+            "sample_period_ms": 20,
+            "command_lattice": [1000, 5000, 9000],
+            "maximum_calibration_error": 100.0,
+        },
+        sort_keys=True,
+    ).encode()
+    legacy_event = json.dumps(
+        {
+            "schema_version": 1,
+            "event_id": "legacy-event",
+            "event_type": "training_failure",
+            "occurred_at": "2026-01-01T00:00:00+00:00",
+            "job_id": "legacy-job",
+            "artifact_digest": None,
+            "summary": "legacy failure",
+        },
+        sort_keys=True,
+    )
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE runs (
+              digest TEXT PRIMARY KEY,
+              manifest_json BLOB NOT NULL,
+              completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE jobs (
+              id TEXT PRIMARY KEY,
+              state TEXT NOT NULL,
+              recipe TEXT NOT NULL,
+              input_digests_json TEXT NOT NULL,
+              pid INTEGER,
+              pid_start_ticks TEXT,
+              stdout_path TEXT,
+              stderr_path TEXT,
+              artifact_digest TEXT,
+              terminal_summary TEXT,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE notifications (
+              event_id TEXT PRIMARY KEY,
+              job_id TEXT,
+              payload_json TEXT NOT NULL,
+              state TEXT NOT NULL,
+              attempts INTEGER NOT NULL DEFAULT 0,
+              last_error TEXT,
+              FOREIGN KEY(job_id) REFERENCES jobs(id)
+            );
+            INSERT INTO jobs(id, state, recipe, input_digests_json)
+              VALUES ('legacy-job', 'completed', 'causal-tcn-v1', '[]');
+            """
+        )
+        connection.execute(
+            "INSERT INTO runs(digest, manifest_json) VALUES (?, ?)",
+            (digest(legacy_manifest), legacy_manifest),
+        )
+        connection.execute(
+            "INSERT INTO notifications(event_id, job_id, payload_json, state) "
+            "VALUES ('legacy-event', 'legacy-job', ?, 'failed')",
+            (legacy_event,),
+        )
+
+    migrate(database)
+    migrate(database)
+
+    with sqlite3.connect(database) as connection:
+        run_columns = {row[1] for row in connection.execute("PRAGMA table_info(runs)")}
+        notification_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(notifications)")
+        }
+        manifest_bytes = connection.execute("SELECT manifest_pb FROM runs").fetchone()[0]
+        notification_bytes = connection.execute("SELECT payload_pb FROM notifications").fetchone()[
+            0
+        ]
+    assert run_columns == {"digest", "manifest_pb", "completed_at"}
+    assert notification_columns == {
+        "event_id",
+        "job_id",
+        "payload_pb",
+        "state",
+        "attempts",
+        "last_error",
+    }
+    assert RunManifest.FromString(manifest_bytes).run_id == "legacy-run"
+    assert WebhookEvent.FromString(notification_bytes).summary == "legacy failure"
+
+
+def test_run_decoder_rejects_duplicate_and_empty_typed_payloads() -> None:
+    signal = RunEvent(
+        schema_major=1,
+        sequence=1,
+        monotonic_ns=1,
+        source="test",
+    )
+    signal.signal_observation.CopyFrom(SignalObservation(signal="coolant", value=90.0))
+    duplicate = signal.SerializeToString()
+    control = ControlDecision(encoded='{"state":"accepted"}').SerializeToString()
+    duplicate += varint((24 << 3) | 2) + varint(len(control)) + control
+    duplicate = varint(len(duplicate)) + duplicate
+    with pytest.raises(RunFormatError, match="exactly one typed payload"):
+        decode_run_records(duplicate)
+
+    empty = RunEvent(
+        schema_major=1,
+        sequence=1,
+        monotonic_ns=1,
+        source="test",
+    )
+    empty.control_decision.CopyFrom(ControlDecision())
+    encoded = empty.SerializeToString()
+    with pytest.raises(RunFormatError, match="encoded Run payload is absent"):
+        decode_run_records(varint(len(encoded)) + encoded)
 
 
 def upload_run(client: TestClient, run_name: str) -> str:

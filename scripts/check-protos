@@ -17,7 +17,9 @@ generated_files() {
     ! -path '*/__pycache__/*' \
     ! -name '*.pyc' \
     -print \
-  | sed "s#^$1/##" \
+  | while IFS= read -r path; do
+      printf '%s\n' "${path#"$1"/}"
+    done \
   | sort
 }
 

@@ -32,6 +32,84 @@ nonmember_user_created=false
 state_root_created=false
 port_holder_pid=
 
+assert_status_response() {
+  local response_path=$1
+  local expected_state=$2
+  local expected_snapshot=$3
+
+  python3 - "$response_path" "$expected_state" "$expected_snapshot" <<'PY'
+from pathlib import Path
+import sys
+
+response_path, expected_state, expected_snapshot = sys.argv[1:]
+expected_state_value = {"current": 1, "stale": 2, "unavailable": 3}[expected_state]
+fields = {}
+data = Path(response_path).read_bytes()
+offset = 0
+
+while offset < len(data):
+    key = 0
+    shift = 0
+    while True:
+        if offset >= len(data):
+            raise ValueError("truncated protobuf key")
+        byte = data[offset]
+        offset += 1
+        key |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            break
+        shift += 7
+        if shift >= 70:
+            raise ValueError("invalid protobuf key")
+    field_number = key >> 3
+    wire_type = key & 0x07
+    if wire_type == 0:
+        value = 0
+        shift = 0
+        while True:
+            if offset >= len(data):
+                raise ValueError("truncated protobuf varint")
+            byte = data[offset]
+            offset += 1
+            value |= (byte & 0x7F) << shift
+            if byte < 0x80:
+                break
+            shift += 7
+            if shift >= 70:
+                raise ValueError("invalid protobuf varint")
+        fields[field_number] = value
+    elif wire_type == 1:
+        offset += 8
+    elif wire_type == 2:
+        length = 0
+        shift = 0
+        while True:
+            if offset >= len(data):
+                raise ValueError("truncated protobuf length")
+            byte = data[offset]
+            offset += 1
+            length |= (byte & 0x7F) << shift
+            if byte < 0x80:
+                break
+            shift += 7
+            if shift >= 70:
+                raise ValueError("invalid protobuf length")
+        end = offset + length
+        if end > len(data):
+            raise ValueError("truncated protobuf field")
+        fields[field_number] = data[offset:end]
+        offset = end
+    elif wire_type == 5:
+        offset += 4
+    else:
+        raise ValueError(f"unsupported protobuf wire type {wire_type}")
+
+assert fields.get(1) == 1
+assert fields.get(2) == expected_state_value
+assert (5 in fields) == (expected_snapshot == "present")
+PY
+}
+
 for path in \
   "$unit_root/celerityd.service" \
   "$unit_root/celerity-sync.service" \
@@ -315,15 +393,13 @@ python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["schema_version
 sudo systemctl start celerity-ui.service
 for _ in {1..50}; do
   if curl --max-time 1 -fsS -H 'Host: localhost:8080' \
-    http://127.0.0.1:8080/v1/status >"$check_root/status.json" \
-    && python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["state"] == "current"' \
-      "$check_root/status.json"; then
+    http://127.0.0.1:8080/v1/status >"$check_root/status.pb" \
+    && assert_status_response "$check_root/status.pb" current present; then
     break
   fi
   sleep 0.2
 done
-python3 -c 'import json,sys; value=json.load(open(sys.argv[1])); assert value["state"] == "current"; assert value["snapshot"] is not None' \
-  "$check_root/status.json"
+assert_status_response "$check_root/status.pb" current present
 sudo systemctl is-active --quiet celerity-ui.service
 
 ui_properties=$(sudo systemctl show celerity-ui.service \
@@ -374,15 +450,13 @@ sudo systemctl stop celerityd.service
 sudo systemctl is-active --quiet celerity-ui.service
 for _ in {1..30}; do
   if curl --max-time 1 -fsS -H 'Host: localhost:8080' \
-    http://127.0.0.1:8080/v1/status >"$check_root/unavailable.json" \
-    && python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["state"] == "unavailable"' \
-    "$check_root/unavailable.json"; then
+    http://127.0.0.1:8080/v1/status >"$check_root/unavailable.pb" \
+    && assert_status_response "$check_root/unavailable.pb" unavailable absent; then
     break
   fi
   sleep 0.2
 done
-python3 -c 'import json,sys; value=json.load(open(sys.argv[1])); assert value["state"] == "unavailable"; assert value["snapshot"] is None' \
-  "$check_root/unavailable.json"
+assert_status_response "$check_root/unavailable.pb" unavailable absent
 
 sudo systemctl stop celerity-ui.service
 python3 -m http.server 8080 --bind 127.0.0.1 \

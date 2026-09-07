@@ -7,8 +7,10 @@ import {
   PresentationState as ProtoPresentationState,
   RunStorageHealth as ProtoRunStorageHealth,
   StatusEnvelope as ProtoStatusEnvelope,
+  type AcceptedRadiatorSplitCommand as ProtoAcceptedRadiatorSplitCommandType,
   type DiagnosticsSnapshot as ProtoDiagnosticsSnapshotType,
   type DiagnosticStatus as ProtoDiagnosticStatusType,
+  type ObservedTemperature as ProtoObservedTemperatureType,
   type StatusEnvelope as ProtoStatusEnvelopeType,
 } from "./generated/celerity/v1/celerity";
 
@@ -144,7 +146,10 @@ function parseProtoStatusEnvelope(input: Uint8Array): StatusEnvelope {
   const snapshot = envelope.snapshot
     ? snapshotFromProto(envelope.snapshot)
     : null;
-  const last_success_age_ms = envelope.last_success_age_ms ?? null;
+  const last_success_age_ms =
+    envelope.last_success_age_ms === undefined
+      ? null
+      : unsignedInteger(envelope.last_success_age_ms, "last success age");
   if (state === "unavailable" && snapshot !== null) {
     throw new Error("unavailable status cannot retain a snapshot");
   }
@@ -157,7 +162,10 @@ function parseProtoStatusEnvelope(input: Uint8Array): StatusEnvelope {
   return {
     schema_version: 1,
     state,
-    consecutive_failures: envelope.consecutive_failures,
+    consecutive_failures: unsignedInteger(
+      envelope.consecutive_failures,
+      "consecutive failures",
+    ),
     last_success_age_ms,
     snapshot,
   };
@@ -191,24 +199,25 @@ function snapshotFromProto(
   }
   return {
     schema_version: 2,
-    runtime_update_age_ms: input.runtime_update_age_ms,
-    runtime_update_stale_after_ms: input.runtime_update_stale_after_ms,
+    runtime_update_age_ms: unsignedInteger(
+      input.runtime_update_age_ms,
+      "runtime update age",
+    ),
+    runtime_update_stale_after_ms: unsignedInteger(
+      input.runtime_update_stale_after_ms,
+      "runtime stale threshold",
+    ),
     global_authority: globalAuthorityFromProto(input.global_authority),
     feature_authority: featureAuthorityFromProto(input.feature_authority),
     command_source: commandSourceFromProto(input.command_source),
     accepted_radiator_split_command: input.accepted_radiator_split_command
-      ? {
-          basis_points: input.accepted_radiator_split_command.basis_points,
-          source: commandSourceFromProto(
-            input.accepted_radiator_split_command.source,
-          ),
-        }
+      ? acceptedCommandFromProto(input.accepted_radiator_split_command)
       : null,
     coolant_temperature: input.coolant_temperature
-      ? { ...input.coolant_temperature }
+      ? temperatureFromProto(input.coolant_temperature)
       : null,
     intake_air_temperature: input.intake_air_temperature
-      ? { ...input.intake_air_temperature }
+      ? temperatureFromProto(input.intake_air_temperature)
       : null,
     controller_runtime_lease_health: diagnosticStatusFromProto(
       controller_runtime_lease_health,
@@ -217,6 +226,37 @@ function snapshotFromProto(
       controller_command_ack_health,
     ),
     run_storage_health: runStorageHealthFromProto(input.run_storage_health),
+  };
+}
+
+function acceptedCommandFromProto(
+  input: ProtoAcceptedRadiatorSplitCommandType,
+): AcceptedRadiatorSplitCommand {
+  if (
+    !Number.isSafeInteger(input.basis_points) ||
+    input.basis_points < 0 ||
+    input.basis_points > 10_000
+  ) {
+    throw new Error("accepted command basis points exceed contract");
+  }
+  return {
+    basis_points: input.basis_points,
+    source: commandSourceFromProto(input.source),
+  };
+}
+
+function temperatureFromProto(
+  input: ProtoObservedTemperatureType,
+): ObservedTemperature {
+  if (!Number.isFinite(input.degrees_celsius)) {
+    throw new Error("temperature must be finite");
+  }
+  return {
+    degrees_celsius: input.degrees_celsius,
+    observation_age_ms: unsignedInteger(
+      input.observation_age_ms,
+      "temperature age",
+    ),
   };
 }
 

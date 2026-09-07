@@ -3383,9 +3383,11 @@ dependencies = [
 name = "vehicle-runtime"
 version = "0.1.0"
 dependencies = [
+ "celerity-proto",
  "control-core",
  "control-protocol",
  "nix",
+ "prost",
  "sd-notify",
  "serde_json",
  "signal-hook",

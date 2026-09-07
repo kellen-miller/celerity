@@ -62,7 +62,7 @@ impl ExperimentPlan {
     }
 
     #[must_use]
-    pub fn start(self, now_ms: u64) -> RunningExperiment {
+    pub const fn start(self, now_ms: u64) -> RunningExperiment {
         RunningExperiment {
             plan: self,
             started_ms: now_ms,

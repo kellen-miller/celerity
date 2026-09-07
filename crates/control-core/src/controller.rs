@@ -71,7 +71,7 @@ pub struct ControllerEmulator {
 
 impl ControllerEmulator {
     #[must_use]
-    pub fn new(provisioning: EmulatorProvisioning) -> Self {
+    pub const fn new(provisioning: EmulatorProvisioning) -> Self {
         Self {
             accepted_basis_points: provisioning.fallback_basis_points,
             provisioning,

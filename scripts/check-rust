@@ -10,15 +10,16 @@ elif [[ $# -ne 0 ]]; then
 fi
 
 cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo build --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+cargo build --workspace --all-features
 
 if [[ "$portable" == false ]] || command -v aarch64-linux-gnu-gcc >/dev/null; then
   cargo build --release --target aarch64-unknown-linux-gnu \
+    --all-features \
     -p vehicle-runtime -p vehicle-diagnostics -p vehicle-ui -p sync
 else
   echo "skipping ARM64 link: aarch64-linux-gnu-gcc is unavailable"
 fi
 
-cargo build --release --target thumbv7em-none-eabihf -p duct-controller
+cargo build --release --target thumbv7em-none-eabihf --all-features -p duct-controller

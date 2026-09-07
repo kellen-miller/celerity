@@ -46,28 +46,28 @@ def decode_run_records(chunk: bytes) -> list[DecodedRunRecord]:
             field = key >> 3
             wire = key & 7
             if wire == 0:
-                value, offset = _read_varint(chunk, offset)
+                varint_value, offset = _read_varint(chunk, offset)
                 if field == 1:
-                    schema_major = value
+                    schema_major = varint_value
                 elif field == 4:
-                    sequence = value
+                    sequence = varint_value
                 elif field == 5:
-                    monotonic_ns = value
+                    monotonic_ns = varint_value
             elif wire == 1:
                 offset = _skip_fixed(chunk, offset, end, 8)
             elif wire == 2:
-                value, offset = _take_length_delimited(chunk, offset, end)
+                delimited_value, offset = _take_length_delimited(chunk, offset, end)
                 if field == 8:
-                    source = _decode_utf8(value, "Run source")
+                    source = _decode_utf8(delimited_value, "Run source")
                 elif 20 <= field <= 29:
                     payload_count += 1
                     if field == 21:
-                        signal, signal_value = _decode_signal_observation(value)
+                        signal, signal_value = _decode_signal_observation(delimited_value)
                         kind = "signal_observation"
                         payload = json.dumps({"signal": signal, "value": signal_value})
                     elif field == 24:
                         kind = "control_decision"
-                        payload = _decode_embedded_string(value)
+                        payload = _decode_embedded_string(delimited_value)
                     else:
                         kind = source
             elif wire == 5:

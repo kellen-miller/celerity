@@ -12,7 +12,7 @@ npm --prefix "$ui_root" run lint
 npm --prefix "$ui_root" run check
 npm --prefix "$ui_root" run test
 
-cargo run --quiet -p vehicle-ui --example write_status_goldens -- \
+cargo run --quiet -p vehicle-ui --all-features --example write_status_goldens -- \
   "$check_root/status"
 for fixture in current stale producer-stale unavailable unknown; do
   cmp "$fixture_root/$fixture.json" "$check_root/status/$fixture.json"
@@ -29,5 +29,5 @@ for asset in \
 done
 cmp crates/vehicle-ui/assets/index.html "$check_root/assets/index.html"
 
-cargo test -p vehicle-ui
+cargo test -p vehicle-ui --all-features
 npm --prefix "$ui_root" run test:browser

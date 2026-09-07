@@ -98,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn envelope(
+const fn envelope(
     state: PresentationState,
     consecutive_failures: u32,
     last_success_age_ms: Option<u64>,

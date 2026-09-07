@@ -62,6 +62,23 @@ jobs:
       - run: ./scripts/check-ui
       - run: ./scripts/check-artifacts
 
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: ./scripts
+      - name: actionlint
+        uses: raven-actions/actionlint@v2
+      - name: Hadolint
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: services/home/Dockerfile
+      - name: Check source file lengths
+        run: ./scripts/check-file-length
+
   linux:
     runs-on: ubuntu-24.04
     steps:

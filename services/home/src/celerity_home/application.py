@@ -11,8 +11,8 @@ import subprocess
 import sys
 import threading
 import uuid
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
@@ -23,6 +23,10 @@ from fastapi import Path as FastAPIPath
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
+from celerity_home.database import connect as _connect
+from celerity_home.database import migrate
+from celerity_home.database import transaction as _transaction
+from celerity_home.notifications import deliver_notifications
 from celerity_home.run import RunFormatError, decode_run_records
 
 Digest = Annotated[str, FastAPIPath(pattern=r"^[0-9a-f]{64}$")]
@@ -57,72 +61,6 @@ def _is_digest(value: object) -> bool:
         and len(value) == 64
         and all(character in "0123456789abcdef" for character in value)
     )
-
-
-def _connect(database: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(database, timeout=5)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys=ON")
-    connection.execute("PRAGMA busy_timeout=5000")
-    return connection
-
-
-def migrate(database: Path) -> None:
-    """Create the explicit schema owned by the single home application."""
-    database.parent.mkdir(parents=True, exist_ok=True)
-    with _connect(database) as connection:
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS runs (
-              digest TEXT PRIMARY KEY,
-              manifest_json BLOB NOT NULL,
-              completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE IF NOT EXISTS chunks (
-              run_digest TEXT NOT NULL,
-              digest TEXT NOT NULL,
-              path TEXT NOT NULL,
-              PRIMARY KEY(run_digest, digest)
-            );
-            CREATE TABLE IF NOT EXISTS models (
-              digest TEXT PRIMARY KEY,
-              path TEXT NOT NULL,
-              state TEXT NOT NULL CHECK(state IN ('staged', 'rejected')),
-              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE IF NOT EXISTS settings (
-              key TEXT PRIMARY KEY,
-              value TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS jobs (
-              id TEXT PRIMARY KEY,
-              state TEXT NOT NULL CHECK(state IN (
-                'queued', 'running', 'completed', 'no_change', 'rejected', 'failed'
-              )),
-              recipe TEXT NOT NULL,
-              input_digests_json TEXT NOT NULL,
-              pid INTEGER,
-              pid_start_ticks TEXT,
-              stdout_path TEXT,
-              stderr_path TEXT,
-              artifact_digest TEXT,
-              terminal_summary TEXT,
-              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE IF NOT EXISTS notifications (
-              event_id TEXT PRIMARY KEY,
-              job_id TEXT,
-              payload_json TEXT NOT NULL,
-              state TEXT NOT NULL CHECK(state IN ('pending', 'delivered', 'failed')),
-              attempts INTEGER NOT NULL DEFAULT 0,
-              last_error TEXT,
-              FOREIGN KEY(job_id) REFERENCES jobs(id)
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS one_active_job
-              ON jobs ((1)) WHERE state IN ('queued', 'running');
-            """
-        )
 
 
 def _process_start_ticks(pid: int) -> str | None:
@@ -221,20 +159,6 @@ def mark_orphaned_jobs_failed(database: Path) -> int:
                 (payload["event_id"], job["id"], json.dumps(payload, sort_keys=True)),
             )
     return len(orphaned)
-
-
-@contextmanager
-def _transaction(database: Path) -> Iterator[sqlite3.Connection]:
-    connection = _connect(database)
-    try:
-        connection.execute("BEGIN IMMEDIATE")
-        yield connection
-        connection.commit()
-    except BaseException:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
 
 
 def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> FastAPI:
@@ -560,33 +484,3 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
         return dict(job)
 
     return app
-
-
-def deliver_notifications(database: Path, webhook_url: str, client: httpx.Client) -> int:
-    """Attempt pending webhooks without changing the owning job's terminal state."""
-    delivered = 0
-    with _connect(database) as connection:
-        notifications = connection.execute(
-            "SELECT event_id, payload_json FROM notifications WHERE state IN ('pending', 'failed') "
-            "AND attempts < 5 ORDER BY event_id"
-        ).fetchall()
-    for notification in notifications:
-        try:
-            response = client.post(webhook_url, content=notification["payload_json"])
-            response.raise_for_status()
-        except httpx.HTTPError as error:
-            with _transaction(database) as connection:
-                connection.execute(
-                    "UPDATE notifications SET state='failed', attempts=attempts+1, last_error=? "
-                    "WHERE event_id=?",
-                    (str(error), notification["event_id"]),
-                )
-        else:
-            with _transaction(database) as connection:
-                connection.execute(
-                    "UPDATE notifications SET state='delivered', attempts=attempts+1, "
-                    "last_error=NULL WHERE event_id=?",
-                    (notification["event_id"],),
-                )
-            delivered += 1
-    return delivered

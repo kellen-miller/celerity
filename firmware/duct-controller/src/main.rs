@@ -365,4 +365,4 @@ async fn main(_spawner: embassy_executor::Spawner) {
 }
 
 #[cfg(not(target_arch = "arm"))]
-fn main() {}
+const fn main() {}

@@ -4,7 +4,7 @@ set -euo pipefail
 artifact_root="$(mktemp -d)"
 trap 'rm -rf "$artifact_root"' EXIT
 
-cargo run --quiet -p control-protocol --features std \
+cargo run --quiet -p control-protocol --all-features \
   --bin write-golden-vectors -- "$artifact_root/controller"
 uv run --project services/home python -m celerity_home.export_fixture \
   --output "$artifact_root/model"

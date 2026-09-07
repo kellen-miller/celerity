@@ -9,11 +9,8 @@ use control_core::{ModelSlot, ModelSlots, SlotError};
 use sha2::{Digest, Sha256};
 
 fn fixture() -> Vec<u8> {
-    fs::read(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../contracts/golden/model-v1/identity.onnx"),
-    )
-    .expect("fixture")
+    fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx"))
+        .expect("fixture")
 }
 
 fn digest(bytes: &[u8]) -> String {

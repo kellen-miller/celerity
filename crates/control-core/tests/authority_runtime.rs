@@ -19,8 +19,7 @@ fn model_fixture() -> (tempfile::TempDir, PathBuf) {
     let directory = tempfile::tempdir().expect("model fixture directory");
     let model_path = directory.path().join("identity.onnx");
     fs::copy(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../contracts/golden/model-v1/identity.onnx"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx"),
         &model_path,
     )
     .expect("model fixture");

@@ -43,7 +43,7 @@ fn live_kernel_sockets_drive_model_command_and_seal_run() {
     let model_path = model_directory.join("identity.onnx");
     fs::copy(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../contracts/golden/model-v1/identity.onnx"),
+            .join("../../testdata/models/identity.onnx"),
         &model_path,
     )
     .expect("model fixture");

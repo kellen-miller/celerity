@@ -6,7 +6,7 @@ use control_core::{
 };
 
 fn fixture() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../contracts/golden/model-v1/identity.onnx")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx")
 }
 
 #[test]

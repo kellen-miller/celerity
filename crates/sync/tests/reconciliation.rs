@@ -76,10 +76,9 @@ fn digest(bytes: &[u8]) -> String {
 }
 
 fn model_bundle() -> Vec<u8> {
-    let model = fs::read(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/golden/model-v1/identity.onnx"),
-    )
-    .expect("model fixture");
+    let model =
+        fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx"))
+            .expect("model fixture");
     let manifest = serde_json::to_vec(&json!({
         "schema_version": 1,
         "onnx_sha256": digest(&model),

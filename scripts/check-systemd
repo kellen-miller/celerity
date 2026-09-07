@@ -413,8 +413,7 @@ fi
 kill "$port_holder_pid"
 wait "$port_holder_pid" 2>/dev/null || true
 port_holder_pid=
-sudo systemctl reset-failed celerity-ui.service celerityd.service
-sudo systemctl stop celerityd.service
+sudo systemctl reset-failed celerity-ui.service
 if [[ "$ui_user_created" == true ]]; then
   sudo userdel celerity-ui
   ui_user_created=false

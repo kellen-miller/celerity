@@ -373,9 +373,9 @@ sudo systemctl is-active --quiet celerity-ui.service
 sudo systemctl stop celerityd.service
 sudo systemctl is-active --quiet celerity-ui.service
 for _ in {1..30}; do
-  curl --max-time 1 -fsS -H 'Host: localhost:8080' \
-    http://127.0.0.1:8080/v1/status >"$check_root/unavailable.json"
-  if python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["state"] == "unavailable"' \
+  if curl --max-time 1 -fsS -H 'Host: localhost:8080' \
+    http://127.0.0.1:8080/v1/status >"$check_root/unavailable.json" \
+    && python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["state"] == "unavailable"' \
     "$check_root/unavailable.json"; then
     break
   fi

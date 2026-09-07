@@ -1,9 +1,9 @@
 use std::{collections::BTreeSet, fs, io::Cursor};
 
-use celerity_proto::celerity::v1::{Completion, ModelBundleManifest};
+use celerity_proto::celerity::v1::ModelBundleManifest;
 use prost::Message;
 
-use super::api::{ReconcileRequest, ReconcileResponse};
+use super::api::ReconcileRequest;
 use super::artifact::{atomic_write, digest_file, read_zip_entry};
 use super::inventory::{SpoolRun, digest, incomplete_inventory, inventory};
 use super::{HomeApi, NetworkPresence, SyncConfiguration, SyncError, TransferJournal, sync_io};
@@ -105,7 +105,7 @@ impl Synchronizer {
             home.put_chunk(&run.digest, &chunk.digest, &chunk.path)?;
         }
         let acknowledgement = home.complete(&run.digest, &run.manifest)?;
-        if acknowledgement != run.digest {
+        if acknowledgement.run_digest != run.digest {
             return Err(SyncError(
                 "home acknowledged a different Run digest".to_owned(),
             ));

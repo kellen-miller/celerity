@@ -7,6 +7,7 @@ import hashlib
 import json
 import zipfile
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import onnx
@@ -69,7 +70,7 @@ def run(storage_root: Path, job_id: str) -> None:
         )
         for digest in run_digests
     ]
-    contract = {
+    contract: dict[str, Any] = {
         "model_abi": manifests[0].model_abi,
         "model_input_signals": list(manifests[0].model_input_signals),
         "model_history_length": manifests[0].model_history_length,
@@ -115,7 +116,7 @@ def run(storage_root: Path, job_id: str) -> None:
         [max(float(np.std(values)), 1e-6) for values in zip(*observed_values, strict=True)],
         dtype=np.float32,
     )
-    evaluation = export_and_compare(
+    evaluation: dict[str, Any] = export_and_compare(
         model_path,
         recipe,
         training_inputs,
@@ -197,7 +198,13 @@ def run(storage_root: Path, job_id: str) -> None:
             raise RuntimeError("desired baseline model contract is incompatible")
         evaluator = ReferenceEvaluator(onnx.load_from_string(baseline_model_bytes))
         prediction = np.concatenate(
-            [evaluator.run(None, {"thermal_history": row.reshape(1, -1)})[0] for row in held_inputs]
+            [
+                cast(
+                    list[np.ndarray],
+                    evaluator.run(None, {"thermal_history": row.reshape(1, -1)}),
+                )[0]
+                for row in held_inputs
+            ]
         )
         baseline_mse = float(np.mean((prediction - held_targets) ** 2))
         if not np.isfinite(baseline_mse):

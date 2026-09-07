@@ -4,9 +4,7 @@ use std::{
     time::Duration,
 };
 
-pub(crate) use celerity_proto::celerity::v1::{
-    CompletedRun, ModelBundleManifest, ReconcileRequest, ReconcileResponse,
-};
+pub(crate) use celerity_proto::celerity::v1::{CompletedRun, ReconcileRequest, ReconcileResponse};
 use prost::Message;
 use reqwest::blocking::Client;
 

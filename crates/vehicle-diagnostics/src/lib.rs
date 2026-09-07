@@ -115,7 +115,7 @@ mod protobuf;
 
 impl DiagnosticsSnapshot {
     #[must_use]
-    pub fn startup_fallback() -> Self {
+    pub const fn startup_fallback() -> Self {
         Self {
             schema_version: 2,
             runtime_update_age_ms: 0,
@@ -178,6 +178,7 @@ impl DiagnosticsStore {
         snapshot.runtime_update_stale_after_ms = published.runtime_update_stale_after_ms;
         published.snapshot = snapshot;
         published.published_at = published_at;
+        drop(published);
         Ok(())
     }
 
@@ -189,6 +190,7 @@ impl DiagnosticsStore {
                 .as_millis(),
         )
         .unwrap_or(u64::MAX);
+        drop(published);
         Ok(snapshot)
     }
 }

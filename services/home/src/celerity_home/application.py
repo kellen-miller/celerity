@@ -26,7 +26,6 @@ from celerity.v1.celerity_pb2 import (
     JOB_STATE_RUNNING,
     WEBHOOK_EVENT_TYPE_DEMOTION,
     WEBHOOK_EVENT_TYPE_ROLLBACK,
-    WEBHOOK_EVENT_TYPE_TRAINING_FAILURE,
     CompletedRun,
     Health,
     JobRequest,

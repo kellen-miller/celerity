@@ -5,6 +5,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from celerity.v1.celerity_pb2 import (
     COMPLETION_COMPLETE,
@@ -71,7 +72,7 @@ def _legacy_run_manifest(value: object) -> bytes:
         "command_lattice",
         "maximum_calibration_error",
     )
-    message_fields = {
+    message_fields: dict[str, Any] = {
         field: legacy[field] for field in fields if field in legacy and legacy[field] is not None
     }
     message_fields["completion"] = completion_values[completion]
@@ -92,7 +93,7 @@ def _legacy_run_manifest(value: object) -> bytes:
         if not isinstance(file, str) or not isinstance(sha256, str):
             raise RuntimeError("legacy Run manifest chunk is incomplete")
         manifest.chunks.add(file=file, sha256=sha256)
-    return manifest.SerializeToString(deterministic=True)
+    return bytes(manifest.SerializeToString(deterministic=True))
 
 
 def _legacy_webhook_event(value: object, row_event_id: str) -> bytes:
@@ -113,9 +114,12 @@ def _legacy_webhook_event(value: object, row_event_id: str) -> bytes:
     summary = legacy.get("summary")
     if not isinstance(occurred_at, str) or not isinstance(summary, str):
         raise RuntimeError("legacy webhook event is incomplete")
+    schema_version = legacy.get("schema_version", 1)
+    if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+        raise RuntimeError("legacy webhook event schema version is invalid")
     try:
         event = WebhookEvent(
-            schema_version=legacy.get("schema_version", 1),
+            schema_version=schema_version,
             event_id=event_id,
             event_type=event_types[event_type],
             occurred_at=occurred_at,
@@ -133,7 +137,7 @@ def _legacy_webhook_event(value: object, row_event_id: str) -> bytes:
         if not isinstance(artifact_digest, str):
             raise RuntimeError("legacy webhook event artifact digest is invalid")
         event.artifact_digest = artifact_digest
-    return event.SerializeToString(deterministic=True)
+    return bytes(event.SerializeToString(deterministic=True))
 
 
 def migrate(database: Path) -> None:

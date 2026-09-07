@@ -1,6 +1,12 @@
-use super::*;
+use super::{
+    AcceptedRadiatorSplitCommand, CommandSource, DiagnosticStatus, DiagnosticUnknownReason,
+    DiagnosticsSnapshot, FeatureAuthority, GlobalAuthority, ObservedTemperature,
+    ProtoCommandSource, ProtoDiagnosticHealthState, ProtoDiagnosticStatus,
+    ProtoDiagnosticUnknownReason, ProtoFeatureAuthority, ProtoGlobalAuthority,
+    ProtoRunStorageHealth, RunStorageHealth, proto,
+};
 
-fn global_authority_to_proto(value: GlobalAuthority) -> ProtoGlobalAuthority {
+const fn global_authority_to_proto(value: GlobalAuthority) -> ProtoGlobalAuthority {
     match value {
         GlobalAuthority::Fallback => ProtoGlobalAuthority::Fallback,
         GlobalAuthority::Active => ProtoGlobalAuthority::Active,
@@ -19,7 +25,7 @@ fn global_authority_from_proto(value: i32) -> Result<GlobalAuthority, String> {
     }
 }
 
-fn feature_authority_to_proto(value: FeatureAuthority) -> ProtoFeatureAuthority {
+const fn feature_authority_to_proto(value: FeatureAuthority) -> ProtoFeatureAuthority {
     match value {
         FeatureAuthority::Fallback => ProtoFeatureAuthority::Fallback,
         FeatureAuthority::Arming => ProtoFeatureAuthority::Arming,
@@ -38,7 +44,7 @@ fn feature_authority_from_proto(value: i32) -> Result<FeatureAuthority, String> 
     }
 }
 
-fn command_source_to_proto(value: CommandSource) -> ProtoCommandSource {
+const fn command_source_to_proto(value: CommandSource) -> ProtoCommandSource {
     match value {
         CommandSource::ControllerLocalFallback => ProtoCommandSource::ControllerLocalFallback,
         CommandSource::Deterministic => ProtoCommandSource::Deterministic,
@@ -57,7 +63,7 @@ fn command_source_from_proto(value: i32) -> Result<CommandSource, String> {
     }
 }
 
-fn diagnostic_unknown_reason_to_proto(
+const fn diagnostic_unknown_reason_to_proto(
     value: DiagnosticUnknownReason,
 ) -> ProtoDiagnosticUnknownReason {
     match value {
@@ -94,7 +100,7 @@ fn diagnostic_unknown_reason_from_proto(value: i32) -> Result<DiagnosticUnknownR
     }
 }
 
-fn diagnostic_status_to_proto(value: DiagnosticStatus) -> ProtoDiagnosticStatus {
+const fn diagnostic_status_to_proto(value: DiagnosticStatus) -> ProtoDiagnosticStatus {
     match value {
         DiagnosticStatus::Unknown(reason) => ProtoDiagnosticStatus {
             state: ProtoDiagnosticHealthState::Unknown as i32,
@@ -134,7 +140,7 @@ fn diagnostic_status_from_proto(
     }
 }
 
-fn run_storage_health_to_proto(value: RunStorageHealth) -> ProtoRunStorageHealth {
+const fn run_storage_health_to_proto(value: RunStorageHealth) -> ProtoRunStorageHealth {
     match value {
         RunStorageHealth::Unknown => ProtoRunStorageHealth::Unknown,
         RunStorageHealth::Healthy => ProtoRunStorageHealth::Healthy,
@@ -151,4 +157,86 @@ fn run_storage_health_from_proto(value: i32) -> Result<RunStorageHealth, String>
         ProtoRunStorageHealth::Degraded => Ok(RunStorageHealth::Degraded),
         ProtoRunStorageHealth::Unspecified => Err("unspecified Run storage health".to_owned()),
     }
+}
+pub(super) fn to_proto(snapshot: &DiagnosticsSnapshot) -> proto::DiagnosticsSnapshot {
+    proto::DiagnosticsSnapshot {
+        schema_version: snapshot.schema_version,
+        runtime_update_age_ms: snapshot.runtime_update_age_ms,
+        runtime_update_stale_after_ms: snapshot.runtime_update_stale_after_ms,
+        global_authority: global_authority_to_proto(snapshot.global_authority) as i32,
+        feature_authority: feature_authority_to_proto(snapshot.feature_authority) as i32,
+        command_source: command_source_to_proto(snapshot.command_source) as i32,
+        accepted_radiator_split_command: snapshot.accepted_radiator_split_command.map(|command| {
+            proto::AcceptedRadiatorSplitCommand {
+                basis_points: u32::from(command.basis_points),
+                source: command_source_to_proto(command.source) as i32,
+            }
+        }),
+        coolant_temperature: snapshot.coolant_temperature.as_ref().map(|temperature| {
+            proto::ObservedTemperature {
+                degrees_celsius: temperature.degrees_celsius,
+                observation_age_ms: temperature.observation_age_ms,
+            }
+        }),
+        intake_air_temperature: snapshot.intake_air_temperature.as_ref().map(|temperature| {
+            proto::ObservedTemperature {
+                degrees_celsius: temperature.degrees_celsius,
+                observation_age_ms: temperature.observation_age_ms,
+            }
+        }),
+        controller_runtime_lease_health: Some(diagnostic_status_to_proto(
+            snapshot.controller_runtime_lease_health,
+        )),
+        controller_command_ack_health: Some(diagnostic_status_to_proto(
+            snapshot.controller_command_ack_health,
+        )),
+        run_storage_health: run_storage_health_to_proto(snapshot.run_storage_health) as i32,
+    }
+}
+
+pub(super) fn from_proto(
+    snapshot: proto::DiagnosticsSnapshot,
+) -> Result<DiagnosticsSnapshot, String> {
+    let accepted_radiator_split_command = snapshot
+        .accepted_radiator_split_command
+        .map(|command| {
+            let basis_points = u16::try_from(command.basis_points)
+                .map_err(|_| "accepted command basis points exceed contract".to_owned())?;
+            if basis_points > 10_000 {
+                return Err("accepted command basis points exceed contract".to_owned());
+            }
+            Ok(AcceptedRadiatorSplitCommand {
+                basis_points,
+                source: command_source_from_proto(command.source)?,
+            })
+        })
+        .transpose()?;
+    Ok(DiagnosticsSnapshot {
+        schema_version: snapshot.schema_version,
+        runtime_update_age_ms: snapshot.runtime_update_age_ms,
+        runtime_update_stale_after_ms: snapshot.runtime_update_stale_after_ms,
+        global_authority: global_authority_from_proto(snapshot.global_authority)?,
+        feature_authority: feature_authority_from_proto(snapshot.feature_authority)?,
+        command_source: command_source_from_proto(snapshot.command_source)?,
+        accepted_radiator_split_command,
+        coolant_temperature: snapshot
+            .coolant_temperature
+            .map(|temperature| ObservedTemperature {
+                degrees_celsius: temperature.degrees_celsius,
+                observation_age_ms: temperature.observation_age_ms,
+            }),
+        intake_air_temperature: snapshot.intake_air_temperature.map(|temperature| {
+            ObservedTemperature {
+                degrees_celsius: temperature.degrees_celsius,
+                observation_age_ms: temperature.observation_age_ms,
+            }
+        }),
+        controller_runtime_lease_health: diagnostic_status_from_proto(
+            snapshot.controller_runtime_lease_health.as_ref(),
+        )?,
+        controller_command_ack_health: diagnostic_status_from_proto(
+            snapshot.controller_command_ack_health.as_ref(),
+        )?,
+        run_storage_health: run_storage_health_from_proto(snapshot.run_storage_health)?,
+    })
 }

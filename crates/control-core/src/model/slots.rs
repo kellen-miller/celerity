@@ -97,7 +97,7 @@ impl ModelSlots {
 
         let manifest = ModelBundleManifest {
             schema_version: 1,
-            onnx_sha256: actual.clone(),
+            onnx_sha256: actual,
             compatibility: Some(ModelCompatibility {
                 model_abi: model_abi.to_owned(),
                 input_shape: Vec::new(),

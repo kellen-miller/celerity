@@ -6,6 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import onnx
@@ -167,7 +168,7 @@ class CausalBlock(nn.Module):
         convolved = self.convolution(values)
         if self.future_padding:
             convolved = convolved[..., : -self.future_padding]
-        return self.activation(convolved) + values
+        return cast(torch.Tensor, self.activation(convolved) + values)
 
 
 class CausalTcn(nn.Module):
@@ -214,10 +215,12 @@ class CausalTcn(nn.Module):
         history = flat_window[:, :-1].reshape(
             flat_window.shape[0], self.recipe.signal_count, self.recipe.history_length
         )
-        history = (history - self.signal_means) / self.signal_scales
+        history = (history - cast(torch.Tensor, self.signal_means)) / cast(
+            torch.Tensor, self.signal_scales
+        )
         encoded = self.blocks(self.input_projection(history))
         state_and_candidate = torch.cat((encoded[..., -1], flat_window[:, -1:]), dim=1)
-        return self.output_projection(state_and_candidate)
+        return cast(torch.Tensor, self.output_projection(state_and_candidate))
 
 
 def export_and_compare(
@@ -268,7 +271,10 @@ def export_and_compare(
     onnx_model = onnx.load(output)
     onnx.checker.check_model(onnx_model)
     expected = model(example).detach().numpy()
-    actual = ReferenceEvaluator(onnx_model).run(None, {"thermal_history": example.numpy()})[0]
+    actual = cast(
+        list[np.ndarray],
+        ReferenceEvaluator(onnx_model).run(None, {"thermal_history": example.numpy()}),
+    )[0]
     maximum_error = float(np.max(np.abs(expected - actual)))
     if maximum_error > MAXIMUM_PARITY_ERROR:
         raise RuntimeError(f"PyTorch/ONNX parity exceeded tolerance: {maximum_error}")
@@ -281,8 +287,8 @@ def export_and_compare(
         "normalization": [
             {"mean": float(mean), "scale": float(scale)}
             for mean, scale in zip(
-                model.signal_means.detach().numpy().reshape(-1),
-                model.signal_scales.detach().numpy().reshape(-1),
+                cast(torch.Tensor, model.signal_means).detach().numpy().reshape(-1),
+                cast(torch.Tensor, model.signal_scales).detach().numpy().reshape(-1),
                 strict=True,
             )
         ],

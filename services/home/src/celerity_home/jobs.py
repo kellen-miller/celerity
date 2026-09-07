@@ -15,8 +15,8 @@ from celerity.v1.celerity_pb2 import (
     JOB_STATE_QUEUED,
     JOB_STATE_REJECTED,
     JOB_STATE_RUNNING,
-    JobStatus,
     WEBHOOK_EVENT_TYPE_TRAINING_FAILURE,
+    JobStatus,
 )
 from celerity_home.database import connect, transaction
 from celerity_home.notifications import webhook_event

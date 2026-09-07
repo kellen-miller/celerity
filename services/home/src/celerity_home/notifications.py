@@ -5,7 +5,7 @@ from pathlib import Path
 
 import httpx
 
-from celerity.v1.celerity_pb2 import WebhookEvent
+from celerity.v1.celerity_pb2 import WebhookEvent, WebhookEventType
 from celerity_home.database import connect, transaction
 
 PROTOBUF_MEDIA_TYPE = "application/x-protobuf"
@@ -13,7 +13,7 @@ PROTOBUF_MEDIA_TYPE = "application/x-protobuf"
 
 def webhook_event(
     event_id: str,
-    event_type: int,
+    event_type: WebhookEventType,
     summary: str,
     job_id: str | None = None,
     artifact_digest: str | None = None,
@@ -29,7 +29,7 @@ def webhook_event(
         event.job_id = job_id
     if artifact_digest is not None:
         event.artifact_digest = artifact_digest
-    return event.SerializeToString()
+    return bytes(event.SerializeToString())
 
 
 def deliver_notifications(database: Path, webhook_url: str, client: httpx.Client) -> int:

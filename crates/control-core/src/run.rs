@@ -170,7 +170,6 @@ pub struct RunManifest {
     pub chunk_file: String,
     pub chunk_sha256: String,
     pub chunks: Vec<RunChunk>,
-    #[serde(default)]
     pub dropped_record_count: u64,
     pub configuration_generation: u64,
     pub configuration_sha256: String,

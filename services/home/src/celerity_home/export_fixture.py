@@ -1,7 +1,5 @@
 """Deterministically export the tiny real ONNX parity fixture."""
 
-import hashlib
-import json
 from argparse import ArgumentParser
 from pathlib import Path
 
@@ -38,28 +36,6 @@ def export(output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     model_path = output / "identity.onnx"
     onnx.save(model, model_path)
-    manifest = {
-        "schema_version": 1,
-        "onnx_sha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
-        "signal_order": ["coolant_temperature_c", "air_temperature_c"],
-        "units": ["degC", "degC"],
-        "sample_period_ms": 20,
-        "history_length": 1,
-        "horizons": [1],
-        "output_order": ["coolant", "post_intercooler_iat"],
-        "command_lattice": [1000, 5000, 9000],
-        "compatibility": {"model_abi": "thermal-v1", "input_shape": [1, 3]},
-        "input_ranges": [
-            {"minimum": 60.0, "maximum": 120.0},
-            {"minimum": 0.0, "maximum": 100.0},
-        ],
-        "normalization": [
-            {"mean": 90.0, "scale": 10.0},
-            {"mean": 40.0, "scale": 10.0},
-        ],
-        "calibration_error": 0.01,
-    }
-    (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
 def main() -> None:

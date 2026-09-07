@@ -29,7 +29,14 @@ fn production_dependency_closure_excludes_authority_can_run_and_onnx() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         direct,
-        BTreeSet::from(["serde", "serde_json", "tiny_http", "vehicle-diagnostics"])
+        BTreeSet::from([
+            "celerity-proto",
+            "prost",
+            "serde",
+            "serde_json",
+            "tiny_http",
+            "vehicle-diagnostics",
+        ])
     );
 
     let resolve = metadata["resolve"]["nodes"]

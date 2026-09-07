@@ -31,7 +31,7 @@ pub fn recover_incomplete_runs(root: &Path) -> Result<Vec<PathBuf>, RunError> {
     directories.sort();
     let mut recovered = Vec::new();
     for directory in directories {
-        let manifest_path = directory.join("manifest.json");
+        let manifest_path = directory.join("manifest.pb");
         let mut partials = fs::read_dir(&directory)
             .map_err(io_error)?
             .filter_map(Result::ok)
@@ -102,16 +102,19 @@ pub fn recover_incomplete_runs(root: &Path) -> Result<Vec<PathBuf>, RunError> {
 ///
 /// Returns an error for missing, malformed, nonmonotonic, or non-event data.
 pub fn replay_events(run_directory: &Path) -> Result<Vec<RuntimeEvent>, RunError> {
-    let manifest: RunManifest =
-        serde_json::from_slice(&fs::read(run_directory.join("manifest.json")).map_err(io_error)?)
-            .map_err(|error| RunError(error.to_string()))?;
-    if manifest.completion != Completion::Complete {
+    let manifest = wire::RunManifest::decode(
+        fs::read(run_directory.join("manifest.pb"))
+            .map_err(io_error)?
+            .as_slice(),
+    )
+    .map_err(|error| RunError(error.to_string()))?;
+    if manifest.completion != wire::Completion::Complete as i32 {
         return Err(RunError("incomplete Run cannot be replayed".to_owned()));
     }
     let mut events = Vec::new();
     let mut last_sequence = None;
     let chunks = if manifest.chunks.is_empty() {
-        vec![RunChunk {
+        vec![wire::RunChunk {
             file: manifest.chunk_file,
             sha256: manifest.chunk_sha256,
         }]

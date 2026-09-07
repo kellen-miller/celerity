@@ -6,6 +6,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+celerity-proto = { path = "../celerity-proto" }
 control-protocol = { path = "../control-protocol" }
 fs4 = "1.1.0"
 prost = "0.14.4"
@@ -14,10 +15,6 @@ serde_json = "1.0.151"
 sha2 = "0.11.0"
 toml = "1.1.4"
 tract-onnx = "0.23.4"
-
-[build-dependencies]
-prost-build = "0.14.4"
-protoc-bin-vendored = "3.2.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"

@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use celerity_proto::celerity::v1::{self as proto, PresentationState as ProtoPresentationState};
 use serde::{Deserialize, Serialize};
 use vehicle_diagnostics::DiagnosticsSnapshot;
 
@@ -18,6 +19,25 @@ pub struct StatusEnvelope {
     pub consecutive_failures: u32,
     pub last_success_age_ms: Option<u64>,
     pub snapshot: Option<DiagnosticsSnapshot>,
+}
+
+impl StatusEnvelope {
+    #[must_use]
+    pub fn to_proto(&self) -> proto::StatusEnvelope {
+        let mut envelope = proto::StatusEnvelope {
+            schema_version: self.schema_version,
+            state: match self.state {
+                PresentationState::Current => ProtoPresentationState::Current as i32,
+                PresentationState::Stale => ProtoPresentationState::Stale as i32,
+                PresentationState::Unavailable => ProtoPresentationState::Unavailable as i32,
+            },
+            consecutive_failures: self.consecutive_failures,
+            last_success_age_ms: self.last_success_age_ms,
+            snapshot: None,
+        };
+        envelope.snapshot = self.snapshot.as_ref().map(DiagnosticsSnapshot::to_proto);
+        envelope
+    }
 }
 
 pub struct StatusObserver {

@@ -1,12 +1,14 @@
 [workspace]
 members = [
-  "crates/control-core",
-  "crates/control-protocol",
-  "crates/sync",
-  "crates/vehicle-diagnostics",
-  "crates/vehicle-runtime",
-  "crates/vehicle-ui",
-  "firmware/duct-controller",
+    "crates/celerity-proto",
+    "crates/control-core",
+    "crates/control-protocol",
+    "crates/proto-codegen",
+    "crates/sync",
+    "crates/vehicle-diagnostics",
+    "crates/vehicle-runtime",
+    "crates/vehicle-ui",
+    "firmware/duct-controller",
 ]
 resolver = "2"
 

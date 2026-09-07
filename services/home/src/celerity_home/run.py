@@ -7,6 +7,8 @@ import math
 import struct
 from dataclasses import dataclass
 
+from celerity.v1.celerity_pb2 import RunManifest
+
 
 class RunFormatError(RuntimeError):
     """A Run chunk is not structurally valid canonical v1 evidence."""
@@ -56,18 +58,18 @@ def decode_run_records(chunk: bytes) -> list[DecodedRunRecord]:
             elif wire == 1:
                 offset = _skip_fixed(chunk, offset, end, 8)
             elif wire == 2:
-                delimited_value, offset = _take_length_delimited(chunk, offset, end)
+                field_value, offset = _take_length_delimited(chunk, offset, end)
                 if field == 8:
-                    source = _decode_utf8(delimited_value, "Run source")
+                    source = _decode_utf8(field_value, "Run source")
                 elif 20 <= field <= 29:
                     payload_count += 1
                     if field == 21:
-                        signal, signal_value = _decode_signal_observation(delimited_value)
+                        signal, signal_value = _decode_signal_observation(field_value)
                         kind = "signal_observation"
                         payload = json.dumps({"signal": signal, "value": signal_value})
                     elif field == 24:
                         kind = "control_decision"
-                        payload = _decode_embedded_string(delimited_value)
+                        payload = _decode_embedded_string(field_value)
                     else:
                         kind = source
             elif wire == 5:
@@ -105,13 +107,18 @@ def decode_run_records(chunk: bytes) -> list[DecodedRunRecord]:
 
 
 def _decode_embedded_string(message: bytes) -> str:
+    if not message:
+        raise RunFormatError("encoded Run payload is absent")
     key, offset = _read_varint(message, 0)
     if key != ((1 << 3) | 2):
         raise RunFormatError("invalid encoded Run payload")
     value, offset = _take_length_delimited(message, offset, len(message))
     if offset != len(message):
         raise RunFormatError("encoded Run payload has trailing fields")
-    return _decode_utf8(value, "encoded Run payload")
+    decoded = _decode_utf8(value, "encoded Run payload")
+    if not decoded:
+        raise RunFormatError("encoded Run payload is absent")
+    return decoded
 
 
 def _decode_signal_observation(message: bytes) -> tuple[str, float]:
@@ -175,3 +182,18 @@ def _read_varint(data: bytes, offset: int) -> tuple[int, int]:
             return value, offset
         shift += 7
     raise RunFormatError("invalid protobuf varint")
+
+
+def run_contract(manifest: RunManifest) -> str:
+    """Return the stable model contract key for one immutable Run."""
+    return json.dumps(
+        [
+            manifest.model_abi,
+            list(manifest.model_input_signals),
+            manifest.model_history_length,
+            manifest.sample_period_ms,
+            list(manifest.command_lattice),
+            manifest.maximum_calibration_error,
+        ],
+        sort_keys=True,
+    )

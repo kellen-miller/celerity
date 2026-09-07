@@ -6,6 +6,8 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+celerity-proto = { path = "../celerity-proto" }
+prost = "0.14.4"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 

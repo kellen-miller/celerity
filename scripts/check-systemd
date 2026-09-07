@@ -11,6 +11,8 @@ if ! command -v systemctl >/dev/null || ! systemctl show-environment >/dev/null;
 fi
 sudo -n true
 
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
 for interface in vcan-powertrain vcan-controller; do
   ip link show "$interface" >/dev/null
 done
@@ -31,6 +33,15 @@ ui_user_created=false
 nonmember_user_created=false
 state_root_created=false
 port_holder_pid=
+
+assert_status_response() {
+  local response_path=$1
+  local expected_state=$2
+  local expected_snapshot=$3
+
+  python3 "$repo_root/services/home/src/celerity_home/status_protobuf_check.py" \
+    "$response_path" "$expected_state" "$expected_snapshot"
+}
 
 for path in \
   "$unit_root/celerityd.service" \
@@ -315,15 +326,13 @@ python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["schema_version
 sudo systemctl start celerity-ui.service
 for _ in {1..50}; do
   if curl --max-time 1 -fsS -H 'Host: localhost:8080' \
-    http://127.0.0.1:8080/v1/status >"$check_root/status.json" \
-    && python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["state"] == "current"' \
-      "$check_root/status.json"; then
+    http://127.0.0.1:8080/v1/status >"$check_root/status.pb" \
+    && assert_status_response "$check_root/status.pb" current present; then
     break
   fi
   sleep 0.2
 done
-python3 -c 'import json,sys; value=json.load(open(sys.argv[1])); assert value["state"] == "current"; assert value["snapshot"] is not None' \
-  "$check_root/status.json"
+assert_status_response "$check_root/status.pb" current present
 sudo systemctl is-active --quiet celerity-ui.service
 
 ui_properties=$(sudo systemctl show celerity-ui.service \
@@ -374,15 +383,13 @@ sudo systemctl stop celerityd.service
 sudo systemctl is-active --quiet celerity-ui.service
 for _ in {1..30}; do
   if curl --max-time 1 -fsS -H 'Host: localhost:8080' \
-    http://127.0.0.1:8080/v1/status >"$check_root/unavailable.json" \
-    && python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["state"] == "unavailable"' \
-    "$check_root/unavailable.json"; then
+    http://127.0.0.1:8080/v1/status >"$check_root/unavailable.pb" \
+    && assert_status_response "$check_root/unavailable.pb" unavailable absent; then
     break
   fi
   sleep 0.2
 done
-python3 -c 'import json,sys; value=json.load(open(sys.argv[1])); assert value["state"] == "unavailable"; assert value["snapshot"] is None' \
-  "$check_root/unavailable.json"
+assert_status_response "$check_root/unavailable.pb" unavailable absent
 
 sudo systemctl stop celerity-ui.service
 python3 -m http.server 8080 --bind 127.0.0.1 \

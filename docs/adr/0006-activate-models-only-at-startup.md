@@ -38,5 +38,5 @@ Hot swapping, a separate inference service, vehicle software A/B, and a fake
 predictor seam were rejected because they add lifecycle and failure paths
 without improving the required safety boundary.
 
-The artifact contract remains normative in
-[`contracts/model/v1/manifest.schema.json`](../../contracts/model/v1/manifest.schema.json).
+The artifact contract remains normative in the `ModelBundleManifest` message
+in [`contracts/celerity/v1/celerity.proto`](../../contracts/celerity/v1/celerity.proto).

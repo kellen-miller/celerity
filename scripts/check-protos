@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+generated_root=$(mktemp -d)
+trap 'rm -rf "$generated_root"' EXIT
+
+cargo run --locked --quiet -p proto-codegen --manifest-path "$repo_root/Cargo.toml" -- \
+  --output-root "$generated_root"
+
+generated_files() {
+  find \
+    "$1/crates/celerity-proto/src/generated" \
+    "$1/services/home/src/celerity" \
+    "$1/crates/vehicle-ui/web/src/generated" \
+    -type f \
+    ! -path '*/__pycache__/*' \
+    ! -name '*.pyc' \
+    -print \
+  | while IFS= read -r path; do
+      printf '%s\n' "${path#"$1"/}"
+    done \
+  | sort
+}
+
+comm -23 \
+  <(generated_files "$repo_root") \
+  <(generated_files "$generated_root") \
+  | while IFS= read -r relative_path; do
+    echo "missing generated proto output: $relative_path" >&2
+    exit 1
+  done
+
+comm -13 \
+  <(generated_files "$repo_root") \
+  <(generated_files "$generated_root") \
+  | while IFS= read -r relative_path; do
+    echo "uncommitted generated proto output: $relative_path" >&2
+    exit 1
+  done
+
+while IFS= read -r relative_path; do
+  expected="$repo_root/$relative_path"
+  actual="$generated_root/$relative_path"
+
+  if ! cmp -s "$expected" "$actual"; then
+    echo "generated proto is stale: $relative_path" >&2
+    diff -u "$expected" "$actual" || true
+    exit 1
+  fi
+done < <(
+  generated_files "$repo_root"
+)
+
+echo "protobuf sources and generated bindings are synchronized"

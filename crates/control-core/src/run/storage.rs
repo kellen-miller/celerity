@@ -4,16 +4,55 @@ use std::{
     path::Path,
 };
 
+use celerity_proto::celerity::v1 as wire;
+use prost::Message;
 use sha2::{Digest, Sha256};
 
 use super::{RunError, RunManifest};
 
 pub(super) fn write_manifest(directory: &Path, manifest: &RunManifest) -> Result<(), RunError> {
-    let temporary = directory.join("manifest.json.tmp");
-    let final_path = directory.join("manifest.json");
-    let mut serialized =
-        serde_json::to_vec_pretty(manifest).map_err(|error| RunError(error.to_string()))?;
-    serialized.push(b'\n');
+    let temporary = directory.join("manifest.pb.tmp");
+    let final_path = directory.join("manifest.pb");
+    let serialized = wire::RunManifest {
+        schema_version: manifest.schema_version,
+        run_id: manifest.run_id.clone(),
+        completion: match manifest.completion {
+            super::Completion::Complete => wire::Completion::Complete as i32,
+            super::Completion::Incomplete => wire::Completion::Incomplete as i32,
+        },
+        incomplete_reason: manifest.incomplete_reason.clone(),
+        first_sequence: manifest.first_sequence,
+        last_sequence: manifest.last_sequence,
+        chunk_file: manifest.chunk_file.clone(),
+        chunk_sha256: manifest.chunk_sha256.clone(),
+        chunks: manifest
+            .chunks
+            .iter()
+            .map(|chunk| wire::RunChunk {
+                file: chunk.file.clone(),
+                sha256: chunk.sha256.clone(),
+            })
+            .collect(),
+        dropped_record_count: manifest.dropped_record_count,
+        configuration_generation: manifest.configuration_generation,
+        configuration_sha256: manifest.configuration_sha256.clone(),
+        model_bundle_digest: manifest.model_bundle_digest.clone(),
+        protocol_major: u32::from(manifest.protocol_major),
+        firmware_generation: manifest.firmware_generation,
+        decoder_generation: manifest.decoder_generation,
+        model_abi: manifest.model_abi.clone(),
+        model_input_signals: manifest.model_input_signals.clone(),
+        model_history_length: u64::try_from(manifest.model_history_length)
+            .map_err(|error| RunError(error.to_string()))?,
+        sample_period_ms: manifest.sample_period_ms,
+        command_lattice: manifest
+            .command_lattice
+            .iter()
+            .map(|value| u32::from(*value))
+            .collect(),
+        maximum_calibration_error: manifest.maximum_calibration_error,
+    }
+    .encode_to_vec();
     let mut file = File::create(&temporary).map_err(io_error)?;
     file.write_all(&serialized).map_err(io_error)?;
     file.sync_all().map_err(io_error)?;

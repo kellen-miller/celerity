@@ -37,7 +37,6 @@ control loop. Local storage may retain data longer during outages.
 Mutable Runs, runtime-owned retention, and digest-only admission were rejected
 because they weaken reproducibility or couple control to external systems.
 
-The canonical event schema remains normative in
-[`contracts/run/v1/run.proto`](../../contracts/run/v1/run.proto), and the home
-HTTP surface remains normative in
-[`contracts/home/v1/openapi.yaml`](../../contracts/home/v1/openapi.yaml).
+The canonical Run, home, job, model, and webhook messages remain normative in
+[`contracts/celerity/v1/celerity.proto`](../../contracts/celerity/v1/celerity.proto).
+The home HTTP routes are transport adapters for those protobuf messages.

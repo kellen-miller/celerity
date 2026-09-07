@@ -29,12 +29,11 @@ fn status_route_is_get_only_host_guarded_and_hardened() {
     let status = request(address, "GET", "/v1/status", "localhost:8080");
     assert!(status.starts_with("HTTP/1.1 200"), "{status}");
     assert!(
-        status.contains("Content-Type: application/json"),
+        status.contains("Content-Type: application/x-protobuf"),
         "{status}"
     );
     assert!(status.contains("Cache-Control: no-store"), "{status}");
     assert!(!status.to_ascii_lowercase().contains("access-control"));
-    assert!(status.contains("\"schema_version\":1"), "{status}");
 
     let forbidden = request(address, "GET", "/v1/status", "example.test");
     assert!(forbidden.starts_with("HTTP/1.1 403"), "{forbidden}");

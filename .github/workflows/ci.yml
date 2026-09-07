@@ -9,6 +9,27 @@ permissions:
   contents: read
 
 jobs:
+  prerelease:
+    name: Prerelease generated contracts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+        with:
+          cache-on-failure: true
+          cache-key: prerelease-protos
+          rustflags: ""
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: crates/vehicle-ui/web/package-lock.json
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: crates/vehicle-ui/web
+      - name: Check committed protobuf bindings
+        run: ./scripts/check-protos
+
   portable:
     strategy:
       fail-fast: false

@@ -4,13 +4,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::{Deserialize, Serialize};
+use celerity_proto::celerity::v1::{ModelBundleManifest, ModelCompatibility};
+use prost::Message;
 use sha2::{Digest, Sha256};
 
 use super::TractModel;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ModelSlot {
     A,
     B,
@@ -30,19 +30,6 @@ impl ModelSlot {
             Self::B => Self::A,
         }
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-struct SlotManifest {
-    schema_version: u32,
-    onnx_sha256: String,
-    compatibility: SlotCompatibility,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-struct SlotCompatibility {
-    model_abi: String,
-    input_shape: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -108,22 +95,23 @@ impl ModelSlots {
         drop(model_file);
         fs::rename(staging, final_model).map_err(slot_io)?;
 
-        let manifest = SlotManifest {
+        let manifest = ModelBundleManifest {
             schema_version: 1,
             onnx_sha256: actual,
-            compatibility: SlotCompatibility {
+            compatibility: Some(ModelCompatibility {
                 model_abi: model_abi.to_owned(),
                 input_shape: Vec::new(),
-            },
+                ..ModelCompatibility::default()
+            }),
+            ..ModelBundleManifest::default()
         };
-        let serialized = serde_json::to_vec_pretty(&manifest)
-            .map_err(|error| SlotError::Manifest(error.to_string()))?;
-        let temporary_manifest = directory.join("manifest.json.staging");
+        let serialized = manifest.encode_to_vec();
+        let temporary_manifest = directory.join("manifest.pb.staging");
         let mut manifest_file = File::create(&temporary_manifest).map_err(slot_io)?;
         manifest_file.write_all(&serialized).map_err(slot_io)?;
         manifest_file.sync_all().map_err(slot_io)?;
         drop(manifest_file);
-        fs::rename(temporary_manifest, directory.join("manifest.json")).map_err(slot_io)?;
+        fs::rename(temporary_manifest, directory.join("manifest.pb")).map_err(slot_io)?;
         let mut bundle_digest = File::create(directory.join("bundle-digest")).map_err(slot_io)?;
         bundle_digest
             .write_all(format!("{expected_digest}\n").as_bytes())
@@ -337,23 +325,26 @@ impl ModelSlots {
         input_length: usize,
     ) -> Result<Option<SelectedModel>, SlotError> {
         let directory = self.root.join(slot.directory());
-        let manifest_path = directory.join("manifest.json");
+        let manifest_path = directory.join("manifest.pb");
         let onnx_path = directory.join("model.onnx");
         let bundle_digest_path = directory.join("bundle-digest");
         if !manifest_path.exists() || !onnx_path.exists() || !bundle_digest_path.exists() {
             return Ok(None);
         }
-        let manifest: SlotManifest =
-            match serde_json::from_slice(&fs::read(manifest_path).map_err(slot_io)?) {
-                Ok(manifest) => manifest,
-                Err(_) => return Ok(None),
-            };
+        let Ok(manifest) =
+            ModelBundleManifest::decode(fs::read(manifest_path).map_err(slot_io)?.as_slice())
+        else {
+            return Ok(None);
+        };
+        let Some(compatibility) = manifest.compatibility.as_ref() else {
+            return Ok(None);
+        };
         let bundle_digest = fs::read_to_string(bundle_digest_path).map_err(slot_io)?;
         if manifest.schema_version != 1
             || bundle_digest.trim() != wanted_digest
-            || manifest.compatibility.model_abi != expected_abi
-            || (!manifest.compatibility.input_shape.is_empty()
-                && manifest.compatibility.input_shape != [1, input_length])
+            || compatibility.model_abi != expected_abi
+            || (!compatibility.input_shape.is_empty()
+                && compatibility.input_shape != [1, input_length as u64])
         {
             return Ok(None);
         }

@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import numpy as np
 import onnx
@@ -16,6 +16,7 @@ import torch
 from onnx.reference import ReferenceEvaluator
 from torch import nn
 
+from celerity.v1.celerity_pb2 import RunChunk, RunManifest
 from celerity_home.run import decode_run_records
 
 # Both model outputs are temperatures. This remains far below source sensor resolution while
@@ -74,7 +75,7 @@ def derive_run_index(run_digests: list[str], output: Path) -> str:
 def load_training_examples(
     storage_root: Path,
     run_digests: list[str],
-    manifests: list[dict[str, Any]],
+    manifests: list[RunManifest],
     recipe: Recipe,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[list[float]]]:
     """Decode canonical Run protobuf records into causal history/candidate examples."""
@@ -86,16 +87,16 @@ def load_training_examples(
     held_inputs: list[list[float]] = []
     held_targets: list[list[float]] = []
     observed_values: list[list[float]] = []
-    signals = manifests[0]["model_input_signals"]
+    signals = list(manifests[0].model_input_signals)
     coolant_index = signals.index("coolant_temperature_c")
     iat_index = signals.index("air_temperature_c")
     for run_digest, manifest in zip(run_digests, manifests, strict=True):
-        chunks = manifest.get("chunks")
-        if not isinstance(chunks, list) or not chunks:
-            chunks = [{"sha256": manifest["chunk_sha256"]}]
+        chunks = list(manifest.chunks)
+        if not chunks:
+            chunks = [RunChunk(sha256=manifest.chunk_sha256)]
         records = []
         for chunk in chunks:
-            chunk_digest = str(chunk["sha256"])
+            chunk_digest = chunk.sha256
             records.extend(
                 decode_run_records((storage_root / "runs" / run_digest / chunk_digest).read_bytes())
             )

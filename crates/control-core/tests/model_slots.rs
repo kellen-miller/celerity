@@ -121,7 +121,7 @@ fn malformed_desired_manifest_is_rejected_and_known_good_recovers() {
     let bad_digest = "b".repeat(64);
     let bad_slot = root.join("slot-a");
     fs::write(bad_slot.join("model.onnx"), &bytes).expect("bad desired graph");
-    fs::write(bad_slot.join("manifest.json"), b"not-json").expect("bad desired manifest");
+    fs::write(bad_slot.join("manifest.pb"), b"not-protobuf").expect("bad desired manifest");
     fs::write(bad_slot.join("bundle-digest"), format!("{bad_digest}\n"))
         .expect("bad desired bundle marker");
     fs::write(root.join("desired-digest"), format!("{bad_digest}\n")).expect("desired marker");

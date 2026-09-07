@@ -6,7 +6,9 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+celerity-proto = { path = "../celerity-proto" }
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
+prost = "0.14.4"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

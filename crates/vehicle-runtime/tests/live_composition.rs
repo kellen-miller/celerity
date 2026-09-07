@@ -10,11 +10,13 @@ use std::{
     time::Duration,
 };
 
+use celerity_proto::celerity::v1::{ModelBundleManifest, ModelInputRange, ModelNormalization};
 use control_core::{
     CommandSource, Completion, ControllerEmulator, EmulatorProvisioning, RuntimeModel, StartupMode,
     ValidatedBundle, replay_events,
 };
 use control_protocol::{Frame, decode, encode};
+use prost::Message;
 use socketcan::{
     CanFdFrame, CanFdSocket, CanFrame, CanSocket, EmbeddedFrame, Frame as SocketCanFrame, Socket,
 };
@@ -48,18 +50,32 @@ fn live_kernel_sockets_drive_model_command_and_seal_run() {
     )
     .expect("model fixture");
     fs::write(
-        model_directory.join("manifest.json"),
-        br#"{
-  "calibration_error": 0.01,
-  "input_ranges": [
-    {"minimum": 60.0, "maximum": 120.0},
-    {"minimum": 0.0, "maximum": 100.0}
-  ],
-  "normalization": [
-    {"mean": 90.0, "scale": 10.0},
-    {"mean": 40.0, "scale": 10.0}
-  ]
-}"#,
+        model_directory.join("manifest.pb"),
+        ModelBundleManifest {
+            input_ranges: vec![
+                ModelInputRange {
+                    minimum: 60.0,
+                    maximum: 120.0,
+                },
+                ModelInputRange {
+                    minimum: 0.0,
+                    maximum: 100.0,
+                },
+            ],
+            normalization: vec![
+                ModelNormalization {
+                    mean: 90.0,
+                    scale: 10.0,
+                },
+                ModelNormalization {
+                    mean: 40.0,
+                    scale: 10.0,
+                },
+            ],
+            calibration_error: 0.01,
+            ..ModelBundleManifest::default()
+        }
+        .encode_to_vec(),
     )
     .expect("model manifest");
     let model = RuntimeModel::load(&model_path, &bundle).expect("production model");
@@ -149,7 +165,7 @@ fn live_kernel_sockets_drive_model_command_and_seal_run() {
         DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback)
     );
     assert_eq!(manifest.completion, Completion::Complete);
-    assert!(runs.join("live-kernel/manifest.json").is_file());
+    assert!(runs.join("live-kernel/manifest.pb").is_file());
     assert!(runs.join("live-kernel").join(manifest.chunk_file).is_file());
     let replayed = replay_events(&runs.join("live-kernel")).expect("canonical Run must replay");
     assert!(replayed.len() >= 4, "live Run must contain runtime events");

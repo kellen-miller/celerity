@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use prost::Message;
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 use crate::StatusObserver;
@@ -74,11 +75,11 @@ pub fn run_http(
             .read()
             .map_err(|error| error.to_string())?
             .envelope(Instant::now());
-        let body = serde_json::to_vec(&envelope).map_err(|error| error.to_string())?;
+        let body = envelope.to_proto().encode_to_vec();
         request
             .respond(
                 Response::from_data(body)
-                    .with_header(header("Content-Type", "application/json"))
+                    .with_header(header("Content-Type", "application/x-protobuf"))
                     .with_header(header("Cache-Control", "no-store"))
                     .with_header(header("X-Content-Type-Options", "nosniff")),
             )

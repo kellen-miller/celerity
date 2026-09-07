@@ -7,48 +7,47 @@ import hmac
 import json
 import os
 import sqlite3
-import subprocess
 import sys
 import threading
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi import Path as FastAPIPath
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict
+from google.protobuf.message import DecodeError, Message
 
+from celerity.v1.celerity_pb2 import (
+    COMPLETION_COMPLETE,
+    JOB_STATE_RUNNING,
+    WEBHOOK_EVENT_TYPE_DEMOTION,
+    WEBHOOK_EVENT_TYPE_ROLLBACK,
+    CompletedRun,
+    Health,
+    JobRequest,
+    JobStarted,
+    ReconcileRequest,
+    ReconcileResponse,
+    RunChunk,
+    RunManifest,
+)
 from celerity_home.database import connect as _connect
 from celerity_home.database import migrate
 from celerity_home.database import transaction as _transaction
+from celerity_home.jobs import job_status as _job_status
+from celerity_home.jobs import launch_managed_job as _launch_managed_job
+from celerity_home.jobs import recover_managed_jobs
 from celerity_home.notifications import deliver_notifications
+from celerity_home.notifications import webhook_event as _webhook_event
 from celerity_home.run import RunFormatError, decode_run_records
+from celerity_home.run import run_contract as _run_contract
 
+PROTOBUF_MEDIA_TYPE = "application/x-protobuf"
 Digest = Annotated[str, FastAPIPath(pattern=r"^[0-9a-f]{64}$")]
-
-
-class ReconcileRequest(BaseModel):
-    """Exact vehicle content inventory."""
-
-    model_config = ConfigDict(extra="forbid")
-    schema_version: int
-    completed_run_digests: list[str]
-    active_model_digest: str | None
-    staged_model_digest: str | None
-    rejected_model_digests: list[str]
-
-
-class JobRequest(BaseModel):
-    """Immutable inputs for one managed training job."""
-
-    model_config = ConfigDict(extra="forbid")
-    run_digests: list[str]
-    recipe: Literal["causal-tcn-v1"]
 
 
 def _digest(data: bytes) -> str:
@@ -63,102 +62,20 @@ def _is_digest(value: object) -> bool:
     )
 
 
-def _process_start_ticks(pid: int) -> str | None:
+def _parse_message(data: bytes, message: Message, detail: str) -> Message:
     try:
-        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
-        return fields[19]
-    except (FileNotFoundError, IndexError, OSError):
-        return None
+        message.ParseFromString(data)
+    except DecodeError as error:
+        raise HTTPException(status_code=422, detail=detail) from error
+    return message
 
 
-def _owned_process_is_running(pid: int | None, expected_start_ticks: str | None) -> bool:
-    if pid is None or expected_start_ticks is None:
-        return False
-    return _process_start_ticks(pid) == expected_start_ticks
-
-
-def _launch_managed_job(
-    storage_root: Path,
-    database: Path,
-    job_id: str,
-    stdout_path: Path,
-    stderr_path: Path,
-) -> None:
-    with stdout_path.open("ab") as stdout, stderr_path.open("ab") as stderr:
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "celerity_home.worker",
-                "--storage-root",
-                str(storage_root),
-                "--job-id",
-                job_id,
-            ],
-            stdout=stdout,
-            stderr=stderr,
-        )
-    with _transaction(database) as connection:
-        connection.execute(
-            "UPDATE jobs SET state='running', pid=?, pid_start_ticks=? "
-            "WHERE id=? AND state IN ('queued', 'running')",
-            (process.pid, _process_start_ticks(process.pid), job_id),
-        )
-
-
-def recover_managed_jobs(storage_root: Path) -> int:
-    """Launch queued jobs and fail dead running jobs without blocking future work."""
-    database = storage_root / "home.sqlite3"
-    mark_orphaned_jobs_failed(database)
-    with _connect(database) as connection:
-        jobs = connection.execute(
-            "SELECT id, pid, pid_start_ticks, stdout_path, stderr_path FROM jobs "
-            "WHERE state='queued' ORDER BY created_at, id"
-        ).fetchall()
-    recovered = 0
-    for job in jobs:
-        if _owned_process_is_running(job["pid"], job["pid_start_ticks"]):
-            continue
-        _launch_managed_job(
-            storage_root,
-            database,
-            job["id"],
-            Path(job["stdout_path"]),
-            Path(job["stderr_path"]),
-        )
-        recovered += 1
-    return recovered
-
-
-def mark_orphaned_jobs_failed(database: Path) -> int:
-    """Fail running jobs whose owned worker no longer exists."""
-    with _transaction(database) as connection:
-        jobs = connection.execute(
-            "SELECT id, pid, pid_start_ticks FROM jobs WHERE state='running'"
-        ).fetchall()
-        orphaned = [
-            job for job in jobs if not _owned_process_is_running(job["pid"], job["pid_start_ticks"])
-        ]
-        for job in orphaned:
-            payload = {
-                "schema_version": 1,
-                "event_id": f"orphan:{job['id']}",
-                "event_type": "training_failure",
-                "occurred_at": datetime.now(UTC).isoformat(),
-                "job_id": job["id"],
-                "artifact_digest": None,
-                "summary": "managed training worker exited before recording a terminal state",
-            }
-            connection.execute(
-                "UPDATE jobs SET state='failed', terminal_summary=? WHERE id=? AND state='running'",
-                (payload["summary"], job["id"]),
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO notifications"
-                "(event_id, job_id, payload_json, state) VALUES (?, ?, ?, 'pending')",
-                (payload["event_id"], job["id"], json.dumps(payload, sort_keys=True)),
-            )
-    return len(orphaned)
+def _protobuf_response(message: Message, status_code: int = 200) -> Response:
+    return Response(
+        content=message.SerializeToString(),
+        status_code=status_code,
+        media_type=PROTOBUF_MEDIA_TYPE,
+    )
 
 
 def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> FastAPI:
@@ -197,17 +114,24 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
             stop_delivery.set()
             delivery_thread.join(timeout=6)
 
-    app = FastAPI(title="Celerity home", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(
+        title="Celerity home",
+        version="1.0.0",
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
 
     @app.get("/health/live")
-    def live() -> dict[str, str]:
-        return {"status": "live"}
+    def live() -> Response:
+        return _protobuf_response(Health(status="live"))
 
     @app.get("/health/ready")
-    def ready() -> dict[str, str]:
+    def ready() -> Response:
         with _connect(database) as connection:
             connection.execute("SELECT 1").fetchone()
-        return {"status": "ready"}
+        return _protobuf_response(Health(status="ready"))
 
     def authenticate(authorization: str | None = Header(default=None)) -> None:
         if authorization is None or not hmac.compare_digest(
@@ -216,8 +140,11 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
             raise HTTPException(status_code=401, detail="invalid vehicle token")
 
     @app.post("/v1/reconcile", dependencies=[Depends(authenticate)])
-    def reconcile(request: ReconcileRequest) -> dict[str, object]:
-        if request.schema_version != 1:
+    async def reconcile(request: Request) -> Response:
+        request_message = _parse_message(
+            await request.body(), ReconcileRequest(), "invalid reconcile request"
+        )
+        if request_message.schema_version != 1:
             raise HTTPException(status_code=422, detail="unsupported schema_version")
         recover_managed_jobs(storage_root)
         training_job: tuple[str, Path, Path] | None = None
@@ -225,7 +152,7 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
             present = {
                 row["digest"] for row in connection.execute("SELECT digest FROM runs").fetchall()
             }
-            rejected = sorted(set(request.rejected_model_digests))
+            rejected = sorted(set(request_message.rejected_model_digests))
             for digest in rejected:
                 model = connection.execute(
                     "SELECT state FROM models WHERE digest=?", (digest,)
@@ -234,19 +161,16 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
                     continue
                 connection.execute("UPDATE models SET state='rejected' WHERE digest=?", (digest,))
                 event_id = f"demotion:{digest}"
-                payload = {
-                    "schema_version": 1,
-                    "event_id": event_id,
-                    "event_type": "demotion",
-                    "occurred_at": datetime.now(UTC).isoformat(),
-                    "job_id": None,
-                    "artifact_digest": digest,
-                    "summary": "vehicle rejected staged model evidence",
-                }
+                payload = _webhook_event(
+                    event_id,
+                    WEBHOOK_EVENT_TYPE_DEMOTION,
+                    "vehicle rejected staged model evidence",
+                    artifact_digest=digest,
+                )
                 connection.execute(
                     "INSERT OR IGNORE INTO notifications"
-                    "(event_id, job_id, payload_json, state) VALUES (?, NULL, ?, 'pending')",
-                    (event_id, json.dumps(payload, sort_keys=True)),
+                    "(event_id, job_id, payload_pb, state) VALUES (?, NULL, ?, 'pending')",
+                    (event_id, payload),
                 )
             desired = connection.execute(
                 "SELECT value FROM settings WHERE key='desired_model_digest'"
@@ -268,54 +192,32 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
                         (desired_digest,),
                     )
                     event_id = f"rollback:{demoted_digest}:{desired_digest}"
-                    payload = {
-                        "schema_version": 1,
-                        "event_id": event_id,
-                        "event_type": "rollback",
-                        "occurred_at": datetime.now(UTC).isoformat(),
-                        "job_id": None,
-                        "artifact_digest": desired_digest,
-                        "summary": "known-good model selected after vehicle rejection",
-                    }
+                    payload = _webhook_event(
+                        event_id,
+                        WEBHOOK_EVENT_TYPE_ROLLBACK,
+                        "known-good model selected after vehicle rejection",
+                        artifact_digest=desired_digest,
+                    )
                     connection.execute(
                         "INSERT OR IGNORE INTO notifications"
-                        "(event_id, job_id, payload_json, state) "
+                        "(event_id, job_id, payload_pb, state) "
                         "VALUES (?, NULL, ?, 'pending')",
-                        (event_id, json.dumps(payload, sort_keys=True)),
+                        (event_id, payload),
                     )
-            reported = sorted(set(request.completed_run_digests))
+            reported = sorted(set(request_message.completed_run_digests))
             if reported and set(reported).issubset(present):
-                contract_fields = (
-                    "model_abi",
-                    "model_input_signals",
-                    "model_history_length",
-                    "sample_period_ms",
-                    "command_lattice",
-                    "maximum_calibration_error",
-                )
                 manifests = {
-                    row["digest"]: json.loads(row["manifest_json"])
-                    for row in connection.execute(
-                        "SELECT digest, manifest_json FROM runs"
-                    ).fetchall()
+                    row["digest"]: RunManifest.FromString(row["manifest_pb"])
+                    for row in connection.execute("SELECT digest, manifest_pb FROM runs").fetchall()
                 }
-                reported_contracts = {
-                    json.dumps(
-                        [manifests[digest].get(field) for field in contract_fields],
-                        sort_keys=True,
-                    )
-                    for digest in reported
-                }
+                reported_contracts = {_run_contract(manifests[digest]) for digest in reported}
                 if len(reported_contracts) != 1:
                     raise HTTPException(status_code=409, detail="reported Run contracts disagree")
                 contract = reported_contracts.pop()
                 corpus = sorted(
                     digest
                     for digest, manifest in manifests.items()
-                    if json.dumps(
-                        [manifest.get(field) for field in contract_fields], sort_keys=True
-                    )
-                    == contract
+                    if _run_contract(manifest) == contract
                 )
                 active_job = connection.execute(
                     "SELECT 1 FROM jobs WHERE state IN ('queued', 'running') LIMIT 1"
@@ -343,10 +245,12 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
                     training_job = (job_id, stdout_path, stderr_path)
         if training_job is not None:
             _launch_managed_job(storage_root, database, *training_job)
-        return {
-            "missing_run_digests": sorted(set(request.completed_run_digests) - present),
-            "desired_model_digest": desired_digest,
-        }
+        response = ReconcileResponse(
+            missing_run_digests=sorted(set(request_message.completed_run_digests) - present)
+        )
+        if desired_digest is not None:
+            response.desired_model_digest = desired_digest
+        return _protobuf_response(response)
 
     @app.put(
         "/v1/runs/{run_digest}/chunks/{chunk_digest}",
@@ -376,27 +280,26 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
         return Response(status_code=204)
 
     @app.post("/v1/runs/{run_digest}/complete", dependencies=[Depends(authenticate)])
-    async def complete_run(run_digest: Digest, request: Request) -> dict[str, str]:
+    async def complete_run(run_digest: Digest, request: Request) -> Response:
         manifest_bytes = await request.body()
         if _digest(manifest_bytes) != run_digest:
             raise HTTPException(status_code=422, detail="Run digest mismatch")
-        try:
-            manifest = json.loads(manifest_bytes)
-            chunks = manifest.get("chunks")
-            if not isinstance(chunks, list) or not chunks:
-                chunks = [{"sha256": manifest["chunk_sha256"]}]
-        except (json.JSONDecodeError, KeyError, TypeError) as error:
-            raise HTTPException(status_code=422, detail="invalid Run manifest") from error
-        if manifest.get("schema_version") != 1 or manifest.get("completion") != "complete":
+        manifest = _parse_message(manifest_bytes, RunManifest(), "invalid Run manifest")
+        chunks = list(manifest.chunks)
+        if not chunks:
+            if not manifest.chunk_sha256:
+                raise HTTPException(status_code=422, detail="invalid Run manifest")
+            chunks = [RunChunk(sha256=manifest.chunk_sha256)]
+        if manifest.schema_version != 1 or manifest.completion != COMPLETION_COMPLETE:
             raise HTTPException(
                 status_code=422, detail="only complete Run v1 manifests are admitted"
             )
         last_sequence: int | None = None
         last_monotonic_ns: int | None = None
         for chunk in chunks:
-            if not isinstance(chunk, dict) or not _is_digest(chunk.get("sha256")):
+            if not _is_digest(chunk.sha256):
                 raise HTTPException(status_code=422, detail="invalid Run chunk manifest")
-            chunk_digest = chunk["sha256"]
+            chunk_digest = chunk.sha256
             chunk_path = storage_root / "runs" / run_digest / chunk_digest
             chunk_bytes = chunk_path.read_bytes() if chunk_path.exists() else b""
             if not chunk_bytes or _digest(chunk_bytes) != chunk_digest:
@@ -415,15 +318,15 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
             last_monotonic_ns = records[-1].monotonic_ns
         with _transaction(database) as connection:
             existing = connection.execute(
-                "SELECT manifest_json FROM runs WHERE digest=?", (run_digest,)
+                "SELECT manifest_pb FROM runs WHERE digest=?", (run_digest,)
             ).fetchone()
-            if existing is not None and existing["manifest_json"] != manifest_bytes:
+            if existing is not None and existing["manifest_pb"] != manifest_bytes:
                 raise HTTPException(status_code=409, detail="immutable Run conflict")
             connection.execute(
-                "INSERT OR IGNORE INTO runs(digest, manifest_json) VALUES (?, ?)",
+                "INSERT OR IGNORE INTO runs(digest, manifest_pb) VALUES (?, ?)",
                 (run_digest, manifest_bytes),
             )
-        return {"run_digest": run_digest}
+        return _protobuf_response(CompletedRun(run_digest=run_digest))
 
     @app.get("/v1/models/{digest}", dependencies=[Depends(authenticate)])
     def get_model(digest: Digest) -> FileResponse:
@@ -436,9 +339,12 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
         return FileResponse(model["path"], media_type="application/octet-stream")
 
     @app.post("/v1/jobs", status_code=202, dependencies=[Depends(authenticate)])
-    def start_job(request: JobRequest) -> dict[str, str]:
-        if not request.run_digests:
+    async def start_job(request: Request) -> Response:
+        request_message = _parse_message(await request.body(), JobRequest(), "invalid job request")
+        if not request_message.run_digests:
             raise HTTPException(status_code=422, detail="job requires at least one Run")
+        if request_message.recipe != "causal-tcn-v1":
+            raise HTTPException(status_code=422, detail="unsupported recipe")
         recover_managed_jobs(storage_root)
         with _transaction(database) as connection:
             if connection.execute(
@@ -449,11 +355,11 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
                 row["digest"]
                 for row in connection.execute(
                     "SELECT digest FROM runs WHERE digest IN "
-                    f"({','.join('?' for _ in request.run_digests)})",
-                    request.run_digests,
+                    f"({','.join('?' for _ in request_message.run_digests)})",
+                    request_message.run_digests,
                 ).fetchall()
             }
-            missing = sorted(set(request.run_digests) - admitted)
+            missing = sorted(set(request_message.run_digests) - admitted)
             if missing:
                 raise HTTPException(status_code=409, detail={"incomplete_runs": missing})
             job_id = str(uuid.uuid4())
@@ -462,25 +368,28 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
             stdout_path = jobs / f"{job_id}.stdout"
             stderr_path = jobs / f"{job_id}.stderr"
             connection.execute(
-                "INSERT INTO jobs(id, state, recipe, input_digests_json, stdout_path, stderr_path) "
+                "INSERT INTO jobs(id, state, recipe, input_digests_json, stdout_path, "
+                "stderr_path) "
                 "VALUES (?, 'queued', ?, ?, ?, ?)",
                 (
                     job_id,
-                    request.recipe,
-                    json.dumps(sorted(request.run_digests)),
+                    request_message.recipe,
+                    json.dumps(sorted(request_message.run_digests)),
                     str(stdout_path),
                     str(stderr_path),
                 ),
             )
         _launch_managed_job(storage_root, database, job_id, stdout_path, stderr_path)
-        return {"job_id": job_id, "state": "running"}
+        return _protobuf_response(
+            JobStarted(job_id=job_id, state=JOB_STATE_RUNNING), status_code=202
+        )
 
     @app.get("/v1/jobs/{job_id}", dependencies=[Depends(authenticate)])
-    def get_job(job_id: str) -> dict[str, object]:
+    def get_job(job_id: str) -> Response:
         with _connect(database) as connection:
             job = connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
         if job is None:
             raise HTTPException(status_code=404, detail="job not found")
-        return dict(job)
+        return _protobuf_response(_job_status(job))
 
     return app

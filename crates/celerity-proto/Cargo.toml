@@ -1,0 +1,9 @@
+[package]
+name = "celerity-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+prost = "0.14.4"

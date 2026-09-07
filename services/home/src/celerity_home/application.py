@@ -15,14 +15,17 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Path as FastAPIPath
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
 from celerity_home.run import RunFormatError, decode_run_records
+
+Digest = Annotated[str, FastAPIPath(pattern=r"^[0-9a-f]{64}$")]
 
 
 class ReconcileRequest(BaseModel):
@@ -46,6 +49,14 @@ class JobRequest(BaseModel):
 
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _is_digest(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 def _connect(database: Path) -> sqlite3.Connection:
@@ -158,12 +169,13 @@ def _launch_managed_job(
 
 
 def recover_managed_jobs(storage_root: Path) -> int:
-    """Restart durable queued/orphaned jobs without duplicating live workers."""
+    """Launch queued jobs and fail dead running jobs without blocking future work."""
     database = storage_root / "home.sqlite3"
+    mark_orphaned_jobs_failed(database)
     with _connect(database) as connection:
         jobs = connection.execute(
             "SELECT id, pid, pid_start_ticks, stdout_path, stderr_path FROM jobs "
-            "WHERE state IN ('queued', 'running') ORDER BY created_at, id"
+            "WHERE state='queued' ORDER BY created_at, id"
         ).fetchall()
     recovered = 0
     for job in jobs:
@@ -178,6 +190,37 @@ def recover_managed_jobs(storage_root: Path) -> int:
         )
         recovered += 1
     return recovered
+
+
+def mark_orphaned_jobs_failed(database: Path) -> int:
+    """Fail running jobs whose owned worker no longer exists."""
+    with _transaction(database) as connection:
+        jobs = connection.execute(
+            "SELECT id, pid, pid_start_ticks FROM jobs WHERE state='running'"
+        ).fetchall()
+        orphaned = [
+            job for job in jobs if not _owned_process_is_running(job["pid"], job["pid_start_ticks"])
+        ]
+        for job in orphaned:
+            payload = {
+                "schema_version": 1,
+                "event_id": f"orphan:{job['id']}",
+                "event_type": "training_failure",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "job_id": job["id"],
+                "artifact_digest": None,
+                "summary": "managed training worker exited before recording a terminal state",
+            }
+            connection.execute(
+                "UPDATE jobs SET state='failed', terminal_summary=? WHERE id=? AND state='running'",
+                (payload["summary"], job["id"]),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO notifications"
+                "(event_id, job_id, payload_json, state) VALUES (?, ?, ?, 'pending')",
+                (payload["event_id"], job["id"], json.dumps(payload, sort_keys=True)),
+            )
+    return len(orphaned)
 
 
 @contextmanager
@@ -252,6 +295,7 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
     def reconcile(request: ReconcileRequest) -> dict[str, object]:
         if request.schema_version != 1:
             raise HTTPException(status_code=422, detail="unsupported schema_version")
+        recover_managed_jobs(storage_root)
         training_job: tuple[str, Path, Path] | None = None
         with _transaction(database) as connection:
             present = {
@@ -385,7 +429,7 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
         status_code=204,
         dependencies=[Depends(authenticate)],
     )
-    async def put_chunk(run_digest: str, chunk_digest: str, request: Request) -> Response:
+    async def put_chunk(run_digest: Digest, chunk_digest: Digest, request: Request) -> Response:
         data = await request.body()
         if _digest(data) != chunk_digest:
             raise HTTPException(status_code=422, detail="chunk digest mismatch")
@@ -408,27 +452,43 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
         return Response(status_code=204)
 
     @app.post("/v1/runs/{run_digest}/complete", dependencies=[Depends(authenticate)])
-    async def complete_run(run_digest: str, request: Request) -> dict[str, str]:
+    async def complete_run(run_digest: Digest, request: Request) -> dict[str, str]:
         manifest_bytes = await request.body()
         if _digest(manifest_bytes) != run_digest:
             raise HTTPException(status_code=422, detail="Run digest mismatch")
         try:
             manifest = json.loads(manifest_bytes)
-            chunk_digest = manifest["chunk_sha256"]
+            chunks = manifest.get("chunks")
+            if not isinstance(chunks, list) or not chunks:
+                chunks = [{"sha256": manifest["chunk_sha256"]}]
         except (json.JSONDecodeError, KeyError, TypeError) as error:
             raise HTTPException(status_code=422, detail="invalid Run manifest") from error
         if manifest.get("schema_version") != 1 or manifest.get("completion") != "complete":
             raise HTTPException(
                 status_code=422, detail="only complete Run v1 manifests are admitted"
             )
-        chunk_path = storage_root / "runs" / run_digest / chunk_digest
-        chunk_bytes = chunk_path.read_bytes() if chunk_path.exists() else b""
-        if not chunk_bytes or _digest(chunk_bytes) != chunk_digest:
-            raise HTTPException(status_code=422, detail="manifest chunk is absent or corrupt")
-        try:
-            decode_run_records(chunk_bytes)
-        except RunFormatError as error:
-            raise HTTPException(status_code=422, detail=f"invalid Run chunk: {error}") from error
+        last_sequence: int | None = None
+        last_monotonic_ns: int | None = None
+        for chunk in chunks:
+            if not isinstance(chunk, dict) or not _is_digest(chunk.get("sha256")):
+                raise HTTPException(status_code=422, detail="invalid Run chunk manifest")
+            chunk_digest = chunk["sha256"]
+            chunk_path = storage_root / "runs" / run_digest / chunk_digest
+            chunk_bytes = chunk_path.read_bytes() if chunk_path.exists() else b""
+            if not chunk_bytes or _digest(chunk_bytes) != chunk_digest:
+                raise HTTPException(status_code=422, detail="manifest chunk is absent or corrupt")
+            try:
+                records = decode_run_records(chunk_bytes)
+            except RunFormatError as error:
+                raise HTTPException(
+                    status_code=422, detail=f"invalid Run chunk: {error}"
+                ) from error
+            if last_sequence is not None and records[0].sequence <= last_sequence:
+                raise HTTPException(status_code=422, detail="Run sequence regressed across chunks")
+            if last_monotonic_ns is not None and records[0].monotonic_ns < last_monotonic_ns:
+                raise HTTPException(status_code=422, detail="Run time regressed across chunks")
+            last_sequence = records[-1].sequence
+            last_monotonic_ns = records[-1].monotonic_ns
         with _transaction(database) as connection:
             existing = connection.execute(
                 "SELECT manifest_json FROM runs WHERE digest=?", (run_digest,)
@@ -442,7 +502,7 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
         return {"run_digest": run_digest}
 
     @app.get("/v1/models/{digest}", dependencies=[Depends(authenticate)])
-    def get_model(digest: str) -> FileResponse:
+    def get_model(digest: Digest) -> FileResponse:
         with _connect(database) as connection:
             model = connection.execute(
                 "SELECT path FROM models WHERE digest=? AND state='staged'", (digest,)
@@ -455,6 +515,7 @@ def create_app(storage_root: Path, vehicle_token: str, webhook_url: str) -> Fast
     def start_job(request: JobRequest) -> dict[str, str]:
         if not request.run_digests:
             raise HTTPException(status_code=422, detail="job requires at least one Run")
+        recover_managed_jobs(storage_root)
         with _transaction(database) as connection:
             if connection.execute(
                 "SELECT 1 FROM jobs WHERE state IN ('queued', 'running') LIMIT 1"

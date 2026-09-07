@@ -279,9 +279,7 @@ def test_job_admits_only_complete_runs_and_survives_as_durable_subprocess(
     assert "not a zip file" in failed_job["terminal_summary"]
 
 
-def test_job_admission_rejects_a_second_active_worker(
-    tmp_path: Path, home_client: TestClient
-) -> None:
+def test_job_admission_reaps_a_dead_active_worker(tmp_path: Path, home_client: TestClient) -> None:
     run_digest = upload_run(home_client, "active-job-run")
     with sqlite3.connect(tmp_path / "home.sqlite3") as connection:
         connection.execute(
@@ -295,8 +293,19 @@ def test_job_admission_rejects_a_second_active_worker(
         json={"run_digests": [run_digest], "recipe": "causal-tcn-v1"},
     )
 
-    assert response.status_code == 409
-    assert response.json()["detail"] == "another training job is active"
+    assert response.status_code == 202
+    with sqlite3.connect(tmp_path / "home.sqlite3") as connection:
+        orphan = connection.execute(
+            "SELECT state, terminal_summary FROM jobs WHERE id='already-running'"
+        ).fetchone()
+        notification = connection.execute(
+            "SELECT payload_json FROM notifications WHERE event_id='orphan:already-running'"
+        ).fetchone()
+    assert orphan == (
+        "failed",
+        "managed training worker exited before recording a terminal state",
+    )
+    assert json.loads(notification[0])["event_type"] == "training_failure"
 
 
 def test_valid_but_ineligible_corpus_finishes_as_no_change(

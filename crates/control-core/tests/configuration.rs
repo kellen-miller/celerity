@@ -32,6 +32,40 @@ fn one_loader_accepts_complete_matching_bundle() {
 }
 
 #[test]
+fn timing_windows_are_explicit_and_cross_validated() {
+    let too_short_for_sensor_period =
+        fixture().replace("input_stale_after_ms = 250", "input_stale_after_ms = 200");
+    assert_eq!(
+        ValidatedBundle::load(
+            &write_bundle(&too_short_for_sensor_period, "timing-sensor.toml"),
+            StartupMode::Simulation,
+        ),
+        Err(BundleError::InvalidRuntimeTiming)
+    );
+
+    let model_window_too_short = fixture().replace(
+        "model_signals_stale_after_ms = 250",
+        "model_signals_stale_after_ms = 200",
+    );
+    assert_eq!(
+        ValidatedBundle::load(
+            &write_bundle(&model_window_too_short, "timing-model-sensor.toml"),
+            StartupMode::Simulation,
+        ),
+        Err(BundleError::InvalidRuntimeTiming)
+    );
+
+    let cycle_exceeds_ack_deadline = fixture().replace("cycle_ms = 20", "cycle_ms = 25");
+    assert_eq!(
+        ValidatedBundle::load(
+            &write_bundle(&cycle_exceeds_ack_deadline, "timing-cycle.toml"),
+            StartupMode::Simulation,
+        ),
+        Err(BundleError::InvalidRuntimeTiming)
+    );
+}
+
+#[test]
 fn explicit_disabled_cantcu_stream_keeps_frames_opaque() {
     let bundle = ValidatedBundle::load(
         &write_bundle(&fixture(), "cantcu-disabled.toml"),

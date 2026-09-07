@@ -89,10 +89,15 @@ def load_training_examples(
     coolant_index = signals.index("coolant_temperature_c")
     iat_index = signals.index("air_temperature_c")
     for run_digest, manifest in zip(run_digests, manifests, strict=True):
-        chunk_digest = str(manifest["chunk_sha256"])
-        records = decode_run_records(
-            (storage_root / "runs" / run_digest / chunk_digest).read_bytes()
-        )
+        chunks = manifest.get("chunks")
+        if not isinstance(chunks, list) or not chunks:
+            chunks = [{"sha256": manifest["chunk_sha256"]}]
+        records = []
+        for chunk in chunks:
+            chunk_digest = str(chunk["sha256"])
+            records.extend(
+                decode_run_records((storage_root / "runs" / run_digest / chunk_digest).read_bytes())
+            )
         snapshots: list[list[float]] = []
         accepted_commands: list[tuple[int, float]] = []
         pending_snapshot_index: int | None = None

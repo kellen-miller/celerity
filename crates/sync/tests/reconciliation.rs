@@ -5,6 +5,7 @@ use std::{
     io::{Cursor, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
 };
 
 use serde_json::json;
@@ -43,7 +44,7 @@ impl HomeApi for RecordingHome {
         }))
     }
 
-    fn put_chunk(&self, run: &str, _chunk: &str, _bytes: &[u8]) -> Result<(), SyncError> {
+    fn put_chunk(&self, run: &str, _chunk: &str, _path: &Path) -> Result<(), SyncError> {
         self.uploaded.borrow_mut().push(run.to_owned());
         Ok(())
     }
@@ -138,6 +139,7 @@ fn configuration(root: &Path) -> SyncConfiguration {
     SyncConfiguration {
         spool_root: root.join("runs"),
         retention_count: 1,
+        incomplete_retention_count: 1,
         home_interface: "home0".to_owned(),
         expected_default_gateway: "192.0.2.1".to_owned(),
         home_api_url: "http://home.invalid".to_owned(),
@@ -173,8 +175,9 @@ fn linux_presence_requires_up_link_and_matching_default_route() {
 #[test]
 fn reconcile_uploads_exact_artifacts_then_applies_acknowledged_retention() {
     let root = root();
-    write_run(&root, "a");
-    write_run(&root, "b");
+    write_run(&root, "z-old");
+    std::thread::sleep(Duration::from_millis(10));
+    write_run(&root, "a-new");
     let bundle = model_bundle();
     let home = RecordingHome {
         model: RefCell::new(Some(bundle.clone())),
@@ -190,8 +193,8 @@ fn reconcile_uploads_exact_artifacts_then_applies_acknowledged_retention() {
         })
     );
     assert_eq!(home.uploaded.borrow().len(), 2);
-    assert!(!root.join("runs/a").exists());
-    assert!(root.join("runs/b").exists());
+    assert!(!root.join("runs/z-old").exists());
+    assert!(root.join("runs/a-new").exists());
     assert_eq!(
         fs::read_to_string(root.join("models/desired-digest")).expect("desired marker"),
         format!("{expected_model_digest}\n")

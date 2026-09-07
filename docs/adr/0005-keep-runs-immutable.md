@@ -12,14 +12,16 @@ identity, not that a Run contains structurally valid canonical events.
 ## Decision
 
 A Run is one uninterrupted `celerityd` process and monotonic epoch. Store its
-canonical events in append-only checksummed chunks and seal them with a
-manifest. Interrupted or degraded Runs remain explicitly incomplete and are
-excluded from training.
+canonical events in append-only checksummed chunks, rotating bounded chunks as
+needed, and seal them with a manifest. Interrupted or degraded Runs remain
+explicitly incomplete and are excluded from training.
 
 Storage pressure or write failure marks the Run incomplete while control
-continues safely. The runtime never deletes Runs. Only `celerity-sync` may
-delete a complete local Run after the home service acknowledges its exact
-digest and retention policy permits deletion.
+continues safely. Startup recovery manifests interrupted partial chunks, and
+sync retains incomplete Runs under an explicit bounded policy. The runtime
+never deletes Runs. Only `celerity-sync` may delete a complete local Run after
+the home service acknowledges its exact digest and retention policy permits
+deletion.
 
 The home application validates canonical Run framing, schema, source and
 payload cardinality, sequence, monotonic time, and signal validity both at HTTP

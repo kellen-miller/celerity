@@ -5,8 +5,8 @@ use std::{
     fmt::Write as _,
     fs::{self, File},
     io::{Cursor, Read, Write},
-    path::{Path, PathBuf},
-    time::Duration,
+    path::{Component, Path, PathBuf},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use reqwest::blocking::Client;
@@ -21,6 +21,7 @@ pub const HAS_CONTROL_AUTHORITY: bool = false;
 pub struct SyncConfiguration {
     pub spool_root: PathBuf,
     pub retention_count: usize,
+    pub incomplete_retention_count: usize,
     pub home_interface: String,
     pub expected_default_gateway: String,
     pub home_api_url: String,
@@ -39,6 +40,7 @@ pub struct SyncConfiguration {
 struct BundleSyncConfiguration {
     spool_root: String,
     retention_count: usize,
+    incomplete_retention_count: usize,
     home_interface: String,
     expected_default_gateway: String,
     home_api_url: String,
@@ -83,6 +85,7 @@ impl SyncConfiguration {
             .map_err(sync_toml)?;
         if sync.spool_root.is_empty()
             || sync.retention_count == 0
+            || sync.incomplete_retention_count == 0
             || sync.home_interface.is_empty()
             || sync.expected_default_gateway.is_empty()
             || !sync.home_api_url.starts_with("https://")
@@ -93,6 +96,7 @@ impl SyncConfiguration {
         Ok(Self {
             spool_root: PathBuf::from(sync.spool_root),
             retention_count: sync.retention_count,
+            incomplete_retention_count: sync.incomplete_retention_count,
             home_interface: sync.home_interface,
             expected_default_gateway: sync.expected_default_gateway,
             home_api_url: sync.home_api_url,
@@ -204,7 +208,8 @@ impl TransferJournal {
                    run_path TEXT NOT NULL,
                    acknowledged INTEGER NOT NULL DEFAULT 0,
                    attempts INTEGER NOT NULL DEFAULT 0,
-                   last_error TEXT
+                   last_error TEXT,
+                   next_attempt_at INTEGER NOT NULL DEFAULT 0
                  );
                  CREATE TABLE IF NOT EXISTS model_transfer (
                    digest TEXT PRIMARY KEY,
@@ -213,6 +218,22 @@ impl TransferJournal {
                  );",
             )
             .map_err(sync_sql)?;
+        let has_backoff = connection
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('run_transfer') WHERE name='next_attempt_at'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(sync_sql)?
+            > 0;
+        if !has_backoff {
+            connection
+                .execute(
+                    "ALTER TABLE run_transfer ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0",
+                    [],
+                )
+                .map_err(sync_sql)?;
+        }
         Ok(Self { connection })
     }
 
@@ -236,14 +257,48 @@ impl TransferJournal {
             Ok(()) => (1, None),
             Err(error) => (0, Some(error.to_string())),
         };
+        let attempts: u32 = self
+            .connection
+            .query_row(
+                "SELECT attempts FROM run_transfer WHERE run_digest=?1",
+                [digest],
+                |row| row.get(0),
+            )
+            .map_err(sync_sql)?;
+        let next_attempt_at: i64 = if acknowledged == 1 {
+            0
+        } else {
+            current_unix_seconds().saturating_add(
+                i64::try_from(
+                    30_u64
+                        .saturating_mul(1_u64 << attempts.saturating_add(1).min(6))
+                        .min(3_600),
+                )
+                .unwrap_or(i64::MAX),
+            )
+        };
         self.connection
             .execute(
-                "UPDATE run_transfer SET attempts=attempts+1, acknowledged=?2, last_error=?3
+                "UPDATE run_transfer SET attempts=attempts+1, acknowledged=?2, last_error=?3,
+                 next_attempt_at=?4
                  WHERE run_digest=?1",
-                params![digest, acknowledged, error],
+                params![digest, acknowledged, error, next_attempt_at],
             )
             .map_err(sync_sql)?;
         Ok(())
+    }
+
+    #[must_use]
+    pub fn retry_allowed(&self, digest: &str) -> bool {
+        self.connection
+            .query_row(
+                "SELECT next_attempt_at FROM run_transfer WHERE run_digest=?1",
+                [digest],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_or(true, |next_attempt_at| {
+                next_attempt_at <= current_unix_seconds()
+            })
     }
 
     #[must_use]
@@ -263,8 +318,13 @@ struct SpoolRun {
     digest: String,
     directory: PathBuf,
     manifest: Vec<u8>,
-    chunk_path: PathBuf,
-    chunk_digest: String,
+    chunks: Vec<SpoolChunk>,
+}
+
+#[derive(Clone, Debug)]
+struct SpoolChunk {
+    path: PathBuf,
+    digest: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -330,7 +390,7 @@ pub trait HomeApi {
     /// # Errors
     ///
     /// Returns an error for transport or unsuccessful status.
-    fn put_chunk(&self, run: &str, chunk: &str, bytes: &[u8]) -> Result<(), SyncError>;
+    fn put_chunk(&self, run: &str, chunk: &str, path: &Path) -> Result<(), SyncError>;
     /// Completes a Run and returns the server's exact acknowledgement digest.
     ///
     /// # Errors
@@ -361,7 +421,6 @@ impl ReqwestHomeApi {
         let token = fs::read_to_string(token_path).map_err(sync_io)?;
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(30))
             .build()
             .map_err(sync_http)?;
         Ok(Self {
@@ -389,12 +448,13 @@ impl HomeApi for ReqwestHomeApi {
             .map_err(sync_http)
     }
 
-    fn put_chunk(&self, run: &str, chunk: &str, bytes: &[u8]) -> Result<(), SyncError> {
+    fn put_chunk(&self, run: &str, chunk: &str, path: &Path) -> Result<(), SyncError> {
+        let file = File::open(path).map_err(sync_io)?;
         self.request(
             reqwest::Method::PUT,
             &format!("/v1/runs/{run}/chunks/{chunk}"),
         )
-        .body(bytes.to_vec())
+        .body(file)
         .send()
         .and_then(reqwest::blocking::Response::error_for_status)
         .map_err(sync_http)?;
@@ -490,11 +550,15 @@ impl Synchronizer {
             serde_json::from_value(home.reconcile(&request)?).map_err(sync_json)?;
         let missing: BTreeSet<_> = response.missing_run_digests.into_iter().collect();
         let mut uploaded = 0;
-        for run in runs.iter().filter(|run| missing.contains(&run.digest)) {
+        for run in runs
+            .iter()
+            .filter(|run| missing.contains(&run.digest) && self.journal.retry_allowed(&run.digest))
+        {
             let result = Self::upload(home, run);
             self.journal.record_attempt(&run.digest, &result)?;
-            result?;
-            uploaded += 1;
+            if result.is_ok() {
+                uploaded += 1;
+            }
         }
         self.apply_retention(&runs)?;
         let model_staged = if let Some(digest) = response.desired_model_digest {
@@ -515,13 +579,14 @@ impl Synchronizer {
     }
 
     fn upload(home: &impl HomeApi, run: &SpoolRun) -> Result<(), SyncError> {
-        let bytes = fs::read(&run.chunk_path).map_err(sync_io)?;
-        if digest(&bytes) != run.chunk_digest {
-            return Err(SyncError(
-                "Run chunk digest changed before upload".to_owned(),
-            ));
+        for chunk in &run.chunks {
+            if digest_file(&chunk.path)? != chunk.digest {
+                return Err(SyncError(
+                    "Run chunk digest changed before upload".to_owned(),
+                ));
+            }
+            home.put_chunk(&run.digest, &chunk.digest, &chunk.path)?;
         }
-        home.put_chunk(&run.digest, &run.chunk_digest, &bytes)?;
         let acknowledgement = home.complete(&run.digest, &run.manifest)?;
         if acknowledgement != run.digest {
             return Err(SyncError(
@@ -638,12 +703,28 @@ impl Synchronizer {
             .iter()
             .filter(|run| self.journal.acknowledged(&run.digest))
             .collect();
-        acknowledged.sort_by(|left, right| left.directory.cmp(&right.directory));
+        acknowledged.sort_by_key(|run| {
+            fs::metadata(&run.directory)
+                .and_then(|metadata| metadata.modified())
+                .ok()
+        });
         let remove_count = acknowledged
             .len()
             .saturating_sub(self.configuration.retention_count);
         for run in acknowledged.into_iter().take(remove_count) {
             fs::remove_dir_all(&run.directory).map_err(sync_io)?;
+        }
+        let mut incomplete = incomplete_inventory(&self.configuration.spool_root)?;
+        incomplete.sort_by_key(|directory| {
+            fs::metadata(directory)
+                .and_then(|metadata| metadata.modified())
+                .ok()
+        });
+        let remove_count = incomplete
+            .len()
+            .saturating_sub(self.configuration.incomplete_retention_count);
+        for directory in incomplete.into_iter().take(remove_count) {
+            fs::remove_dir_all(directory).map_err(sync_io)?;
         }
         Ok(())
     }
@@ -665,24 +746,99 @@ fn inventory(root: &Path) -> Result<Vec<SpoolRun>, SyncError> {
         if value.get("completion").and_then(serde_json::Value::as_str) != Some("complete") {
             continue;
         }
-        let chunk_file = value
-            .get("chunk_file")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| SyncError("complete Run has no chunk_file".to_owned()))?;
-        let chunk_digest = value
-            .get("chunk_sha256")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| SyncError("complete Run has no chunk_sha256".to_owned()))?;
+        let chunks = if let Some(manifest_chunks) =
+            value.get("chunks").and_then(|value| value.as_array())
+        {
+            manifest_chunks
+                .iter()
+                .map(|chunk| {
+                    let file = chunk
+                        .get("file")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| SyncError("Run chunk has no file".to_owned()))?;
+                    let digest = chunk
+                        .get("sha256")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| SyncError("Run chunk has no digest".to_owned()))?;
+                    if !is_digest(digest) {
+                        return Err(SyncError("Run chunk has an invalid digest".to_owned()));
+                    }
+                    let relative_path = Path::new(file);
+                    if relative_path.is_absolute()
+                        || relative_path
+                            .components()
+                            .any(|component| matches!(component, Component::ParentDir))
+                    {
+                        return Err(SyncError("Run chunk path escapes its directory".to_owned()));
+                    }
+                    Ok(SpoolChunk {
+                        path: directory.join(relative_path),
+                        digest: digest.to_owned(),
+                    })
+                })
+                .collect::<Result<Vec<_>, SyncError>>()?
+        } else {
+            let chunk_file = value
+                .get("chunk_file")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| SyncError("complete Run has no chunk_file".to_owned()))?;
+            let chunk_digest = value
+                .get("chunk_sha256")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| SyncError("complete Run has no chunk_sha256".to_owned()))?;
+            if !is_digest(chunk_digest) {
+                return Err(SyncError(
+                    "complete Run has an invalid chunk digest".to_owned(),
+                ));
+            }
+            let relative_path = Path::new(chunk_file);
+            if relative_path.is_absolute()
+                || relative_path
+                    .components()
+                    .any(|component| matches!(component, Component::ParentDir))
+            {
+                return Err(SyncError("Run chunk path escapes its directory".to_owned()));
+            }
+            vec![SpoolChunk {
+                path: directory.join(relative_path),
+                digest: chunk_digest.to_owned(),
+            }]
+        };
+        if chunks.is_empty() || chunks.iter().any(|chunk| !chunk.path.is_file()) {
+            return Err(SyncError("complete Run has missing chunks".to_owned()));
+        }
         runs.push(SpoolRun {
             digest: digest(&manifest),
             directory: directory.clone(),
             manifest,
-            chunk_path: directory.join(chunk_file),
-            chunk_digest: chunk_digest.to_owned(),
+            chunks,
         });
     }
     runs.sort_by(|left, right| left.digest.cmp(&right.digest));
     Ok(runs)
+}
+
+fn incomplete_inventory(root: &Path) -> Result<Vec<PathBuf>, SyncError> {
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut directories = Vec::new();
+    for entry in fs::read_dir(root).map_err(sync_io)? {
+        let directory = entry.map_err(sync_io)?.path();
+        if !directory.is_dir() {
+            continue;
+        }
+        let manifest_path = directory.join("manifest.json");
+        if !manifest_path.exists() {
+            continue;
+        }
+        let manifest = fs::read(&manifest_path).map_err(sync_io)?;
+        let value: serde_json::Value = serde_json::from_slice(&manifest).map_err(sync_json)?;
+        if value.get("completion").and_then(serde_json::Value::as_str) != Some("complete") {
+            directories.push(directory);
+        }
+    }
+    Ok(directories)
 }
 
 fn digest(bytes: &[u8]) -> String {
@@ -691,6 +847,39 @@ fn digest(bytes: &[u8]) -> String {
         write!(output, "{byte:02x}").expect("String write");
     }
     output
+}
+
+fn current_unix_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
+        })
+}
+
+fn is_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn digest_file(path: &Path) -> Result<String, SyncError> {
+    let mut file = File::open(path).map_err(sync_io)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
+    loop {
+        let read = file.read(&mut buffer).map_err(sync_io)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let mut output = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        write!(output, "{byte:02x}").expect("String write");
+    }
+    Ok(output)
 }
 
 fn read_zip_entry(

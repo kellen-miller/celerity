@@ -181,7 +181,7 @@ fn earlier_signal_observation_does_not_regress_ingest_time() {
 fn stale_input_revokes_authority_and_stops_renewal() {
     let mut events = healthy_events();
     events.push(RuntimeEvent::Cycle {
-        monotonic_ms: 50,
+        monotonic_ms: 300,
         remaining_cycle_ns: 20_000_000,
     });
     let outcome = Runtime::new(bundle(), ExternalAdapters::simulation(events))
@@ -219,6 +219,31 @@ fn controller_reboot_requires_fresh_acknowledgement() {
         .run();
     assert_eq!(outcome.final_feature_authority, FeatureAuthority::Arming);
     assert_ne!(outcome.accepted_basis_points, Some(5_000));
+}
+
+#[test]
+fn hard_fault_latch_clears_after_reconciled_controller_reboot() {
+    let mut events = healthy_events();
+    events.extend([
+        RuntimeEvent::SharedHardFault { monotonic_ms: 5 },
+        RuntimeEvent::ControllerUnavailable { monotonic_ms: 6 },
+        RuntimeEvent::ControllerTruth {
+            monotonic_ms: 7,
+            boot_session: 8,
+            configuration_generation: 3,
+            identity_matches: true,
+        },
+        RuntimeEvent::Cycle {
+            monotonic_ms: 8,
+            remaining_cycle_ns: 20_000_000,
+        },
+    ]);
+    let outcome = Runtime::new(bundle(), ExternalAdapters::simulation(events))
+        .expect("matching composition")
+        .run();
+
+    assert!(!outcome.hard_fault_latched);
+    assert_eq!(outcome.final_feature_authority, FeatureAuthority::Arming);
 }
 
 #[test]

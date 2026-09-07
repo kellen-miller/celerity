@@ -172,6 +172,7 @@ if (( end_ns - start_ns > 3000000000 )); then
   echo "celerityd exceeded bounded stop deadline" >&2
   exit 1
 fi
+[[ "$(sudo systemctl show celerityd.service --property Result --value)" == "success" ]]
 sudo systemctl stop celerity-sync.service
 sudo tee "$runtime_override_root/10-supervisor-check.conf" >/dev/null <<'EOF'
 [Service]
@@ -186,6 +187,9 @@ mode = "live"
 
 [runtime]
 cycle_ms = 20
+input_stale_after_ms = 250
+model_signals_stale_after_ms = 250
+controller_truth_stale_after_ms = 80
 
 [powertrain]
 decoder_generation = 1
@@ -209,7 +213,7 @@ direction = 1
 runtime_lease_ms = 100
 command_lease_ms = 50
 heartbeat_period_ms = 20
-acknowledgement_deadline_ms = 20
+acknowledgement_deadline_ms = 25
 normal_slew_basis_points_per_second = 1000
 protection_slew_basis_points_per_second = 2000
 digest_prefix = 1
@@ -249,6 +253,7 @@ socket = "/run/celerity/diagnostics.sock"
 [sync]
 spool_root = "/var/lib/celerity/runs"
 retention_count = 2
+incomplete_retention_count = 2
 home_interface = "home0"
 expected_default_gateway = "192.0.2.1"
 home_api_url = "https://home.invalid"
@@ -368,9 +373,9 @@ sudo systemctl is-active --quiet celerity-ui.service
 sudo systemctl stop celerityd.service
 sudo systemctl is-active --quiet celerity-ui.service
 for _ in {1..30}; do
-  curl --max-time 1 -fsS -H 'Host: localhost:8080' \
-    http://127.0.0.1:8080/v1/status >"$check_root/unavailable.json"
-  if python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["state"] == "unavailable"' \
+  if curl --max-time 1 -fsS -H 'Host: localhost:8080' \
+    http://127.0.0.1:8080/v1/status >"$check_root/unavailable.json" \
+    && python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["state"] == "unavailable"' \
     "$check_root/unavailable.json"; then
     break
   fi
@@ -408,8 +413,7 @@ fi
 kill "$port_holder_pid"
 wait "$port_holder_pid" 2>/dev/null || true
 port_holder_pid=
-sudo systemctl reset-failed celerity-ui.service celerityd.service
-sudo systemctl stop celerityd.service
+sudo systemctl reset-failed celerity-ui.service
 if [[ "$ui_user_created" == true ]]; then
   sudo userdel celerity-ui
   ui_user_created=false

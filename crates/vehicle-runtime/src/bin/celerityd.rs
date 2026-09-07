@@ -11,7 +11,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
-    use control_core::{Completion, ModelSlots, RuntimeModel, StartupMode, ValidatedBundle};
+    use control_core::{
+        Completion, ModelSlots, RuntimeModel, StartupMode, ValidatedBundle, recover_incomplete_runs,
+    };
     use sd_notify::NotifyState;
     use signal_hook::consts::{SIGINT, SIGTERM};
 
@@ -56,6 +58,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bundle = ValidatedBundle::load(Path::new(&argument), StartupMode::Live)
         .map_err(|error| io::Error::other(format!("{error:?}")))?;
+    for recovered in recover_incomplete_runs(bundle.run_storage_root()).map_err(io::Error::other)? {
+        eprintln!("recovered incomplete Run manifest {}", recovered.display());
+    }
     let slots = ModelSlots::open(bundle.model_slots_root())
         .map_err(|error| io::Error::other(format!("{error:?}")))?;
     let mut selected = slots
@@ -154,17 +159,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         NotifyState::Ready,
         NotifyState::Status("controller-local fallback; reconciling live controller"),
     ])?;
-    while !stopping.load(Ordering::Relaxed) {
-        runtime.run_cycle().map_err(io::Error::other)?;
-        sd_notify::notify(&[NotifyState::Watchdog])?;
-    }
+    let cycle_result = loop {
+        if stopping.load(Ordering::Relaxed) {
+            break Ok(());
+        }
+        if let Err(error) = runtime.run_cycle() {
+            break Err(error);
+        }
+        if let Err(error) = sd_notify::notify(&[NotifyState::Watchdog]) {
+            break Err(error.to_string());
+        }
+    };
 
-    sd_notify::notify(&[
+    let stopping_notification = sd_notify::notify(&[
         NotifyState::Stopping,
         NotifyState::Status("fallback requested; lease renewal stopped; sealing Run"),
-    ])?;
+    ])
+    .map_err(|error| error.to_string());
     let model_acceptance_observed = runtime.model_acceptance_observed();
-    let manifest = runtime.shutdown().map_err(io::Error::other)?;
+    let shutdown_result = runtime.shutdown();
+    stopping.store(true, Ordering::Relaxed);
+    let diagnostics_result = diagnostics
+        .join()
+        .map_err(|_| io::Error::other("diagnostics thread panicked"))
+        .and_then(|result| result.map_err(io::Error::other));
+
+    if let Err(error) = stopping_notification {
+        return Err(io::Error::other(error).into());
+    }
+    if let Err(error) = cycle_result {
+        if let Err(shutdown_error) = shutdown_result {
+            return Err(io::Error::other(format!(
+                "control cycle failed: {error}; shutdown failed: {shutdown_error}"
+            ))
+            .into());
+        }
+        return Err(io::Error::other(error).into());
+    }
+    let manifest = shutdown_result.map_err(io::Error::other)?;
     if model_acceptance_observed
         && manifest.completion == Completion::Complete
         && let Some(selected) = &selected
@@ -173,11 +205,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .promote_known_good(selected)
             .map_err(|error| io::Error::other(format!("{error:?}")))?;
     }
-    stopping.store(true, Ordering::Relaxed);
-    diagnostics
-        .join()
-        .map_err(|_| io::Error::other("diagnostics thread panicked"))?
-        .map_err(io::Error::other)?;
+    diagnostics_result?;
     eprintln!(
         "sealed Run {} completion={:?} chunk_sha256={}",
         manifest.run_id, manifest.completion, manifest.chunk_sha256

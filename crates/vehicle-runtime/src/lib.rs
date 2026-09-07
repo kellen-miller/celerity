@@ -311,7 +311,8 @@ pub(crate) struct ReceivedControllerFrame {
     pub data: Vec<u8>,
     pub fd: bool,
     pub bit_rate_switch: bool,
-    pub decoded: control_protocol::Frame,
+    pub decoded: Option<control_protocol::Frame>,
+    pub ignored_reason: Option<String>,
 }
 
 #[cfg(target_os = "linux")]
@@ -366,7 +367,8 @@ impl ActuatorCanTransport {
             .map_err(|error| error.to_string())
     }
 
-    /// Reads and decodes one typed controller frame or CAN error.
+    /// Reads one controller frame. CAN error frames and unknown protocol IDs
+    /// are returned as evidence-only observations rather than link failures.
     ///
     /// # Errors
     ///
@@ -380,17 +382,27 @@ impl ActuatorCanTransport {
             .map_err(|error| error.to_string())?;
         let id = frame.raw_id();
         let data = frame.data().to_vec();
-        let decoded = control_protocol::decode(
-            u16::try_from(frame.raw_id()).map_err(|error| error.to_string())?,
-            frame.data(),
-        )
-        .map_err(|error| format!("{error:?}"))?;
+        let (decoded, ignored_reason) = if let socketcan::CanAnyFrame::Error(error) = frame {
+            (None, Some(format!("CAN error {error:?}")))
+        } else {
+            match u16::try_from(frame.raw_id()) {
+                Ok(id) => match control_protocol::decode(id, frame.data()) {
+                    Ok(decoded) => (Some(decoded), None),
+                    Err(error) => (None, Some(format!("unknown controller frame: {error:?}"))),
+                },
+                Err(error) => (
+                    None,
+                    Some(format!("controller frame ID is out of range: {error}")),
+                ),
+            }
+        };
         Ok(ReceivedControllerFrame {
             id,
             data,
             fd: matches!(frame, socketcan::CanAnyFrame::Fd(_)),
             bit_rate_switch: matches!(frame, socketcan::CanAnyFrame::Fd(ref fd) if fd.is_brs()),
             decoded,
+            ignored_reason,
         })
     }
 

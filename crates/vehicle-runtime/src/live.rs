@@ -7,11 +7,12 @@ use control_core::{
     CommandSource, Completion, ControllerRuntimeConfiguration, EnqueueResult, FeatureAuthority,
     PowertrainDecoder, RawCanEvidence, RunContext, RunManifest, RunRecord, RunWriter,
     RuntimeEffect, RuntimeEvent, RuntimeModel, RuntimeOutcome, RuntimeSession, StartupMode,
-    ValidatedBundle,
+    TimingModel, ValidatedBundle,
 };
 use control_protocol::{
     Command, Configuration, DiscoveryProbe, FallbackRequest, Frame, RuntimeLease,
 };
+use nix::errno::Errno;
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use vehicle_diagnostics::{
     AcceptedRadiatorSplitCommand, DiagnosticStatus, DiagnosticUnknownReason, DiagnosticsSnapshot,
@@ -21,6 +22,8 @@ use vehicle_diagnostics::{
 use crate::{ActuatorCanTransport, PowertrainCanReceiver};
 
 const COMMAND_ACK_SUMMARY_WINDOW: Duration = Duration::from_secs(2);
+const DISCOVERY_RETRY_INTERVAL: Duration = Duration::from_millis(250);
+const CONFIGURATION_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy)]
 struct SentCommand {
@@ -38,6 +41,7 @@ struct SentRuntimeLease {
 
 pub struct LiveRuntime {
     bundle: ValidatedBundle,
+    timing: TimingModel,
     controller: ControllerRuntimeConfiguration,
     powertrain: PowertrainCanReceiver,
     powertrain_decoder: PowertrainDecoder,
@@ -53,8 +57,11 @@ pub struct LiveRuntime {
     configured: bool,
     event_sequence: u64,
     discovery_sequence: u32,
+    last_discovery_sent_at: Option<Instant>,
+    configuration_sent_at: Option<Instant>,
     fallback_sequence: u32,
     signal_values: BTreeMap<String, (f64, u64, u64)>,
+    last_timestamp_source: Option<crate::TimestampSource>,
     last_safety_observed_ms: Option<u64>,
     storage_degraded: bool,
     last_sent_command: Option<SentCommand>,
@@ -162,6 +169,7 @@ impl LiveRuntime {
             return Err("runtime epoch zero is reserved".to_owned());
         }
         let controller = bundle.controller_runtime_configuration();
+        let timing = bundle.timing_model();
         let writer = RunWriter::start_with_context(
             bundle.run_storage_root(),
             run_id,
@@ -187,6 +195,7 @@ impl LiveRuntime {
         let powertrain_decoder = bundle.powertrain_decoder();
         let mut runtime = Self {
             bundle,
+            timing,
             controller,
             powertrain: boundaries.powertrain,
             powertrain_decoder,
@@ -201,9 +210,12 @@ impl LiveRuntime {
             capability_boot_session: None,
             configured: false,
             event_sequence: 0,
-            discovery_sequence: 1,
+            discovery_sequence: 0,
+            last_discovery_sent_at: None,
+            configuration_sent_at: None,
             fallback_sequence: 0,
             signal_values: BTreeMap::new(),
+            last_timestamp_source: None,
             last_safety_observed_ms: None,
             storage_degraded: false,
             last_sent_command: None,
@@ -215,12 +227,7 @@ impl LiveRuntime {
             last_sent_runtime_lease: None,
             last_matching_runtime_lease_ack_at: None,
         };
-        runtime.send_controller_frame(&Frame::DiscoveryProbe(DiscoveryProbe {
-            protocol_major: control_protocol::PROTOCOL_MAJOR,
-            protocol_minor: 0,
-            flags: 0,
-            probe_sequence: runtime.discovery_sequence,
-        }))?;
+        runtime.send_discovery_probe()?;
         runtime.record("runtime", "startup in controller-local fallback");
         Ok(runtime)
     }
@@ -234,8 +241,9 @@ impl LiveRuntime {
     /// Returns an error for poll, receive, protocol, transmit, or diagnostics
     /// state failures.
     pub fn run_cycle(&mut self) -> Result<(), String> {
+        self.reconcile_controller()?;
         let cycle_started = Instant::now();
-        let deadline = cycle_started + Duration::from_millis(self.bundle.cycle_ms());
+        let deadline = cycle_started + Duration::from_millis(self.timing.cycle_ms);
         for _ in 0..64 {
             if Instant::now() >= deadline || !self.poll_once(PollTimeout::ZERO)? {
                 break;
@@ -260,6 +268,7 @@ impl LiveRuntime {
                 break;
             }
         }
+        self.reconcile_controller()?;
         self.update_diagnostics()
     }
 
@@ -269,8 +278,10 @@ impl LiveRuntime {
                 PollFd::new(self.powertrain.borrowed_fd(), PollFlags::POLLIN),
                 PollFd::new(self.actuator.borrowed_fd(), PollFlags::POLLIN),
             ];
-            if poll(&mut descriptors, timeout).map_err(|error| error.to_string())? == 0 {
-                return Ok(false);
+            match poll(&mut descriptors, timeout) {
+                Ok(0) | Err(Errno::EINTR) => return Ok(false),
+                Ok(_) => {}
+                Err(error) => return Err(error.to_string()),
             }
             (
                 descriptors[0]
@@ -298,13 +309,16 @@ impl LiveRuntime {
                 return;
             }
         };
-        self.record(
-            "powertrain_timestamp_source",
-            &format!("{:?}", received.timestamp_source),
-        );
+        if self.last_timestamp_source != Some(received.timestamp_source) {
+            self.last_timestamp_source = Some(received.timestamp_source);
+            self.record(
+                "powertrain_timestamp_source",
+                &format!("{:?}", received.timestamp_source),
+            );
+        }
         self.event_sequence = self.event_sequence.saturating_add(1);
         let raw_sequence = self.event_sequence;
-        self.enqueue_record(RunRecord::raw_can(
+        self.enqueue_bulk_record(RunRecord::raw_can(
             self.event_sequence,
             RawCanEvidence {
                 monotonic_ns: self.monotonic_ms().saturating_mul(1_000_000),
@@ -367,7 +381,7 @@ impl LiveRuntime {
 
     fn ingest_model_snapshot(&mut self) -> Result<(), String> {
         let now_ms = self.monotonic_ms();
-        let maximum_age_ms = self.bundle.cycle_ms().saturating_mul(2);
+        let maximum_age_ms = self.timing.model_signals_stale_after_ms;
         let values = self
             .bundle
             .model_input_signals()
@@ -416,6 +430,47 @@ impl LiveRuntime {
         }
     }
 
+    fn reconcile_controller(&mut self) -> Result<(), String> {
+        if self.configured {
+            return Ok(());
+        }
+        let now = Instant::now();
+        if self.capability_boot_session.is_some() {
+            if self.configuration_sent_at.is_none_or(|sent| {
+                now.saturating_duration_since(sent) >= CONFIGURATION_RETRY_INTERVAL
+            }) {
+                self.configure_reconciled_controller()?;
+            }
+        } else if self
+            .last_discovery_sent_at
+            .is_none_or(|sent| now.saturating_duration_since(sent) >= DISCOVERY_RETRY_INTERVAL)
+        {
+            self.send_discovery_probe()?;
+        }
+        Ok(())
+    }
+
+    fn send_discovery_probe(&mut self) -> Result<(), String> {
+        self.discovery_sequence = self.discovery_sequence.wrapping_add(1).max(1);
+        self.send_controller_frame(&Frame::DiscoveryProbe(DiscoveryProbe {
+            protocol_major: control_protocol::PROTOCOL_MAJOR,
+            protocol_minor: 0,
+            flags: 0,
+            probe_sequence: self.discovery_sequence,
+        }))?;
+        self.last_discovery_sent_at = Some(Instant::now());
+        Ok(())
+    }
+
+    fn reset_controller_reconciliation(&mut self) {
+        self.clear_controller_diagnostics();
+        self.boot_session = None;
+        self.announced_boot_session = None;
+        self.capability_boot_session = None;
+        self.configured = false;
+        self.configuration_sent_at = None;
+    }
+
     fn receive_controller(&mut self) -> Result<(), String> {
         let received = match self.actuator.receive() {
             Ok(frame) => frame,
@@ -429,7 +484,7 @@ impl LiveRuntime {
             }
         };
         self.event_sequence = self.event_sequence.saturating_add(1);
-        self.enqueue_record(RunRecord::raw_can(
+        self.enqueue_bulk_record(RunRecord::raw_can(
             self.event_sequence,
             RawCanEvidence {
                 monotonic_ns: self.monotonic_ms().saturating_mul(1_000_000),
@@ -443,7 +498,12 @@ impl LiveRuntime {
                 hardware_timestamp_ns: None,
             },
         ));
-        let frame = received.decoded;
+        let Some(frame) = received.decoded else {
+            if let Some(reason) = received.ignored_reason {
+                self.record("actuator_can_ignored", &reason);
+            }
+            return Ok(());
+        };
         match frame {
             Frame::NodeAnnounce { node, message } => {
                 let valid = node == self.controller.address
@@ -456,8 +516,13 @@ impl LiveRuntime {
                         || message.configuration_generation
                             == self.controller.configuration_generation);
                 if valid {
-                    if self.boot_session != Some(message.boot_session) {
+                    let session_changed = self
+                        .boot_session
+                        .is_some_and(|session| session != message.boot_session);
+                    let was_configured = self.configured;
+                    if session_changed {
                         self.clear_controller_diagnostics();
+                        self.configuration_sent_at = None;
                     }
                     if self.writer.as_ref().is_some_and(|writer| {
                         writer.record_firmware_generation(message.firmware_generation)
@@ -469,13 +534,15 @@ impl LiveRuntime {
                     self.announced_boot_session = Some(message.boot_session);
                     self.capability_boot_session = None;
                     self.configured = false;
+                    self.configuration_sent_at = None;
+                    if session_changed || was_configured {
+                        self.ingest(RuntimeEvent::ControllerUnavailable {
+                            monotonic_ms: self.monotonic_ms(),
+                        })?;
+                    }
                 } else {
                     self.record("controller_announce_rejected", &format!("{message:?}"));
-                    self.clear_controller_diagnostics();
-                    self.boot_session = None;
-                    self.announced_boot_session = None;
-                    self.capability_boot_session = None;
-                    self.configured = false;
+                    self.reset_controller_reconciliation();
                     self.ingest(RuntimeEvent::ControllerUnavailable {
                         monotonic_ms: self.monotonic_ms(),
                     })?;
@@ -494,31 +561,41 @@ impl LiveRuntime {
                     self.configure_reconciled_controller()?;
                 } else {
                     self.record("controller_capability_rejected", &format!("{message:?}"));
+                    self.reset_controller_reconciliation();
+                    self.ingest(RuntimeEvent::ControllerUnavailable {
+                        monotonic_ms: self.monotonic_ms(),
+                    })?;
+                }
+            }
+            Frame::ConfigurationAck { node, message } if node == self.controller.address => {
+                let accepted = Some(message.boot_session) == self.boot_session
+                    && message.configuration_generation == self.controller.configuration_generation
+                    && message.digest_prefix == self.controller.digest_prefix
+                    && message.result == 1;
+                if accepted {
+                    self.configured = true;
+                    self.configuration_sent_at = None;
+                    self.ingest(RuntimeEvent::ControllerTruth {
+                        monotonic_ms: self.monotonic_ms(),
+                        boot_session: message.boot_session,
+                        configuration_generation: message.configuration_generation,
+                        identity_matches: true,
+                    })?;
+                } else {
+                    self.record("controller_configuration_rejected", &format!("{message:?}"));
+                    self.configured = false;
+                    self.configuration_sent_at = None;
                     self.clear_controller_diagnostics();
                     self.ingest(RuntimeEvent::ControllerUnavailable {
                         monotonic_ms: self.monotonic_ms(),
                     })?;
                 }
             }
-            Frame::ConfigurationAck { node, message }
-                if node == self.controller.address
-                    && Some(message.boot_session) == self.boot_session
-                    && message.configuration_generation
-                        == self.controller.configuration_generation
-                    && message.digest_prefix == self.controller.digest_prefix
-                    && message.result == 1 =>
-            {
-                self.configured = true;
-                self.ingest(RuntimeEvent::ControllerTruth {
-                    monotonic_ms: self.monotonic_ms(),
-                    boot_session: message.boot_session,
-                    configuration_generation: message.configuration_generation,
-                    identity_matches: true,
-                })?;
-            }
-            Frame::Heartbeat { node, message }
-                if node == self.controller.address && self.configured =>
-            {
+            Frame::Heartbeat { node, message } if node == self.controller.address => {
+                if !self.configured {
+                    self.record("controller_heartbeat_ignored", &format!("{message:?}"));
+                    return Ok(());
+                }
                 let state_consistent = match message.state_flags {
                     1 => message.current_epoch == 0 || message.current_epoch == self.epoch,
                     2 => message.current_epoch == self.epoch,
@@ -529,7 +606,11 @@ impl LiveRuntime {
                     && message.capability_generation == self.controller.capability_generation
                     && state_consistent;
                 if !truth_matches {
-                    self.clear_controller_diagnostics();
+                    self.reset_controller_reconciliation();
+                    self.ingest(RuntimeEvent::ControllerUnavailable {
+                        monotonic_ms: self.monotonic_ms(),
+                    })?;
+                    return Ok(());
                 }
                 self.ingest(RuntimeEvent::ControllerTruth {
                     monotonic_ms: self.monotonic_ms(),
@@ -595,11 +676,14 @@ impl LiveRuntime {
                     self.last_matching_runtime_lease_ack_at = Some(Instant::now());
                 }
             }
-            Frame::FaultReport { node, .. } if node == self.controller.address => {
-                self.clear_controller_diagnostics();
-                self.ingest(RuntimeEvent::SharedHardFault {
-                    monotonic_ms: self.monotonic_ms(),
-                })?;
+            Frame::FaultReport { node, message } if node == self.controller.address => {
+                self.record("controller_fault", &format!("{message:?}"));
+                if message.severity >= 3 {
+                    self.clear_controller_diagnostics();
+                    self.ingest(RuntimeEvent::SharedHardFault {
+                        monotonic_ms: self.monotonic_ms(),
+                    })?;
+                }
             }
             _ => {}
         }
@@ -633,7 +717,9 @@ impl LiveRuntime {
                     .protection_slew_basis_points_per_second,
                 digest_prefix: self.controller.digest_prefix,
             },
-        })
+        })?;
+        self.configuration_sent_at = Some(Instant::now());
+        Ok(())
     }
 
     fn ingest(&mut self, event: RuntimeEvent) -> Result<(), String> {
@@ -766,7 +852,7 @@ impl LiveRuntime {
             control_protocol::encode(frame, &mut bytes).map_err(|error| format!("{error:?}"))?;
         self.actuator.send(frame)?;
         self.event_sequence = self.event_sequence.saturating_add(1);
-        self.enqueue_record(RunRecord::raw_can(
+        self.enqueue_bulk_record(RunRecord::raw_can(
             self.event_sequence,
             RawCanEvidence {
                 monotonic_ns: self.monotonic_ms().saturating_mul(1_000_000),
@@ -788,6 +874,16 @@ impl LiveRuntime {
             .writer
             .as_ref()
             .is_some_and(|writer| writer.enqueue(record) == EnqueueResult::Degraded)
+        {
+            self.storage_degraded = true;
+        }
+    }
+
+    fn enqueue_bulk_record(&mut self, record: RunRecord) {
+        if self
+            .writer
+            .as_ref()
+            .is_some_and(|writer| writer.enqueue_bulk(record) == EnqueueResult::Degraded)
         {
             self.storage_degraded = true;
         }

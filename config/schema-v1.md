@@ -15,16 +15,20 @@ example before commissioning.
 Validation rejects duplicate actuator ownership, invalid identities,
 nonmonotonic 3x3 policy tables, split or slew values beyond absolute code
 bounds, timing/ordering violations, insufficient Run free-space thresholds,
-model ABI mismatch, and mode mismatch. Environment variables may supply only
-deployment paths and secrets, never control behavior.
+model ABI mismatch, and mode mismatch. Runtime freshness windows are explicit:
+input/model evidence uses its configured age, while controller truth is bounded
+by two heartbeat periods and the controller runtime lease. The input window
+must exceed the documented 200 ms powertrain temperature broadcast period.
+Environment variables may supply only deployment paths and secrets, never
+control behavior.
 
 The required `powertrain.cantcu` table is tagged by `mode`. `disabled` accepts
 no base ID. `default` requires the commissioned decimal base ID for CANTCU's
 seven-frame Default CAN Datastream. Validation rejects standard-ID overflow or
 overlap with every Haltech Broadcast v2 ID decoded by this generation.
 
-The `sync` section declares spool ownership, retention, home interface,
-expected default gateway, home API URL, and credential path. Home presence means
-the configured Linux interface is up and its default route uses the configured
-gateway. Periodic HTTP retry recovers missed notifications but does not redefine
-home presence.
+The `sync` section declares spool ownership, acknowledged and incomplete Run
+retention counts, home interface, expected default gateway, home API URL, and
+credential path. Home presence means the configured Linux interface is up and
+its default route uses the configured gateway. Periodic HTTP retry recovers
+missed notifications but does not redefine home presence.

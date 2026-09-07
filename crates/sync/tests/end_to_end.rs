@@ -172,6 +172,7 @@ fn production_http_upload_trains_and_stages_exact_model() {
     let configuration = SyncConfiguration {
         spool_root: spool,
         retention_count: 2,
+        incomplete_retention_count: 2,
         home_interface: "test-home".to_owned(),
         expected_default_gateway: "127.0.0.1".to_owned(),
         home_api_url: base_url.clone(),

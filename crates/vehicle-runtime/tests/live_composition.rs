@@ -234,6 +234,9 @@ mode = "live"
 
 [runtime]
 cycle_ms = 20
+input_stale_after_ms = 250
+model_signals_stale_after_ms = 250
+controller_truth_stale_after_ms = 80
 
 [powertrain]
 decoder_generation = 1
@@ -257,7 +260,7 @@ direction = 1
 runtime_lease_ms = 100
 command_lease_ms = 50
 heartbeat_period_ms = 20
-acknowledgement_deadline_ms = 20
+acknowledgement_deadline_ms = 25
 normal_slew_basis_points_per_second = 1000
 protection_slew_basis_points_per_second = 2000
 digest_prefix = 1
@@ -297,6 +300,7 @@ socket = "{run_root}/diagnostics.sock"
 [sync]
 spool_root = "{run_root}"
 retention_count = 2
+incomplete_retention_count = 2
 home_interface = "home0"
 expected_default_gateway = "192.0.2.1"
 home_api_url = "https://home.invalid"

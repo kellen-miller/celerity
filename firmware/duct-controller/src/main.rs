@@ -105,6 +105,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
     let mut acknowledgement_sequence = 0_u32;
     let mut heartbeat_sequence = 0_u32;
     let mut fault_sequence = 0_u32;
+    let mut consecutive_bus_errors = 0_u8;
     let mut next_heartbeat_ms = u64::from(state.heartbeat_period_ms().unwrap_or(100));
     loop {
         let now_ms = Instant::now().as_millis();
@@ -149,32 +150,41 @@ async fn main(_spawner: embassy_executor::Spawner) {
         }
 
         let envelope = match with_timeout(Duration::from_millis(10), can.read_fd()).await {
-            Ok(Ok(envelope)) => envelope,
-            Err(_) => continue,
+            Ok(Ok(envelope)) => {
+                consecutive_bus_errors = 0;
+                envelope
+            }
+            Err(_) => {
+                consecutive_bus_errors = 0;
+                continue;
+            }
             Ok(Err(_bus_error)) => {
-                fault_sequence = fault_sequence.wrapping_add(1);
-                let fault = Frame::FaultReport {
-                    node: NODE_ADDRESS,
-                    message: FaultReport {
-                        boot_session,
-                        fault_sequence,
-                        fault_code: 1,
-                        severity: 2,
-                        flags: 0,
-                        related_epoch: state.current_epoch().unwrap_or(0),
-                        related_command_sequence: state.last_command_sequence().unwrap_or(0),
-                    },
-                };
-                let mut payload = [0_u8; 64];
-                if let Ok(encoded) = encode(&fault, &mut payload)
-                    && let Some(id) = StandardId::new(encoded.can_id)
-                    && let Some(frame) =
-                        <embassy_stm32::can::frame::FdFrame as embedded_can::Frame>::new(
-                            id,
-                            &payload[..encoded.len],
-                        )
-                {
-                    let _superseded = can.write_fd(&frame).await;
+                consecutive_bus_errors = consecutive_bus_errors.saturating_add(1);
+                if consecutive_bus_errors == 8 {
+                    fault_sequence = fault_sequence.wrapping_add(1);
+                    let fault = Frame::FaultReport {
+                        node: NODE_ADDRESS,
+                        message: FaultReport {
+                            boot_session,
+                            fault_sequence,
+                            fault_code: 1,
+                            severity: 3,
+                            flags: 0,
+                            related_epoch: state.current_epoch().unwrap_or(0),
+                            related_command_sequence: state.last_command_sequence().unwrap_or(0),
+                        },
+                    };
+                    let mut payload = [0_u8; 64];
+                    if let Ok(encoded) = encode(&fault, &mut payload)
+                        && let Some(id) = StandardId::new(encoded.can_id)
+                        && let Some(frame) =
+                            <embassy_stm32::can::frame::FdFrame as embedded_can::Frame>::new(
+                                id,
+                                &payload[..encoded.len],
+                            )
+                    {
+                        let _superseded = can.write_fd(&frame).await;
+                    }
                 }
                 continue;
             }

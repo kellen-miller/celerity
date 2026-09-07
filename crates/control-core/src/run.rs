@@ -1,8 +1,12 @@
 use std::{
     fs::{self, File},
-    io::{Read, Write},
+    io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc,
+        atomic::{AtomicU8, AtomicU64, Ordering},
+        mpsc,
+    },
     thread,
 };
 
@@ -27,7 +31,14 @@ pub enum Completion {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EnqueueResult {
     Accepted,
+    Dropped,
     Degraded,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RunChunk {
+    pub file: String,
+    pub sha256: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -178,6 +189,10 @@ pub struct RunManifest {
     pub last_sequence: Option<u64>,
     pub chunk_file: String,
     pub chunk_sha256: String,
+    #[serde(default)]
+    pub chunks: Vec<RunChunk>,
+    #[serde(default)]
+    pub dropped_record_count: u64,
     pub configuration_generation: u64,
     pub configuration_sha256: String,
     pub model_bundle_digest: Option<String>,
@@ -227,9 +242,15 @@ enum WorkerMessage {
 
 pub struct RunWriter {
     sender: Option<mpsc::SyncSender<WorkerMessage>>,
-    degraded_reason: Arc<Mutex<Option<&'static str>>>,
+    degraded_reason: Arc<AtomicU8>,
+    dropped_record_count: Arc<AtomicU64>,
     worker: Option<thread::JoinHandle<Result<RunManifest, RunError>>>,
 }
+
+const DEGRADE_NONE: u8 = 0;
+const DEGRADE_MINIMUM_FREE_SPACE: u8 = 1;
+const DEGRADE_QUEUE_FAILURE: u8 = 2;
+const CHUNK_ROTATION_BYTES: usize = 8 * 1024 * 1024;
 
 impl RunWriter {
     /// Starts the only Run writer worker and opens an append-only partial
@@ -270,38 +291,44 @@ impl RunWriter {
         fs::create_dir_all(root).map_err(io_error)?;
         let directory = root.join(run_id);
         fs::create_dir_all(&directory).map_err(io_error)?;
-        let degraded_reason = Arc::new(Mutex::new(None));
+        let degraded_reason = Arc::new(AtomicU8::new(DEGRADE_NONE));
         if fs4::available_space(root).map_err(io_error)? < minimum_free_bytes {
-            *degraded_reason.lock().map_err(lock_error)? = Some("minimum_free_space");
+            degraded_reason.store(DEGRADE_MINIMUM_FREE_SPACE, Ordering::Release);
         }
 
         let (sender, receiver) = mpsc::sync_channel(queue_capacity);
         let worker_degraded = Arc::clone(&degraded_reason);
+        let dropped_record_count = Arc::new(AtomicU64::new(0));
+        let worker_dropped_record_count = Arc::clone(&dropped_record_count);
         let owned_run_id = run_id.to_owned();
         let worker = thread::Builder::new()
             .name("celerity-run-writer".to_owned())
-            .spawn(move || write_run(directory, owned_run_id, context, receiver, worker_degraded))
+            .spawn(move || {
+                write_run(
+                    directory,
+                    owned_run_id,
+                    context,
+                    receiver,
+                    worker_degraded,
+                    worker_dropped_record_count,
+                )
+            })
             .map_err(io_error)?;
         Ok(Self {
             sender: Some(sender),
             degraded_reason,
+            dropped_record_count,
             worker: Some(worker),
         })
     }
 
     #[must_use]
     pub fn record_firmware_generation(&self, generation: u32) -> EnqueueResult {
-        if self
-            .degraded_reason
-            .lock()
-            .map_or(true, |reason| reason.is_some())
-        {
+        if self.degraded_reason.load(Ordering::Acquire) != DEGRADE_NONE {
             return EnqueueResult::Degraded;
         }
         let Some(sender) = &self.sender else {
-            if let Ok(mut reason) = self.degraded_reason.lock() {
-                *reason = Some("writer_queue_failure");
-            }
+            self.mark_degraded(DEGRADE_QUEUE_FAILURE);
             return EnqueueResult::Degraded;
         };
         if sender
@@ -310,35 +337,42 @@ impl RunWriter {
         {
             EnqueueResult::Accepted
         } else {
-            if let Ok(mut reason) = self.degraded_reason.lock() {
-                *reason = Some("writer_queue_failure");
-            }
+            self.mark_degraded(DEGRADE_QUEUE_FAILURE);
             EnqueueResult::Degraded
         }
     }
 
     #[must_use]
     pub fn enqueue(&self, record: RunRecord) -> EnqueueResult {
-        if self
-            .degraded_reason
-            .lock()
-            .map_or(true, |reason| reason.is_some())
-        {
+        if self.degraded_reason.load(Ordering::Acquire) != DEGRADE_NONE {
             return EnqueueResult::Degraded;
         }
         let Some(sender) = &self.sender else {
-            if let Ok(mut reason) = self.degraded_reason.lock() {
-                *reason = Some("writer_queue_failure");
-            }
+            self.mark_degraded(DEGRADE_QUEUE_FAILURE);
             return EnqueueResult::Degraded;
         };
         if sender.try_send(WorkerMessage::Record(record)).is_ok() {
             EnqueueResult::Accepted
         } else {
-            if let Ok(mut reason) = self.degraded_reason.lock() {
-                *reason = Some("writer_queue_failure");
-            }
+            self.mark_degraded(DEGRADE_QUEUE_FAILURE);
             EnqueueResult::Degraded
+        }
+    }
+
+    #[must_use]
+    pub fn enqueue_bulk(&self, record: RunRecord) -> EnqueueResult {
+        if self.degraded_reason.load(Ordering::Acquire) != DEGRADE_NONE {
+            return EnqueueResult::Degraded;
+        }
+        let Some(sender) = &self.sender else {
+            self.mark_degraded(DEGRADE_QUEUE_FAILURE);
+            return EnqueueResult::Degraded;
+        };
+        if sender.try_send(WorkerMessage::Record(record)).is_ok() {
+            EnqueueResult::Accepted
+        } else {
+            self.dropped_record_count.fetch_add(1, Ordering::Relaxed);
+            EnqueueResult::Dropped
         }
     }
 
@@ -364,6 +398,15 @@ impl RunWriter {
             .join()
             .map_err(|_| RunError("writer worker panicked".to_owned()))?
     }
+
+    fn mark_degraded(&self, reason: u8) {
+        let _ = self.degraded_reason.compare_exchange(
+            DEGRADE_NONE,
+            reason,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
 }
 
 fn write_run(
@@ -371,13 +414,17 @@ fn write_run(
     run_id: String,
     mut context: RunContext,
     receiver: mpsc::Receiver<WorkerMessage>,
-    degraded_reason: Arc<Mutex<Option<&'static str>>>,
+    degraded_reason: Arc<AtomicU8>,
+    dropped_record_count: Arc<AtomicU64>,
 ) -> Result<RunManifest, RunError> {
-    let partial_path = directory.join("events.chunk.partial");
-    let mut chunk = File::create(&partial_path).map_err(io_error)?;
+    let mut chunk_index = 0;
+    let mut partial_paths = vec![partial_chunk_path(&directory, chunk_index)];
+    let mut chunk = BufWriter::new(File::create(&partial_paths[0]).map_err(io_error)?);
+    let mut chunk_bytes = 0_usize;
     let mut first_sequence = None;
     let mut last_sequence = None;
     let mut local_reason = None;
+    let mut sealed = false;
 
     while let Ok(message) = receiver.recv() {
         match message {
@@ -402,32 +449,69 @@ fn write_run(
                 event
                     .encode_length_delimited(&mut encoded)
                     .map_err(|error| RunError(error.to_string()))?;
+                if chunk_bytes > 0
+                    && chunk_bytes.saturating_add(encoded.len()) > CHUNK_ROTATION_BYTES
+                {
+                    flush_chunk(&mut chunk)?;
+                    chunk_index += 1;
+                    let path = partial_chunk_path(&directory, chunk_index);
+                    partial_paths.push(path.clone());
+                    chunk = BufWriter::new(File::create(path).map_err(io_error)?);
+                    chunk_bytes = 0;
+                }
                 chunk.write_all(&encoded).map_err(io_error)?;
+                chunk_bytes = chunk_bytes.saturating_add(encoded.len());
             }
             WorkerMessage::FirmwareGeneration(generation) => {
                 context.firmware_generation = generation;
             }
-            WorkerMessage::Seal => break,
+            WorkerMessage::Seal => {
+                sealed = true;
+                break;
+            }
         }
     }
-    chunk.sync_all().map_err(io_error)?;
+    if !sealed {
+        local_reason = Some("writer_channel_closed");
+    }
+    flush_chunk(&mut chunk)?;
     drop(chunk);
 
-    let shared_reason = *degraded_reason.lock().map_err(lock_error)?;
-    let reason = shared_reason.or(local_reason);
+    let reason = degraded_reason_text(degraded_reason.load(Ordering::Acquire)).or(local_reason);
     let completion = if reason.is_some() {
         Completion::Incomplete
     } else {
         Completion::Complete
     };
-    let final_chunk_path = if completion == Completion::Complete {
-        let final_path = directory.join("events.chunk");
-        fs::rename(&partial_path, &final_path).map_err(io_error)?;
-        final_path
+    let chunk_paths = if completion == Completion::Complete {
+        partial_paths
+            .iter()
+            .enumerate()
+            .map(|(index, partial)| {
+                let final_path = final_chunk_path(&directory, index);
+                fs::rename(partial, &final_path).map_err(io_error)?;
+                Ok(final_path)
+            })
+            .collect::<Result<Vec<_>, RunError>>()?
     } else {
-        partial_path
+        partial_paths
     };
-    let chunk_sha256 = digest_file(&final_chunk_path)?;
+    let chunks = chunk_paths
+        .iter()
+        .map(|path| {
+            Ok(RunChunk {
+                file: path
+                    .file_name()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .unwrap_or("events.chunk.partial")
+                    .to_owned(),
+                sha256: digest_file(path)?,
+            })
+        })
+        .collect::<Result<Vec<_>, RunError>>()?;
+    let first_chunk = chunks
+        .first()
+        .ok_or_else(|| RunError("Run has no evidence chunks".to_owned()))?;
     let manifest = RunManifest {
         schema_version: 1,
         run_id,
@@ -435,12 +519,10 @@ fn write_run(
         incomplete_reason: reason.map(str::to_owned),
         first_sequence,
         last_sequence,
-        chunk_file: final_chunk_path
-            .file_name()
-            .and_then(std::ffi::OsStr::to_str)
-            .unwrap_or("events.chunk.partial")
-            .to_owned(),
-        chunk_sha256,
+        chunk_file: first_chunk.file.clone(),
+        chunk_sha256: first_chunk.sha256.clone(),
+        chunks,
+        dropped_record_count: dropped_record_count.load(Ordering::Acquire),
         configuration_generation: context.configuration_generation,
         configuration_sha256: context.configuration_sha256,
         model_bundle_digest: context.model_bundle_digest,
@@ -458,6 +540,35 @@ fn write_run(
     Ok(manifest)
 }
 
+fn partial_chunk_path(directory: &Path, index: usize) -> PathBuf {
+    if index == 0 {
+        directory.join("events.chunk.partial")
+    } else {
+        directory.join(format!("events-{index:03}.chunk.partial"))
+    }
+}
+
+fn final_chunk_path(directory: &Path, index: usize) -> PathBuf {
+    if index == 0 {
+        directory.join("events.chunk")
+    } else {
+        directory.join(format!("events-{index:03}.chunk"))
+    }
+}
+
+fn flush_chunk(chunk: &mut BufWriter<File>) -> Result<(), RunError> {
+    chunk.flush().map_err(io_error)?;
+    chunk.get_ref().sync_data().map_err(io_error)
+}
+
+fn degraded_reason_text(code: u8) -> Option<&'static str> {
+    match code {
+        DEGRADE_MINIMUM_FREE_SPACE => Some("minimum_free_space"),
+        DEGRADE_QUEUE_FAILURE => Some("writer_queue_failure"),
+        _ => None,
+    }
+}
+
 /// Recovers interrupted partial Runs by writing an explicit incomplete
 /// manifest while preserving the exact partial bytes.
 ///
@@ -466,6 +577,9 @@ fn write_run(
 /// Returns an error when the root cannot be read or a recovery manifest cannot
 /// be written.
 pub fn recover_incomplete_runs(root: &Path) -> Result<Vec<PathBuf>, RunError> {
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
     let mut directories = fs::read_dir(root)
         .map_err(io_error)?
         .filter_map(Result::ok)
@@ -475,9 +589,35 @@ pub fn recover_incomplete_runs(root: &Path) -> Result<Vec<PathBuf>, RunError> {
     directories.sort();
     let mut recovered = Vec::new();
     for directory in directories {
-        let partial = directory.join("events.chunk.partial");
         let manifest_path = directory.join("manifest.json");
-        if partial.exists() && !manifest_path.exists() {
+        let mut partials = fs::read_dir(&directory)
+            .map_err(io_error)?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .is_some_and(|name| name.ends_with(".chunk.partial"))
+            })
+            .collect::<Vec<_>>();
+        partials.sort();
+        if !partials.is_empty() && !manifest_path.exists() {
+            let chunks = partials
+                .iter()
+                .map(|path| {
+                    Ok(RunChunk {
+                        file: path
+                            .file_name()
+                            .and_then(std::ffi::OsStr::to_str)
+                            .unwrap_or("events.chunk.partial")
+                            .to_owned(),
+                        sha256: digest_file(path)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, RunError>>()?;
+            let first_chunk = chunks
+                .first()
+                .ok_or_else(|| RunError("recovered Run has no chunks".to_owned()))?;
             let manifest = RunManifest {
                 schema_version: 1,
                 run_id: directory
@@ -489,8 +629,10 @@ pub fn recover_incomplete_runs(root: &Path) -> Result<Vec<PathBuf>, RunError> {
                 incomplete_reason: Some("interrupted".to_owned()),
                 first_sequence: None,
                 last_sequence: None,
-                chunk_file: "events.chunk.partial".to_owned(),
-                chunk_sha256: digest_file(&partial)?,
+                chunk_file: first_chunk.file.clone(),
+                chunk_sha256: first_chunk.sha256.clone(),
+                chunks,
+                dropped_record_count: 0,
                 configuration_generation: 0,
                 configuration_sha256: String::new(),
                 model_bundle_digest: None,
@@ -524,30 +666,40 @@ pub fn replay_events(run_directory: &Path) -> Result<Vec<RuntimeEvent>, RunError
     if manifest.completion != Completion::Complete {
         return Err(RunError("incomplete Run cannot be replayed".to_owned()));
     }
-    let bytes = fs::read(run_directory.join(&manifest.chunk_file)).map_err(io_error)?;
-    if hex_bytes(&Sha256::digest(&bytes)) != manifest.chunk_sha256 {
-        return Err(RunError("chunk digest mismatch".to_owned()));
-    }
-    let mut input = bytes.as_slice();
     let mut events = Vec::new();
     let mut last_sequence = None;
-    while !input.is_empty() {
-        let stored = wire::RunEvent::decode_length_delimited(&mut input)
-            .map_err(|error| RunError(error.to_string()))?;
-        if last_sequence.is_some_and(|last| stored.sequence <= last) {
-            return Err(RunError("nonmonotonic replay sequence".to_owned()));
+    let chunks = if manifest.chunks.is_empty() {
+        vec![RunChunk {
+            file: manifest.chunk_file,
+            sha256: manifest.chunk_sha256,
+        }]
+    } else {
+        manifest.chunks
+    };
+    for chunk in chunks {
+        let bytes = fs::read(run_directory.join(&chunk.file)).map_err(io_error)?;
+        if hex_bytes(&Sha256::digest(&bytes)) != chunk.sha256 {
+            return Err(RunError("chunk digest mismatch".to_owned()));
         }
-        last_sequence = Some(stored.sequence);
-        if stored.source == "runtime_event" {
-            let Some(wire::run_event::Payload::LifecycleEvent(payload)) = stored.payload else {
-                return Err(RunError(
-                    "runtime event used the wrong Run payload".to_owned(),
-                ));
-            };
-            events.push(
-                serde_json::from_str(&payload.encoded)
-                    .map_err(|error| RunError(error.to_string()))?,
-            );
+        let mut input = bytes.as_slice();
+        while !input.is_empty() {
+            let stored = wire::RunEvent::decode_length_delimited(&mut input)
+                .map_err(|error| RunError(error.to_string()))?;
+            if last_sequence.is_some_and(|last| stored.sequence <= last) {
+                return Err(RunError("nonmonotonic replay sequence".to_owned()));
+            }
+            last_sequence = Some(stored.sequence);
+            if stored.source == "runtime_event" {
+                let Some(wire::run_event::Payload::LifecycleEvent(payload)) = stored.payload else {
+                    return Err(RunError(
+                        "runtime event used the wrong Run payload".to_owned(),
+                    ));
+                };
+                events.push(
+                    serde_json::from_str(&payload.encoded)
+                        .map_err(|error| RunError(error.to_string()))?,
+                );
+            }
         }
     }
     Ok(events)
@@ -591,10 +743,6 @@ fn hex_bytes(bytes: &[u8]) -> String {
 }
 
 fn io_error(error: std::io::Error) -> RunError {
-    RunError(error.to_string())
-}
-
-fn lock_error<T>(error: std::sync::PoisonError<T>) -> RunError {
     RunError(error.to_string())
 }
 

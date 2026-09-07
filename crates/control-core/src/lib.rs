@@ -10,7 +10,7 @@ mod run;
 mod scenario;
 
 pub use configuration::{
-    BundleError, ControllerRuntimeConfiguration, StartupMode, ValidatedBundle,
+    BundleError, ControllerRuntimeConfiguration, StartupMode, TimingModel, ValidatedBundle,
 };
 pub use controller::{ControllerEmulator, ControllerMode, EmulatorProvisioning, EmulatorResponse};
 pub use executor::{
@@ -30,8 +30,8 @@ pub use powertrain::{
     PowertrainSource,
 };
 pub use run::{
-    Completion, EnqueueResult, RawCanEvidence, RunContext, RunManifest, RunRecord, RunWriter,
-    recover_incomplete_runs, replay_events,
+    Completion, EnqueueResult, RawCanEvidence, RunChunk, RunContext, RunManifest, RunRecord,
+    RunWriter, recover_incomplete_runs, replay_events,
 };
 pub use scenario::{ScenarioError, SimulationScenario};
 

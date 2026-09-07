@@ -247,11 +247,15 @@ struct ControllerTruth {
 }
 
 struct ExecutorState {
-    maximum_input_age_ms: u64,
+    input_stale_after_ms: u64,
+    model_signals_stale_after_ms: u64,
+    controller_truth_stale_after_ms: u64,
+    acknowledgement_deadline_ms: u16,
     last_monotonic_ms: Option<u64>,
     input: Option<InputSnapshot>,
     model_snapshot_at_ms: Option<u64>,
     controller: Option<ControllerTruth>,
+    last_controller_boot_session: Option<u32>,
     acknowledged_boot_session: Option<u32>,
     acknowledged_at_ms: Option<u64>,
     last_command: Option<(u32, u16, CommandSource)>,
@@ -272,12 +276,17 @@ struct ExecutorState {
 
 impl ExecutorState {
     fn new(bundle: &ValidatedBundle, model: Option<RuntimeModel>) -> Self {
+        let timing = bundle.timing_model();
         Self {
-            maximum_input_age_ms: bundle.cycle_ms().saturating_mul(2),
+            input_stale_after_ms: timing.input_stale_after_ms,
+            model_signals_stale_after_ms: timing.model_signals_stale_after_ms,
+            controller_truth_stale_after_ms: timing.controller_truth_stale_after_ms,
+            acknowledgement_deadline_ms: timing.acknowledgement_deadline_ms,
             last_monotonic_ms: None,
             input: None,
             model_snapshot_at_ms: None,
             controller: None,
+            last_controller_boot_session: None,
             acknowledged_boot_session: None,
             acknowledged_at_ms: None,
             last_command: None,
@@ -355,15 +364,17 @@ impl ExecutorState {
                 ..
             } => {
                 if self
-                    .controller
-                    .is_some_and(|controller| controller.boot_session != boot_session)
+                    .last_controller_boot_session
+                    .is_some_and(|last| last != boot_session)
                 {
+                    self.hard_fault_latched = false;
                     self.acknowledged_boot_session = None;
                     self.acknowledged_at_ms = None;
                     self.accepted_basis_points = None;
                     self.abort_experiment(ExperimentAbort::AuthorityLost);
                     self.select_fallback();
                 }
+                self.last_controller_boot_session = Some(boot_session);
                 self.controller = Some(ControllerTruth {
                     monotonic_ms,
                     boot_session,
@@ -442,13 +453,14 @@ impl ExecutorState {
             return;
         };
         let healthy = now_ms.saturating_sub(input.observed_monotonic_ms)
-            <= self.maximum_input_age_ms
-            && now_ms.saturating_sub(controller.monotonic_ms) <= self.maximum_input_age_ms
+            <= self.input_stale_after_ms
+            && now_ms.saturating_sub(controller.monotonic_ms)
+                <= self.controller_truth_stale_after_ms
             && controller.identity_matches
             && controller.configuration_generation > 0;
         if !healthy {
             let reason =
-                if now_ms.saturating_sub(input.observed_monotonic_ms) > self.maximum_input_age_ms {
+                if now_ms.saturating_sub(input.observed_monotonic_ms) > self.input_stale_after_ms {
                     ExperimentAbort::StaleInput
                 } else {
                     ExperimentAbort::AuthorityLost
@@ -459,7 +471,7 @@ impl ExecutorState {
         }
         if self.feature_authority == FeatureAuthority::Active
             && self.acknowledged_at_ms.is_none_or(|acknowledged| {
-                now_ms.saturating_sub(acknowledged) > self.maximum_input_age_ms
+                now_ms.saturating_sub(acknowledged) > u64::from(self.acknowledgement_deadline_ms)
             })
         {
             self.select_fallback();
@@ -468,9 +480,9 @@ impl ExecutorState {
 
         let deterministic = bundle.deterministic_command(input.coolant_c, input.iat_c);
         let current = self.accepted_basis_points.unwrap_or(deterministic);
-        let model_fresh = self
-            .model_snapshot_at_ms
-            .is_some_and(|observed| now_ms.saturating_sub(observed) <= self.maximum_input_age_ms);
+        let model_fresh = self.model_snapshot_at_ms.is_some_and(|observed| {
+            now_ms.saturating_sub(observed) <= self.model_signals_stale_after_ms
+        });
         let (mut command, mut source) = self.model.as_ref().filter(|_| model_fresh).map_or(
             (deterministic, CommandSource::Deterministic),
             |model| match model.select(bundle, deterministic, current, remaining_cycle_ns) {

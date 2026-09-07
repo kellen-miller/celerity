@@ -7,6 +7,8 @@ use crate::{
     ExperimentPlan, PowertrainDecodeError, PowertrainDecoder, powertrain::CantcuReception,
 };
 
+const POWERTRAIN_TEMPERATURE_PERIOD_MS: u64 = 200;
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum StartupMode {
@@ -65,7 +67,26 @@ pub struct ValidatedBundle {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct RuntimeConfiguration {
-    cycle_ms: u64,
+    #[serde(rename = "cycle_ms")]
+    cycle: u64,
+    #[serde(rename = "input_stale_after_ms")]
+    input_stale_after: u64,
+    #[serde(rename = "model_signals_stale_after_ms")]
+    model_signals_stale_after: u64,
+    #[serde(rename = "controller_truth_stale_after_ms")]
+    controller_truth_stale_after: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TimingModel {
+    pub cycle_ms: u64,
+    pub input_stale_after_ms: u64,
+    pub model_signals_stale_after_ms: u64,
+    pub controller_truth_stale_after_ms: u64,
+    pub acknowledgement_deadline_ms: u16,
+    pub command_lease_ms: u16,
+    pub heartbeat_period_ms: u16,
+    pub runtime_lease_ms: u16,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -171,6 +192,7 @@ struct DiagnosticsConfiguration {
 struct SyncConfiguration {
     spool_root: String,
     retention_count: usize,
+    incomplete_retention_count: usize,
     home_interface: String,
     expected_default_gateway: String,
     home_api_url: String,
@@ -300,7 +322,22 @@ impl ValidatedBundle {
 
     #[must_use]
     pub const fn cycle_ms(&self) -> u64 {
-        self.runtime.cycle_ms
+        self.runtime.cycle
+    }
+
+    #[must_use]
+    pub fn timing_model(&self) -> TimingModel {
+        let controller = &self.controllers["duct"];
+        TimingModel {
+            cycle_ms: self.runtime.cycle,
+            input_stale_after_ms: self.runtime.input_stale_after,
+            model_signals_stale_after_ms: self.runtime.model_signals_stale_after,
+            controller_truth_stale_after_ms: self.runtime.controller_truth_stale_after,
+            acknowledgement_deadline_ms: controller.acknowledgement_deadline_ms,
+            command_lease_ms: controller.command_lease_ms,
+            heartbeat_period_ms: controller.heartbeat_period_ms,
+            runtime_lease_ms: controller.runtime_lease_ms,
+        }
     }
 
     #[must_use]
@@ -412,7 +449,12 @@ impl ValidatedBundle {
         ) {
             return Err(BundleError::CompositionModeMismatch);
         }
-        if self.runtime.cycle_ms == 0 || self.powertrain.decoder_generation == 0 {
+        if self.runtime.cycle == 0
+            || self.runtime.input_stale_after == 0
+            || self.runtime.model_signals_stale_after == 0
+            || self.runtime.controller_truth_stale_after == 0
+            || self.powertrain.decoder_generation == 0
+        {
             return Err(BundleError::InvalidRuntimeTiming);
         }
 
@@ -477,6 +519,16 @@ impl ValidatedBundle {
         {
             return Err(BundleError::InvalidRuntimeTiming);
         }
+        let heartbeat_window_ms = u64::from(controller.heartbeat_period_ms).saturating_mul(2);
+        if self.runtime.input_stale_after <= POWERTRAIN_TEMPERATURE_PERIOD_MS
+            || self.runtime.model_signals_stale_after <= POWERTRAIN_TEMPERATURE_PERIOD_MS
+            || self.runtime.cycle >= u64::from(controller.acknowledgement_deadline_ms)
+            || controller.acknowledgement_deadline_ms >= controller.command_lease_ms
+            || heartbeat_window_ms >= self.runtime.controller_truth_stale_after
+            || self.runtime.controller_truth_stale_after >= u64::from(controller.runtime_lease_ms)
+        {
+            return Err(BundleError::InvalidRuntimeTiming);
+        }
         if self.model.slots_root.is_empty()
             || self.model.abi.is_empty()
             || self.model.input_signals.is_empty()
@@ -536,6 +588,7 @@ impl ValidatedBundle {
         }
         if self.sync.spool_root != self.run_storage.root
             || self.sync.retention_count == 0
+            || self.sync.incomplete_retention_count == 0
             || self.sync.home_interface.is_empty()
             || self.sync.expected_default_gateway.is_empty()
             || !self.sync.home_api_url.starts_with("https://")

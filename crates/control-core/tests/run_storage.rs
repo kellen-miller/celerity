@@ -43,6 +43,29 @@ fn sealed_run_has_exact_byte_checksum_and_monotonic_manifest() {
 }
 
 #[test]
+fn large_run_rotates_into_verified_chunks() {
+    let root = root("rotated-run");
+    let writer = RunWriter::start(&root, "run-rotated", 32, 0).expect("start writer");
+    let payload = "x".repeat(1024 * 1024);
+    for sequence in 1..=9 {
+        assert_eq!(
+            writer.enqueue(RunRecord::evidence(sequence, sequence, "bulk", &payload)),
+            EnqueueResult::Accepted
+        );
+    }
+
+    let manifest = writer.seal().expect("seal rotated run");
+    assert_eq!(manifest.completion, Completion::Complete);
+    assert!(manifest.chunks.len() >= 2);
+    assert!(
+        manifest
+            .chunks
+            .iter()
+            .all(|chunk| root.join("run-rotated").join(&chunk.file).is_file())
+    );
+}
+
+#[test]
 fn nonmonotonic_sequence_seals_explicitly_incomplete() {
     let root = root("nonmonotonic-run");
     let writer = RunWriter::start(&root, "run-2", 8, 0).expect("start writer");

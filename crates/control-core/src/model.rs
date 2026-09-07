@@ -2,7 +2,8 @@ use std::{collections::VecDeque, fs, path::Path, time::Instant};
 
 use crate::ValidatedBundle;
 
-use serde::Deserialize;
+use celerity_proto::celerity::v1::ModelBundleManifest;
+use prost::Message;
 use tract_onnx::prelude::{
     Framework, InferenceModelExt, IntoRunnable, Tensor, TypedRunnableModel, tvec,
 };
@@ -193,25 +194,6 @@ pub struct RuntimeModel {
     input_ranges: Vec<(f64, f64)>,
 }
 
-#[derive(Deserialize)]
-struct RuntimeModelManifest {
-    calibration_error: f64,
-    input_ranges: Vec<RuntimeInputRange>,
-    normalization: Vec<RuntimeNormalization>,
-}
-
-#[derive(Deserialize)]
-struct RuntimeInputRange {
-    minimum: f64,
-    maximum: f64,
-}
-
-#[derive(Deserialize)]
-struct RuntimeNormalization {
-    mean: f64,
-    scale: f64,
-}
-
 impl RuntimeModel {
     /// Loads the exact startup-selected graph against the model policy in the
     /// validated bundle. The returned model cannot be swapped after startup.
@@ -224,9 +206,11 @@ impl RuntimeModel {
         let manifest_path = path
             .parent()
             .ok_or_else(|| ModelError::Load("model has no parent directory".to_owned()))?
-            .join("manifest.json");
-        let metadata: RuntimeModelManifest = serde_json::from_slice(
-            &fs::read(manifest_path).map_err(|error| ModelError::Load(error.to_string()))?,
+            .join("manifest.pb");
+        let metadata = ModelBundleManifest::decode(
+            fs::read(manifest_path)
+                .map_err(|error| ModelError::Load(error.to_string()))?
+                .as_slice(),
         )
         .map_err(|error| ModelError::Load(error.to_string()))?;
         let metadata_valid = metadata.calibration_error.is_finite()

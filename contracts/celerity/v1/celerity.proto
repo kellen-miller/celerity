@@ -1,0 +1,336 @@
+syntax = "proto3";
+
+package celerity.v1;
+
+// Canonical cross-language data contracts for Celerity.
+//
+// CAN byte layout and startup TOML remain transport/configuration adapters;
+// these messages define the data exchanged across language boundaries.
+
+message RunEvent {
+  uint32 schema_major = 1;
+  uint32 schema_minor = 2;
+  bytes run_id = 3;
+  uint64 sequence = 4;
+  uint64 monotonic_ns = 5;
+  optional uint64 source_monotonic_ns = 6;
+  uint64 ingestion_monotonic_ns = 7;
+  string source = 8;
+
+  oneof payload {
+    RawCanFrame raw_can = 20;
+    SignalObservation signal_observation = 21;
+    ConditionTransition condition_transition = 22;
+    AuthorityTransition authority_transition = 23;
+    ControlDecision control_decision = 24;
+    ExperimentEvent experiment_event = 25;
+    LifecycleEvent lifecycle_event = 26;
+    StorageEvent storage_event = 27;
+    TimeAnchor time_anchor = 28;
+    Annotation annotation = 29;
+  }
+}
+
+message RawCanFrame {
+  string channel = 1;
+  Direction direction = 2;
+  uint32 id = 3;
+  bool extended = 4;
+  bool fd = 5;
+  bool bit_rate_switch = 6;
+  bool error_state_indicator = 7;
+  bytes data = 8;
+  optional uint64 hardware_timestamp_ns = 9;
+  uint64 receive_overflow_count = 10;
+  uint64 dropped_count = 11;
+}
+
+message SignalObservation {
+  string signal = 1;
+  double value = 2;
+  string unit = 3;
+  string reference = 4;
+  Quality quality = 5;
+  string reason = 6;
+  uint64 source_event_sequence = 7;
+  uint64 decoder_generation = 8;
+  uint64 age_ns = 9;
+}
+
+message ConditionTransition {
+  string encoded = 1;
+}
+
+message AuthorityTransition {
+  string encoded = 1;
+}
+
+message ControlDecision {
+  string encoded = 1;
+}
+
+message ExperimentEvent {
+  string encoded = 1;
+}
+
+message LifecycleEvent {
+  string encoded = 1;
+}
+
+message StorageEvent {
+  string encoded = 1;
+}
+
+message TimeAnchor {
+  string encoded = 1;
+}
+
+message Annotation {
+  string encoded = 1;
+}
+
+enum Direction {
+  DIRECTION_UNSPECIFIED = 0;
+  DIRECTION_RECEIVE = 1;
+  DIRECTION_TRANSMIT = 2;
+}
+
+enum Quality {
+  QUALITY_UNSPECIFIED = 0;
+  QUALITY_VALID = 1;
+  QUALITY_INVALID_VALUE = 2;
+  QUALITY_UNKNOWN = 3;
+}
+
+message RunManifest {
+  uint32 schema_version = 1;
+  string run_id = 2;
+  Completion completion = 3;
+  optional string incomplete_reason = 4;
+  optional uint64 first_sequence = 5;
+  optional uint64 last_sequence = 6;
+  string chunk_file = 7;
+  string chunk_sha256 = 8;
+  repeated RunChunk chunks = 9;
+  uint64 dropped_record_count = 10;
+  uint64 configuration_generation = 11;
+  string configuration_sha256 = 12;
+  optional string model_bundle_digest = 13;
+  uint32 protocol_major = 14;
+  uint32 firmware_generation = 15;
+  uint64 decoder_generation = 16;
+  string model_abi = 17;
+  repeated string model_input_signals = 18;
+  uint64 model_history_length = 19;
+  uint64 sample_period_ms = 20;
+  repeated uint32 command_lattice = 21;
+  double maximum_calibration_error = 22;
+}
+
+message RunChunk {
+  string file = 1;
+  string sha256 = 2;
+}
+
+enum Completion {
+  COMPLETION_UNSPECIFIED = 0;
+  COMPLETION_COMPLETE = 1;
+  COMPLETION_INCOMPLETE = 2;
+}
+
+message Health {
+  string status = 1;
+}
+
+message ReconcileRequest {
+  uint32 schema_version = 1;
+  repeated string completed_run_digests = 2;
+  optional string active_model_digest = 3;
+  optional string staged_model_digest = 4;
+  repeated string rejected_model_digests = 5;
+}
+
+message ReconcileResponse {
+  repeated string missing_run_digests = 1;
+  optional string desired_model_digest = 2;
+}
+
+message CompletedRun {
+  string run_digest = 1;
+}
+
+message JobRequest {
+  repeated string run_digests = 1;
+  string recipe = 2;
+}
+
+message JobStarted {
+  string job_id = 1;
+  JobState state = 2;
+}
+
+message JobStatus {
+  string id = 1;
+  JobState state = 2;
+  string recipe = 3;
+  repeated string run_digests = 4;
+  optional int64 pid = 5;
+  optional string stdout_path = 6;
+  optional string stderr_path = 7;
+  optional string artifact_digest = 8;
+  optional string terminal_summary = 9;
+  string created_at = 10;
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_QUEUED = 1;
+  JOB_STATE_RUNNING = 2;
+  JOB_STATE_COMPLETED = 3;
+  JOB_STATE_NO_CHANGE = 4;
+  JOB_STATE_REJECTED = 5;
+  JOB_STATE_FAILED = 6;
+}
+
+message ModelBundleManifest {
+  uint32 schema_version = 1;
+  string onnx_sha256 = 2;
+  repeated string signal_order = 3;
+  repeated string units = 4;
+  uint64 sample_period_ms = 5;
+  uint64 history_length = 6;
+  repeated uint64 horizons = 7;
+  repeated string output_order = 8;
+  repeated uint32 command_lattice = 9;
+  ModelCompatibility compatibility = 10;
+  repeated ModelInputRange input_ranges = 11;
+  repeated ModelNormalization normalization = 12;
+  double calibration_error = 13;
+}
+
+message ModelCompatibility {
+  string model_abi = 1;
+  repeated uint64 input_shape = 2;
+  string derivation_digest = 3;
+  repeated string input_runs = 4;
+  double maximum_parity_error = 5;
+  double held_out_mse = 6;
+}
+
+message ModelInputRange {
+  double minimum = 1;
+  double maximum = 2;
+}
+
+message ModelNormalization {
+  double mean = 1;
+  double scale = 2;
+}
+
+message WebhookEvent {
+  uint32 schema_version = 1;
+  string event_id = 2;
+  WebhookEventType event_type = 3;
+  string occurred_at = 4;
+  optional string job_id = 5;
+  optional string artifact_digest = 6;
+  string summary = 7;
+}
+
+enum WebhookEventType {
+  WEBHOOK_EVENT_TYPE_UNSPECIFIED = 0;
+  WEBHOOK_EVENT_TYPE_TRAINING_FAILURE = 1;
+  WEBHOOK_EVENT_TYPE_CANDIDATE_REJECTION = 2;
+  WEBHOOK_EVENT_TYPE_DEMOTION = 3;
+  WEBHOOK_EVENT_TYPE_ROLLBACK = 4;
+}
+
+message DiagnosticsSnapshot {
+  uint32 schema_version = 1;
+  uint64 runtime_update_age_ms = 2;
+  uint64 runtime_update_stale_after_ms = 3;
+  GlobalAuthority global_authority = 4;
+  FeatureAuthority feature_authority = 5;
+  CommandSource command_source = 6;
+  optional AcceptedRadiatorSplitCommand accepted_radiator_split_command = 7;
+  optional ObservedTemperature coolant_temperature = 8;
+  optional ObservedTemperature intake_air_temperature = 9;
+  DiagnosticStatus controller_runtime_lease_health = 10;
+  DiagnosticStatus controller_command_ack_health = 11;
+  RunStorageHealth run_storage_health = 12;
+}
+
+enum GlobalAuthority {
+  GLOBAL_AUTHORITY_UNSPECIFIED = 0;
+  GLOBAL_AUTHORITY_FALLBACK = 1;
+  GLOBAL_AUTHORITY_ACTIVE = 2;
+  GLOBAL_AUTHORITY_HARD_FAULT = 3;
+}
+
+enum FeatureAuthority {
+  FEATURE_AUTHORITY_UNSPECIFIED = 0;
+  FEATURE_AUTHORITY_FALLBACK = 1;
+  FEATURE_AUTHORITY_ARMING = 2;
+  FEATURE_AUTHORITY_ACTIVE = 3;
+}
+
+enum CommandSource {
+  COMMAND_SOURCE_UNSPECIFIED = 0;
+  COMMAND_SOURCE_CONTROLLER_LOCAL_FALLBACK = 1;
+  COMMAND_SOURCE_DETERMINISTIC = 2;
+  COMMAND_SOURCE_MODEL_OPTIMIZED = 3;
+  COMMAND_SOURCE_EXPERIMENT = 4;
+}
+
+message DiagnosticStatus {
+  DiagnosticHealthState state = 1;
+  optional DiagnosticUnknownReason reason = 2;
+}
+
+enum DiagnosticHealthState {
+  DIAGNOSTIC_HEALTH_STATE_UNSPECIFIED = 0;
+  DIAGNOSTIC_HEALTH_STATE_UNKNOWN = 1;
+  DIAGNOSTIC_HEALTH_STATE_HEALTHY = 2;
+  DIAGNOSTIC_HEALTH_STATE_UNHEALTHY = 3;
+}
+
+enum DiagnosticUnknownReason {
+  DIAGNOSTIC_UNKNOWN_REASON_UNSPECIFIED = 0;
+  DIAGNOSTIC_UNKNOWN_REASON_NEVER_OBSERVED = 1;
+  DIAGNOSTIC_UNKNOWN_REASON_NOT_EXPECTED_IN_FALLBACK = 2;
+  DIAGNOSTIC_UNKNOWN_REASON_NOT_RENEWING = 3;
+  DIAGNOSTIC_UNKNOWN_REASON_NO_OUTSTANDING_COMMAND = 4;
+  DIAGNOSTIC_UNKNOWN_REASON_AWAITING_EVIDENCE = 5;
+}
+
+enum RunStorageHealth {
+  RUN_STORAGE_HEALTH_UNSPECIFIED = 0;
+  RUN_STORAGE_HEALTH_UNKNOWN = 1;
+  RUN_STORAGE_HEALTH_HEALTHY = 2;
+  RUN_STORAGE_HEALTH_DEGRADED = 3;
+}
+
+message ObservedTemperature {
+  double degrees_celsius = 1;
+  uint64 observation_age_ms = 2;
+}
+
+message AcceptedRadiatorSplitCommand {
+  uint32 basis_points = 1;
+  CommandSource source = 2;
+}
+
+message StatusEnvelope {
+  uint32 schema_version = 1;
+  PresentationState state = 2;
+  uint32 consecutive_failures = 3;
+  optional uint64 last_success_age_ms = 4;
+  optional DiagnosticsSnapshot snapshot = 5;
+}
+
+enum PresentationState {
+  PRESENTATION_STATE_UNSPECIFIED = 0;
+  PRESENTATION_STATE_CURRENT = 1;
+  PRESENTATION_STATE_STALE = 2;
+  PRESENTATION_STATE_UNAVAILABLE = 3;
+}

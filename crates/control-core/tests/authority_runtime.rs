@@ -4,10 +4,12 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use celerity_proto::celerity::v1::{ModelBundleManifest, ModelInputRange, ModelNormalization};
 use control_core::{
     CommandSource, ExternalAdapters, FeatureAuthority, Runtime, RuntimeEffect, RuntimeEvent,
     RuntimeModel, StartupMode, ValidatedBundle,
 };
+use prost::Message;
 
 fn bundle() -> ValidatedBundle {
     let source =
@@ -24,18 +26,32 @@ fn model_fixture() -> (tempfile::TempDir, PathBuf) {
     )
     .expect("model fixture");
     fs::write(
-        directory.path().join("manifest.json"),
-        br#"{
-  "calibration_error": 0.01,
-  "input_ranges": [
-    {"minimum": 60.0, "maximum": 120.0},
-    {"minimum": 0.0, "maximum": 100.0}
-  ],
-  "normalization": [
-    {"mean": 90.0, "scale": 10.0},
-    {"mean": 40.0, "scale": 10.0}
-  ]
-}"#,
+        directory.path().join("manifest.pb"),
+        ModelBundleManifest {
+            input_ranges: vec![
+                ModelInputRange {
+                    minimum: 60.0,
+                    maximum: 120.0,
+                },
+                ModelInputRange {
+                    minimum: 0.0,
+                    maximum: 100.0,
+                },
+            ],
+            normalization: vec![
+                ModelNormalization {
+                    mean: 90.0,
+                    scale: 10.0,
+                },
+                ModelNormalization {
+                    mean: 40.0,
+                    scale: 10.0,
+                },
+            ],
+            calibration_error: 0.01,
+            ..ModelBundleManifest::default()
+        }
+        .encode_to_vec(),
     )
     .expect("model manifest");
     (directory, model_path)

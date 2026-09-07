@@ -50,10 +50,6 @@ fn sync_http(error: reqwest::Error) -> SyncError {
     SyncError(error.to_string())
 }
 
-fn sync_json(error: serde_json::Error) -> SyncError {
-    SyncError(error.to_string())
-}
-
 fn sync_toml(error: toml::de::Error) -> SyncError {
     SyncError(error.to_string())
 }

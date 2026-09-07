@@ -1,10 +1,18 @@
 """Deterministically export the tiny real ONNX parity fixture."""
 
+import hashlib
 from argparse import ArgumentParser
 from pathlib import Path
 
 import onnx
 from onnx import TensorProto, helper
+
+from celerity.v1.celerity_pb2 import (
+    ModelBundleManifest,
+    ModelCompatibility,
+    ModelInputRange,
+    ModelNormalization,
+)
 
 
 def export(output: Path) -> None:
@@ -36,6 +44,28 @@ def export(output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     model_path = output / "identity.onnx"
     onnx.save(model, model_path)
+    manifest = ModelBundleManifest(
+        schema_version=1,
+        onnx_sha256=hashlib.sha256(model_path.read_bytes()).hexdigest(),
+        signal_order=["coolant_temperature_c", "air_temperature_c"],
+        units=["degC", "degC"],
+        sample_period_ms=20,
+        history_length=1,
+        horizons=[1],
+        output_order=["coolant", "post_intercooler_iat"],
+        command_lattice=[1000, 5000, 9000],
+        compatibility=ModelCompatibility(model_abi="thermal-v1", input_shape=[1, 3]),
+        input_ranges=[
+            ModelInputRange(minimum=60.0, maximum=120.0),
+            ModelInputRange(minimum=0.0, maximum=100.0),
+        ],
+        normalization=[
+            ModelNormalization(mean=90.0, scale=10.0),
+            ModelNormalization(mean=40.0, scale=10.0),
+        ],
+        calibration_error=0.01,
+    )
+    (output / "manifest.pb").write_bytes(manifest.SerializeToString(deterministic=True))
 
 
 def main() -> None:

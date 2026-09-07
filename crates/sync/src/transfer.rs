@@ -1,11 +1,12 @@
 use std::{collections::BTreeSet, fs, io::Cursor};
 
-use super::api::{ModelBundleManifest, ReconcileRequest, ReconcileResponse};
+use celerity_proto::celerity::v1::{Completion, ModelBundleManifest};
+use prost::Message;
+
+use super::api::{ReconcileRequest, ReconcileResponse};
 use super::artifact::{atomic_write, digest_file, read_zip_entry};
 use super::inventory::{SpoolRun, digest, incomplete_inventory, inventory};
-use super::{
-    HomeApi, NetworkPresence, SyncConfiguration, SyncError, TransferJournal, sync_io, sync_json,
-};
+use super::{HomeApi, NetworkPresence, SyncConfiguration, SyncError, TransferJournal, sync_io};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReconcileOutcome {
@@ -56,16 +57,14 @@ impl Synchronizer {
         for run in &runs {
             self.journal.observe_run(run)?;
         }
-        let request = serde_json::to_value(ReconcileRequest {
+        let request = ReconcileRequest {
             schema_version: 1,
             completed_run_digests: runs.iter().map(|run| run.digest.clone()).collect(),
             active_model_digest: active_model_digest.map(str::to_owned),
             staged_model_digest: staged_model_digest.map(str::to_owned),
             rejected_model_digests: rejected_model_digests.to_vec(),
-        })
-        .map_err(sync_json)?;
-        let response: ReconcileResponse =
-            serde_json::from_value(home.reconcile(&request)?).map_err(sync_json)?;
+        };
+        let response = home.reconcile(&request)?;
         let missing: BTreeSet<_> = response.missing_run_digests.into_iter().collect();
         let mut uploaded = 0;
         for run in runs
@@ -163,10 +162,15 @@ impl Synchronizer {
                 "model bundle must contain exactly two entries".to_owned(),
             ));
         }
-        let manifest_bytes = read_zip_entry(&mut archive, "manifest.json")?;
+        let manifest_bytes = read_zip_entry(&mut archive, "manifest.pb")?;
         let onnx_bytes = read_zip_entry(&mut archive, "model.onnx")?;
-        let manifest: ModelBundleManifest =
-            serde_json::from_slice(&manifest_bytes).map_err(sync_json)?;
+        let manifest = ModelBundleManifest::decode(manifest_bytes.as_slice())
+            .map_err(|error| SyncError(error.to_string()))?;
+        let Some(compatibility) = manifest.compatibility.as_ref() else {
+            return Err(SyncError(
+                "model bundle has no compatibility metadata".to_owned(),
+            ));
+        };
         let expected_input = self
             .configuration
             .model_history_length
@@ -174,15 +178,23 @@ impl Synchronizer {
             .saturating_add(1);
         let valid = manifest.schema_version == 1
             && digest(&onnx_bytes) == manifest.onnx_sha256
-            && manifest.signal_order == self.configuration.model_input_signals
+            && manifest.signal_order.as_slice()
+                == self.configuration.model_input_signals.as_slice()
             && manifest.units.len() == manifest.signal_order.len()
             && manifest.sample_period_ms > 0
-            && manifest.history_length == self.configuration.model_history_length
-            && manifest.horizons == [1]
-            && manifest.output_order == ["coolant", "post_intercooler_iat"]
-            && manifest.command_lattice == self.configuration.model_command_lattice
-            && manifest.compatibility.model_abi == self.configuration.model_abi
-            && manifest.compatibility.input_shape == [1, expected_input]
+            && manifest.history_length == self.configuration.model_history_length as u64
+            && manifest.horizons.as_slice() == [1]
+            && manifest.output_order.as_slice() == ["coolant", "post_intercooler_iat"]
+            && manifest.command_lattice.as_slice()
+                == self
+                    .configuration
+                    .model_command_lattice
+                    .iter()
+                    .map(|value| u32::from(*value))
+                    .collect::<Vec<_>>()
+                    .as_slice()
+            && compatibility.model_abi == self.configuration.model_abi
+            && compatibility.input_shape.as_slice() == [1, expected_input as u64]
             && manifest.input_ranges.len() == manifest.signal_order.len()
             && manifest.normalization.len() == manifest.signal_order.len()
             && manifest.input_ranges.iter().all(|range| {
@@ -204,7 +216,7 @@ impl Synchronizer {
         let slot = self.configuration.model_root.join(inactive);
         fs::create_dir_all(&slot).map_err(sync_io)?;
         atomic_write(&slot.join("model.onnx"), &onnx_bytes)?;
-        atomic_write(&slot.join("manifest.json"), &manifest_bytes)?;
+        atomic_write(&slot.join("manifest.pb"), &manifest_bytes)?;
         atomic_write(
             &slot.join("bundle-digest"),
             format!("{expected_digest}\n").as_bytes(),

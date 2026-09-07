@@ -23,7 +23,7 @@ def migrate(database: Path) -> None:
             """
             CREATE TABLE IF NOT EXISTS runs (
               digest TEXT PRIMARY KEY,
-              manifest_json BLOB NOT NULL,
+              manifest_pb BLOB NOT NULL,
               completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS chunks (

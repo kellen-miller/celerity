@@ -194,6 +194,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "celerity-proto"
+version = "0.1.0"
+dependencies = [
+ "prost",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -260,11 +267,10 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 name = "control-core"
 version = "0.1.0"
 dependencies = [
+ "celerity-proto",
  "control-protocol",
  "fs4",
  "prost",
- "prost-build",
- "protoc-bin-vendored",
  "serde",
  "serde_json",
  "sha2",
@@ -1921,6 +1927,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "proto-codegen"
+version = "0.1.0"
+dependencies = [
+ "prost-build",
+ "protoc-bin-vendored",
+]
+
+[[package]]
 name = "protoc-bin-vendored"
 version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2767,7 +2781,9 @@ dependencies = [
 name = "sync"
 version = "0.1.0"
 dependencies = [
+ "celerity-proto",
  "control-core",
+ "prost",
  "reqwest",
  "rusqlite",
  "serde",
@@ -3356,6 +3372,8 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 name = "vehicle-diagnostics"
 version = "0.1.0"
 dependencies = [
+ "celerity-proto",
+ "prost",
  "serde",
  "serde_json",
  "tempfile",
@@ -3380,6 +3398,8 @@ dependencies = [
 name = "vehicle-ui"
 version = "0.1.0"
 dependencies = [
+ "celerity-proto",
+ "prost",
  "serde",
  "serde_json",
  "tempfile",

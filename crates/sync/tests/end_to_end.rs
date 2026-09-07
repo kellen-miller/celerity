@@ -105,7 +105,7 @@ fn make_complete_run(spool: &Path, name: &str) -> io::Result<String> {
         }
     }
     writer.seal().map_err(io::Error::other)?;
-    let manifest = fs::read(spool.join(name).join("manifest.json"))?;
+    let manifest = fs::read(spool.join(name).join("manifest.pb"))?;
     Ok(digest(&manifest))
 }
 

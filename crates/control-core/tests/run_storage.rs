@@ -1,6 +1,7 @@
 use std::{fmt::Write as _, fs, path::PathBuf};
 
 use control_core::{Completion, EnqueueResult, RunRecord, RunWriter, recover_incomplete_runs};
+use prost::Message;
 use sha2::{Digest, Sha256};
 
 fn root(name: &str) -> PathBuf {
@@ -108,10 +109,15 @@ fn interrupted_partial_run_is_recovered_without_becoming_complete() {
     fs::create_dir_all(&run).expect("run directory");
     fs::write(run.join("events.chunk.partial"), b"exact partial bytes").expect("partial chunk");
     let recovered = recover_incomplete_runs(&root).expect("recover runs");
-    assert_eq!(recovered, vec![run.join("manifest.json")]);
-    let manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(&recovered[0]).expect("manifest")).expect("JSON");
-    assert_eq!(manifest["completion"], "incomplete");
-    assert_eq!(manifest["incomplete_reason"], "interrupted");
+    assert_eq!(recovered, vec![run.join("manifest.pb")]);
+    let manifest = celerity_proto::celerity::v1::RunManifest::decode(
+        fs::read(&recovered[0]).expect("manifest").as_slice(),
+    )
+    .expect("protobuf");
+    assert_eq!(
+        manifest.completion,
+        celerity_proto::celerity::v1::Completion::Incomplete as i32
+    );
+    assert_eq!(manifest.incomplete_reason.as_deref(), Some("interrupted"));
     assert!(run.join("events.chunk.partial").exists());
 }

@@ -6,6 +6,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+celerity-proto = { path = "../celerity-proto" }
 control-protocol = { path = "../control-protocol" }
 fs4 = "1.1.0"
 prost = "0.14.4"

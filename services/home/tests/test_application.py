@@ -3,22 +3,44 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-import struct
 import time
 from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
 import pytest
-import yaml
 from fastapi.testclient import TestClient
 
+from celerity.v1 import celerity_pb2
+from celerity.v1.celerity_pb2 import (
+    COMPLETION_COMPLETE,
+    JOB_STATE_COMPLETED,
+    JOB_STATE_FAILED,
+    JOB_STATE_NO_CHANGE,
+    JOB_STATE_QUEUED,
+    JOB_STATE_RUNNING,
+    WEBHOOK_EVENT_TYPE_DEMOTION,
+    WEBHOOK_EVENT_TYPE_ROLLBACK,
+    WEBHOOK_EVENT_TYPE_TRAINING_FAILURE,
+    CompletedRun,
+    ControlDecision,
+    JobRequest,
+    JobStarted,
+    JobStatus,
+    ReconcileRequest,
+    ReconcileResponse,
+    RunEvent,
+    RunManifest,
+    SignalObservation,
+    WebhookEvent,
+)
 from celerity_home import worker
 from celerity_home.application import create_app, deliver_notifications, migrate
 from celerity_home.training import MAXIMUM_PARITY_ERROR, Recipe, load_training_examples
 from celerity_home.worker import classify_evaluation
 
 AUTHORIZATION = {"Authorization": "Bearer secret"}
+PROTOBUF_HEADERS = {**AUTHORIZATION, "Content-Type": "application/x-protobuf"}
 WEBHOOK_URL = "https://webhook.invalid/celerity"
 
 
@@ -41,41 +63,29 @@ def varint(value: int) -> bytes:
     return bytes(encoded)
 
 
-def typed_record(sequence: int, payload_field: int, payload: bytes) -> bytes:
-    source = b"test"
-    message = (
-        varint(1 << 3)
-        + varint(1)
-        + varint(4 << 3)
-        + varint(sequence)
-        + varint(5 << 3)
-        + varint(sequence * 1_000_000)
-        + varint((8 << 3) | 2)
-        + varint(len(source))
-        + source
-        + varint((payload_field << 3) | 2)
-        + varint(len(payload))
-        + payload
-    )
-    return varint(len(message)) + message
-
-
 def signal_record(sequence: int, signal: str, value: float) -> bytes:
-    name = signal.encode()
-    payload = (
-        varint((1 << 3) | 2)
-        + varint(len(name))
-        + name
-        + varint((2 << 3) | 1)
-        + struct.pack("<d", value)
+    record = RunEvent(
+        schema_major=1,
+        sequence=sequence,
+        monotonic_ns=sequence * 1_000_000,
+        source="test",
     )
-    return typed_record(sequence, 21, payload)
+    record.signal_observation.CopyFrom(SignalObservation(signal=signal, value=value))
+    encoded = record.SerializeToString()
+    return varint(len(encoded)) + encoded
 
 
 def control_record(sequence: int, split: int, state: str) -> bytes:
     encoded = json.dumps({"state": state, "radiator_split_basis_points": split}).encode()
-    payload = varint((1 << 3) | 2) + varint(len(encoded)) + encoded
-    return typed_record(sequence, 24, payload)
+    record = RunEvent(
+        schema_major=1,
+        sequence=sequence,
+        monotonic_ns=sequence * 1_000_000,
+        source="test",
+    )
+    record.control_decision.CopyFrom(ControlDecision(encoded=encoded.decode()))
+    serialized = record.SerializeToString()
+    return varint(len(serialized)) + serialized
 
 
 def canonical_chunk(offset: float = 0.0) -> bytes:
@@ -97,38 +107,35 @@ def canonical_chunk(offset: float = 0.0) -> bytes:
 def upload_run(client: TestClient, run_name: str) -> str:
     chunk = canonical_chunk(float(len(run_name)))
     chunk_digest = digest(chunk)
-    manifest = json.dumps(
-        {
-            "schema_version": 1,
-            "run_id": run_name,
-            "completion": "complete",
-            "chunk_file": "events.chunk",
-            "chunk_sha256": chunk_digest,
-            "configuration_generation": 1,
-            "configuration_sha256": "a" * 64,
-            "model_bundle_digest": None,
-            "protocol_major": 1,
-            "firmware_generation": 1,
-            "decoder_generation": 1,
-            "model_abi": "thermal-v1",
-            "model_input_signals": ["coolant_temperature_c", "air_temperature_c"],
-            "model_history_length": 4,
-            "sample_period_ms": 20,
-            "command_lattice": [1000, 5000, 9000],
-            "maximum_calibration_error": 100.0,
-        },
-        sort_keys=True,
-    ).encode()
-    run_digest = digest(manifest)
+    manifest = RunManifest(
+        schema_version=1,
+        run_id=run_name,
+        completion=COMPLETION_COMPLETE,
+        chunk_file="events.chunk",
+        chunk_sha256=chunk_digest,
+        configuration_generation=1,
+        configuration_sha256="a" * 64,
+        protocol_major=1,
+        firmware_generation=1,
+        decoder_generation=1,
+        model_abi="thermal-v1",
+        model_input_signals=["coolant_temperature_c", "air_temperature_c"],
+        model_history_length=4,
+        sample_period_ms=20,
+        command_lattice=[1000, 5000, 9000],
+        maximum_calibration_error=100.0,
+    )
+    manifest_bytes = manifest.SerializeToString(deterministic=True)
+    run_digest = digest(manifest_bytes)
     response = client.put(
         f"/v1/runs/{run_digest}/chunks/{chunk_digest}", content=chunk, headers=AUTHORIZATION
     )
     assert response.status_code == 204
     response = client.post(
-        f"/v1/runs/{run_digest}/complete", content=manifest, headers=AUTHORIZATION
+        f"/v1/runs/{run_digest}/complete", content=manifest_bytes, headers=PROTOBUF_HEADERS
     )
     assert response.status_code == 200
-    assert response.json() == {"run_digest": run_digest}
+    assert CompletedRun.FromString(response.content).run_digest == run_digest
     return run_digest
 
 
@@ -139,17 +146,14 @@ def test_token_auth_and_idempotent_run_admission(home_client: TestClient) -> Non
     assert upload_run(client, "run-a") == run_digest
     response = client.post(
         "/v1/reconcile",
-        headers=AUTHORIZATION,
-        json={
-            "schema_version": 1,
-            "completed_run_digests": [run_digest, "f" * 64],
-            "active_model_digest": None,
-            "staged_model_digest": None,
-            "rejected_model_digests": [],
-        },
+        headers=PROTOBUF_HEADERS,
+        content=ReconcileRequest(
+            schema_version=1,
+            completed_run_digests=[run_digest, "f" * 64],
+        ).SerializeToString(deterministic=True),
     )
     assert response.status_code == 200
-    assert response.json()["missing_run_digests"] == ["f" * 64]
+    assert ReconcileResponse.FromString(response.content).missing_run_digests == ["f" * 64]
 
 
 def test_run_admission_rejects_nonmonotonic_records(
@@ -159,14 +163,11 @@ def test_run_admission_rejects_nonmonotonic_records(
     second = control_record(1, 5_000, "accepted")
     chunk = first + second
     chunk_digest = digest(chunk)
-    manifest = json.dumps(
-        {
-            "schema_version": 1,
-            "completion": "complete",
-            "chunk_sha256": chunk_digest,
-        },
-        sort_keys=True,
-    ).encode()
+    manifest = RunManifest(
+        schema_version=1,
+        completion=COMPLETION_COMPLETE,
+        chunk_sha256=chunk_digest,
+    ).SerializeToString(deterministic=True)
     run_digest = digest(manifest)
 
     assert (
@@ -190,20 +191,39 @@ def test_run_admission_rejects_nonmonotonic_records(
 def test_checked_contract_covers_application_routes_and_notification_events(
     tmp_path: Path,
 ) -> None:
-    repository = Path(__file__).resolve().parents[3]
-    contract = yaml.safe_load((repository / "contracts/home/v1/openapi.yaml").read_text())
-    application_paths = set(create_app(tmp_path, "secret", WEBHOOK_URL).openapi()["paths"])
-    assert set(contract["paths"]) == application_paths
-    assert contract["paths"]["/health/live"]["get"]["security"] == []
-    assert contract["paths"]["/health/ready"]["get"]["security"] == []
-
-    webhook = json.loads((repository / "contracts/home/v1/webhook.schema.json").read_text())
-    assert webhook["properties"]["event_type"]["enum"] == [
-        "training_failure",
-        "candidate_rejection",
-        "demotion",
-        "rollback",
-    ]
+    application_paths = {
+        route.path
+        for route in create_app(tmp_path, "secret", WEBHOOK_URL).routes
+        if hasattr(route, "methods")
+    }
+    assert application_paths == {
+        "/health/live",
+        "/health/ready",
+        "/v1/reconcile",
+        "/v1/runs/{run_digest}/chunks/{chunk_digest}",
+        "/v1/runs/{run_digest}/complete",
+        "/v1/models/{digest}",
+        "/v1/jobs",
+        "/v1/jobs/{job_id}",
+    }
+    assert {
+        "RunEvent",
+        "RunManifest",
+        "ReconcileRequest",
+        "ReconcileResponse",
+        "CompletedRun",
+        "JobRequest",
+        "JobStarted",
+        "JobStatus",
+        "ModelBundleManifest",
+        "WebhookEvent",
+    } <= set(celerity_pb2.DESCRIPTOR.message_types_by_name)
+    assert {
+        "WEBHOOK_EVENT_TYPE_TRAINING_FAILURE",
+        "WEBHOOK_EVENT_TYPE_CANDIDATE_REJECTION",
+        "WEBHOOK_EVENT_TYPE_DEMOTION",
+        "WEBHOOK_EVENT_TYPE_ROLLBACK",
+    } <= set(celerity_pb2.WebhookEventType.keys())
 
 
 def test_job_admits_only_complete_runs_and_survives_as_durable_subprocess(
@@ -213,51 +233,62 @@ def test_job_admits_only_complete_runs_and_survives_as_durable_subprocess(
     assert client.post("/v1/jobs", json={}).status_code == 401
     rejected = client.post(
         "/v1/jobs",
-        headers=AUTHORIZATION,
-        json={"run_digests": ["0" * 64], "recipe": "causal-tcn-v1"},
+        headers=PROTOBUF_HEADERS,
+        content=JobRequest(run_digests=["0" * 64], recipe="causal-tcn-v1").SerializeToString(
+            deterministic=True
+        ),
     )
     assert rejected.status_code == 409
     run_digests = [upload_run(client, "run-training-a"), upload_run(client, "run-training-b")]
     admitted = client.post(
         "/v1/jobs",
-        headers=AUTHORIZATION,
-        json={"run_digests": run_digests, "recipe": "causal-tcn-v1"},
+        headers=PROTOBUF_HEADERS,
+        content=JobRequest(run_digests=run_digests, recipe="causal-tcn-v1").SerializeToString(
+            deterministic=True
+        ),
     )
     assert admitted.status_code == 202
-    job_id = admitted.json()["job_id"]
+    job_id = JobStarted.FromString(admitted.content).job_id
     deadline = time.monotonic() + 10
-    job = client.get(f"/v1/jobs/{job_id}", headers=AUTHORIZATION).json()
-    while time.monotonic() < deadline and job["state"] != "completed":
+    job = JobStatus.FromString(client.get(f"/v1/jobs/{job_id}", headers=AUTHORIZATION).content)
+    while time.monotonic() < deadline and job.state != JOB_STATE_COMPLETED:
         time.sleep(0.05)
-        job = client.get(f"/v1/jobs/{job_id}", headers=AUTHORIZATION).json()
-    assert job["state"] == "completed", (
-        f"{job}\n{Path(job['stderr_path']).read_text(encoding='utf-8')}"
+        job = JobStatus.FromString(client.get(f"/v1/jobs/{job_id}", headers=AUTHORIZATION).content)
+    assert job.state == JOB_STATE_COMPLETED, (
+        f"{job}\n{Path(job.stderr_path).read_text(encoding='utf-8')}"
     )
-    assert job["pid"] > 0
-    assert Path(job["stdout_path"]).exists()
-    assert Path(job["stderr_path"]).exists()
-    assert len(job["artifact_digest"]) == 64
+    assert sorted(job.run_digests) == sorted(run_digests)
+    assert job.pid > 0
+    assert Path(job.stdout_path).exists()
+    assert Path(job.stderr_path).exists()
+    assert len(job.artifact_digest) == 64
 
     repeated = client.post(
         "/v1/jobs",
-        headers=AUTHORIZATION,
-        json={"run_digests": run_digests, "recipe": "causal-tcn-v1"},
+        headers=PROTOBUF_HEADERS,
+        content=JobRequest(run_digests=run_digests, recipe="causal-tcn-v1").SerializeToString(
+            deterministic=True
+        ),
     )
     assert repeated.status_code == 202
-    repeated_id = repeated.json()["job_id"]
-    repeated_job = client.get(f"/v1/jobs/{repeated_id}", headers=AUTHORIZATION).json()
-    while time.monotonic() < deadline + 10 and repeated_job["state"] == "running":
+    repeated_id = JobStarted.FromString(repeated.content).job_id
+    repeated_job = JobStatus.FromString(
+        client.get(f"/v1/jobs/{repeated_id}", headers=AUTHORIZATION).content
+    )
+    while time.monotonic() < deadline + 10 and repeated_job.state == JOB_STATE_RUNNING:
         time.sleep(0.05)
-        repeated_job = client.get(f"/v1/jobs/{repeated_id}", headers=AUTHORIZATION).json()
-    assert repeated_job["state"] == "no_change"
-    assert repeated_job["artifact_digest"] == job["artifact_digest"]
+        repeated_job = JobStatus.FromString(
+            client.get(f"/v1/jobs/{repeated_id}", headers=AUTHORIZATION).content
+        )
+    assert repeated_job.state == JOB_STATE_NO_CHANGE
+    assert repeated_job.artifact_digest == job.artifact_digest
     with sqlite3.connect(tmp_path / "home.sqlite3") as connection:
         notification_count = connection.execute(
             "SELECT count(*) FROM notifications WHERE job_id=?", (job_id,)
         ).fetchone()
         baseline_path = Path(
             connection.execute(
-                "SELECT path FROM models WHERE digest=?", (job["artifact_digest"],)
+                "SELECT path FROM models WHERE digest=?", (job.artifact_digest,)
             ).fetchone()[0]
         )
     assert notification_count == (0,)
@@ -265,18 +296,27 @@ def test_job_admits_only_complete_runs_and_survives_as_durable_subprocess(
     baseline_path.write_bytes(b"not a model bundle")
     failed = client.post(
         "/v1/jobs",
-        headers=AUTHORIZATION,
-        json={"run_digests": run_digests, "recipe": "causal-tcn-v1"},
+        headers=PROTOBUF_HEADERS,
+        content=JobRequest(run_digests=run_digests, recipe="causal-tcn-v1").SerializeToString(
+            deterministic=True
+        ),
     )
     assert failed.status_code == 202
-    failed_id = failed.json()["job_id"]
+    failed_id = JobStarted.FromString(failed.content).job_id
     deadline = time.monotonic() + 10
-    failed_job = client.get(f"/v1/jobs/{failed_id}", headers=AUTHORIZATION).json()
-    while time.monotonic() < deadline and failed_job["state"] in {"queued", "running"}:
+    failed_job = JobStatus.FromString(
+        client.get(f"/v1/jobs/{failed_id}", headers=AUTHORIZATION).content
+    )
+    while time.monotonic() < deadline and failed_job.state in {
+        JOB_STATE_QUEUED,
+        JOB_STATE_RUNNING,
+    }:
         time.sleep(0.05)
-        failed_job = client.get(f"/v1/jobs/{failed_id}", headers=AUTHORIZATION).json()
-    assert failed_job["state"] == "failed"
-    assert "not a zip file" in failed_job["terminal_summary"]
+        failed_job = JobStatus.FromString(
+            client.get(f"/v1/jobs/{failed_id}", headers=AUTHORIZATION).content
+        )
+    assert failed_job.state == JOB_STATE_FAILED
+    assert "not a zip file" in failed_job.terminal_summary
 
 
 def test_job_admission_reaps_a_dead_active_worker(tmp_path: Path, home_client: TestClient) -> None:
@@ -289,8 +329,10 @@ def test_job_admission_reaps_a_dead_active_worker(tmp_path: Path, home_client: T
 
     response = home_client.post(
         "/v1/jobs",
-        headers=AUTHORIZATION,
-        json={"run_digests": [run_digest], "recipe": "causal-tcn-v1"},
+        headers=PROTOBUF_HEADERS,
+        content=JobRequest(run_digests=[run_digest], recipe="causal-tcn-v1").SerializeToString(
+            deterministic=True
+        ),
     )
 
     assert response.status_code == 202
@@ -299,13 +341,15 @@ def test_job_admission_reaps_a_dead_active_worker(tmp_path: Path, home_client: T
             "SELECT state, terminal_summary FROM jobs WHERE id='already-running'"
         ).fetchone()
         notification = connection.execute(
-            "SELECT payload_json FROM notifications WHERE event_id='orphan:already-running'"
+            "SELECT payload_pb FROM notifications WHERE event_id='orphan:already-running'"
         ).fetchone()
     assert orphan == (
         "failed",
         "managed training worker exited before recording a terminal state",
     )
-    assert json.loads(notification[0])["event_type"] == "training_failure"
+    assert (
+        WebhookEvent.FromString(notification[0]).event_type == WEBHOOK_EVENT_TYPE_TRAINING_FAILURE
+    )
 
 
 def test_valid_but_ineligible_corpus_finishes_as_no_change(
@@ -315,18 +359,20 @@ def test_valid_but_ineligible_corpus_finishes_as_no_change(
     run_digest = upload_run(client, "single-valid-run")
     response = client.post(
         "/v1/jobs",
-        headers=AUTHORIZATION,
-        json={"run_digests": [run_digest], "recipe": "causal-tcn-v1"},
+        headers=PROTOBUF_HEADERS,
+        content=JobRequest(run_digests=[run_digest], recipe="causal-tcn-v1").SerializeToString(
+            deterministic=True
+        ),
     )
     assert response.status_code == 202
-    job_id = response.json()["job_id"]
+    job_id = JobStarted.FromString(response.content).job_id
     deadline = time.monotonic() + 10
-    job = client.get(f"/v1/jobs/{job_id}", headers=AUTHORIZATION).json()
-    while time.monotonic() < deadline and job["state"] in {"queued", "running"}:
+    job = JobStatus.FromString(client.get(f"/v1/jobs/{job_id}", headers=AUTHORIZATION).content)
+    while time.monotonic() < deadline and job.state in {JOB_STATE_QUEUED, JOB_STATE_RUNNING}:
         time.sleep(0.05)
-        job = client.get(f"/v1/jobs/{job_id}", headers=AUTHORIZATION).json()
-    assert job["state"] == "no_change"
-    assert job["artifact_digest"] is None
+        job = JobStatus.FromString(client.get(f"/v1/jobs/{job_id}", headers=AUTHORIZATION).content)
+    assert job.state == JOB_STATE_NO_CHANGE
+    assert job.artifact_digest == ""
 
 
 def test_training_uses_only_acknowledged_control_decisions(
@@ -335,9 +381,9 @@ def test_training_uses_only_acknowledged_control_decisions(
     run_digests = [upload_run(home_client, "ack-run-a"), upload_run(home_client, "ack-run-b")]
     with sqlite3.connect(tmp_path / "home.sqlite3") as connection:
         manifests = [
-            json.loads(
+            RunManifest.FromString(
                 connection.execute(
-                    "SELECT manifest_json FROM runs WHERE digest=?", (run_digest,)
+                    "SELECT manifest_pb FROM runs WHERE digest=?", (run_digest,)
                 ).fetchone()[0]
             )
             for run_digest in run_digests
@@ -360,8 +406,16 @@ def test_webhook_failure_never_changes_completed_job(tmp_path: Path) -> None:
             "VALUES ('job-1', 'completed', 'causal-tcn-v1', '[]', 'model staged')"
         )
         connection.execute(
-            "INSERT INTO notifications(event_id, job_id, payload_json, state) "
-            "VALUES ('event-1', 'job-1', '{}', 'pending')"
+            "INSERT INTO notifications(event_id, job_id, payload_pb, state) "
+            "VALUES ('event-1', 'job-1', ?, 'pending')",
+            (
+                WebhookEvent(
+                    schema_version=1,
+                    event_id="event-1",
+                    event_type=WEBHOOK_EVENT_TYPE_TRAINING_FAILURE,
+                    summary="test",
+                ).SerializeToString(deterministic=True),
+            ),
         )
     transport = httpx.MockTransport(lambda _request: httpx.Response(503))
     with httpx.Client(transport=transport) as client:
@@ -397,28 +451,26 @@ def test_reconcile_demotes_rejected_model_and_selects_known_good(
 
     response = client.post(
         "/v1/reconcile",
-        headers=AUTHORIZATION,
-        json={
-            "schema_version": 1,
-            "completed_run_digests": [],
-            "active_model_digest": rejected_digest,
-            "staged_model_digest": None,
-            "rejected_model_digests": [rejected_digest],
-        },
+        headers=PROTOBUF_HEADERS,
+        content=ReconcileRequest(
+            schema_version=1,
+            active_model_digest=rejected_digest,
+            rejected_model_digests=[rejected_digest],
+        ).SerializeToString(deterministic=True),
     )
     assert response.status_code == 200
-    assert response.json()["desired_model_digest"] == known_good_digest
+    assert ReconcileResponse.FromString(response.content).desired_model_digest == known_good_digest
     with sqlite3.connect(tmp_path / "home.sqlite3") as connection:
         state = connection.execute(
             "SELECT state FROM models WHERE digest=?", (rejected_digest,)
         ).fetchone()
         events = connection.execute(
-            "SELECT payload_json FROM notifications ORDER BY event_id"
+            "SELECT payload_pb FROM notifications ORDER BY event_id"
         ).fetchall()
     assert state == ("rejected",)
-    assert {json.loads(event[0])["event_type"] for event in events} == {
-        "demotion",
-        "rollback",
+    assert {WebhookEvent.FromString(event[0]).event_type for event in events} == {
+        WEBHOOK_EVENT_TYPE_DEMOTION,
+        WEBHOOK_EVENT_TYPE_ROLLBACK,
     }
 
 
@@ -447,11 +499,11 @@ def test_worker_records_candidate_rejection_and_training_failure(
     with sqlite3.connect(database) as connection:
         jobs = dict(connection.execute("SELECT id, state FROM jobs").fetchall())
         events = {
-            json.loads(row[0])["event_type"]
-            for row in connection.execute("SELECT payload_json FROM notifications").fetchall()
+            WebhookEvent.FromString(row[0]).event_type
+            for row in connection.execute("SELECT payload_pb FROM notifications").fetchall()
         }
     assert jobs == {"fail-me": "failed"}
-    assert events == {"training_failure"}
+    assert events == {WEBHOOK_EVENT_TYPE_TRAINING_FAILURE}
 
 
 def test_recipe_classification_covers_pass_no_change_and_reject() -> None:
@@ -482,11 +534,15 @@ def test_restart_recovers_an_orphaned_durable_job(tmp_path: Path, home_client: T
 
     with TestClient(create_app(tmp_path, "secret", WEBHOOK_URL)) as restarted:
         deadline = time.monotonic() + 10
-        job = restarted.get("/v1/jobs/recover-me", headers=AUTHORIZATION).json()
-        while time.monotonic() < deadline and job["state"] != "completed":
-            time.sleep(0.05)
-            job = restarted.get("/v1/jobs/recover-me", headers=AUTHORIZATION).json()
-        assert job["state"] == "completed", (
-            f"{job}\n{Path(job['stderr_path']).read_text(encoding='utf-8')}"
+        job = JobStatus.FromString(
+            restarted.get("/v1/jobs/recover-me", headers=AUTHORIZATION).content
         )
-        assert job["pid"] > 0
+        while time.monotonic() < deadline and job.state != JOB_STATE_COMPLETED:
+            time.sleep(0.05)
+            job = JobStatus.FromString(
+                restarted.get("/v1/jobs/recover-me", headers=AUTHORIZATION).content
+            )
+        assert job.state == JOB_STATE_COMPLETED, (
+            f"{job}\n{Path(job.stderr_path).read_text(encoding='utf-8')}"
+        )
+        assert job.pid > 0

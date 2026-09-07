@@ -27,4 +27,4 @@ Using one timestamp was rejected because valid I/O scheduling can then look
 like clock regression or fresh data can be mistaken for old data.
 
 The event fields remain normative in
-[`contracts/run/v1/run.proto`](../../contracts/run/v1/run.proto).
+[`contracts/celerity/v1/celerity.proto`](../../contracts/celerity/v1/celerity.proto).

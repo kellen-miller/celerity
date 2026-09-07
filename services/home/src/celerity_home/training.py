@@ -6,7 +6,6 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
 
 import numpy as np
 import onnx
@@ -16,6 +15,7 @@ import torch
 from onnx.reference import ReferenceEvaluator
 from torch import nn
 
+from celerity.v1.celerity_pb2 import RunChunk, RunManifest
 from celerity_home.run import decode_run_records
 
 # Both model outputs are temperatures. This remains far below source sensor resolution while
@@ -74,7 +74,7 @@ def derive_run_index(run_digests: list[str], output: Path) -> str:
 def load_training_examples(
     storage_root: Path,
     run_digests: list[str],
-    manifests: list[dict[str, Any]],
+    manifests: list[RunManifest],
     recipe: Recipe,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[list[float]]]:
     """Decode canonical Run protobuf records into causal history/candidate examples."""
@@ -86,16 +86,16 @@ def load_training_examples(
     held_inputs: list[list[float]] = []
     held_targets: list[list[float]] = []
     observed_values: list[list[float]] = []
-    signals = manifests[0]["model_input_signals"]
+    signals = list(manifests[0].model_input_signals)
     coolant_index = signals.index("coolant_temperature_c")
     iat_index = signals.index("air_temperature_c")
     for run_digest, manifest in zip(run_digests, manifests, strict=True):
-        chunks = manifest.get("chunks")
-        if not isinstance(chunks, list) or not chunks:
-            chunks = [{"sha256": manifest["chunk_sha256"]}]
+        chunks = list(manifest.chunks)
+        if not chunks:
+            chunks = [RunChunk(sha256=manifest.chunk_sha256)]
         records = []
         for chunk in chunks:
-            chunk_digest = str(chunk["sha256"])
+            chunk_digest = chunk.sha256
             records.extend(
                 decode_run_records((storage_root / "runs" / run_digest / chunk_digest).read_bytes())
             )
@@ -167,7 +167,7 @@ class CausalBlock(nn.Module):
         convolved = self.convolution(values)
         if self.future_padding:
             convolved = convolved[..., : -self.future_padding]
-        return cast(torch.Tensor, self.activation(convolved) + values)
+        return self.activation(convolved) + values
 
 
 class CausalTcn(nn.Module):
@@ -214,12 +214,10 @@ class CausalTcn(nn.Module):
         history = flat_window[:, :-1].reshape(
             flat_window.shape[0], self.recipe.signal_count, self.recipe.history_length
         )
-        history = (history - cast(torch.Tensor, self.signal_means)) / cast(
-            torch.Tensor, self.signal_scales
-        )
+        history = (history - self.signal_means) / self.signal_scales
         encoded = self.blocks(self.input_projection(history))
         state_and_candidate = torch.cat((encoded[..., -1], flat_window[:, -1:]), dim=1)
-        return cast(torch.Tensor, self.output_projection(state_and_candidate))
+        return self.output_projection(state_and_candidate)
 
 
 def export_and_compare(
@@ -270,10 +268,7 @@ def export_and_compare(
     onnx_model = onnx.load(output)
     onnx.checker.check_model(onnx_model)
     expected = model(example).detach().numpy()
-    actual = cast(
-        list[np.ndarray],
-        ReferenceEvaluator(onnx_model).run(None, {"thermal_history": example.numpy()}),
-    )[0]
+    actual = ReferenceEvaluator(onnx_model).run(None, {"thermal_history": example.numpy()})[0]
     maximum_error = float(np.max(np.abs(expected - actual)))
     if maximum_error > MAXIMUM_PARITY_ERROR:
         raise RuntimeError(f"PyTorch/ONNX parity exceeded tolerance: {maximum_error}")
@@ -286,8 +281,8 @@ def export_and_compare(
         "normalization": [
             {"mean": float(mean), "scale": float(scale)}
             for mean, scale in zip(
-                cast(torch.Tensor, model.signal_means).detach().numpy().reshape(-1),
-                cast(torch.Tensor, model.signal_scales).detach().numpy().reshape(-1),
+                model.signal_means.detach().numpy().reshape(-1),
+                model.signal_scales.detach().numpy().reshape(-1),
                 strict=True,
             )
         ],

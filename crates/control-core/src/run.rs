@@ -1,18 +1,8 @@
-use serde::{Deserialize, Serialize};
+use celerity_proto::celerity::v1 as wire;
 
 use crate::RuntimeEvent;
 
-#[allow(
-    clippy::doc_markdown,
-    clippy::missing_const_for_fn,
-    clippy::trivially_copy_pass_by_ref
-)]
-mod wire {
-    include!(concat!(env!("OUT_DIR"), "/celerity.run.v1.rs"));
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Completion {
     Complete,
     Incomplete,
@@ -25,7 +15,7 @@ pub enum EnqueueResult {
     Degraded,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunChunk {
     pub file: String,
     pub sha256: String,
@@ -169,7 +159,7 @@ impl RunRecord {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RunManifest {
     pub schema_version: u32,
     pub run_id: String,
@@ -179,7 +169,6 @@ pub struct RunManifest {
     pub last_sequence: Option<u64>,
     pub chunk_file: String,
     pub chunk_sha256: String,
-    #[serde(default)]
     pub chunks: Vec<RunChunk>,
     #[serde(default)]
     pub dropped_record_count: u64,

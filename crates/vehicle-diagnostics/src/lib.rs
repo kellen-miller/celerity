@@ -10,6 +10,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use celerity_proto::celerity::v1::{
+    self as proto, CommandSource as ProtoCommandSource,
+    DiagnosticHealthState as ProtoDiagnosticHealthState, DiagnosticStatus as ProtoDiagnosticStatus,
+    DiagnosticUnknownReason as ProtoDiagnosticUnknownReason,
+    FeatureAuthority as ProtoFeatureAuthority, GlobalAuthority as ProtoGlobalAuthority,
+    RunStorageHealth as ProtoRunStorageHealth,
+};
+use prost::Message;
 use serde::{Deserialize, Serialize};
 
 const IO_TIMEOUT: Duration = Duration::from_millis(250);
@@ -95,7 +103,19 @@ pub struct DiagnosticsSnapshot {
 
 impl DiagnosticsSnapshot {
     #[must_use]
-    pub const fn startup_fallback() -> Self {
+    pub fn to_proto(&self) -> proto::DiagnosticsSnapshot {
+        protobuf::to_proto(self)
+    }
+
+    fn from_proto(snapshot: proto::DiagnosticsSnapshot) -> Result<Self, String> {
+        protobuf::from_proto(snapshot)
+    }
+}
+mod protobuf;
+
+impl DiagnosticsSnapshot {
+    #[must_use]
+    pub fn startup_fallback() -> Self {
         Self {
             schema_version: 2,
             runtime_update_age_ms: 0,
@@ -158,7 +178,6 @@ impl DiagnosticsStore {
         snapshot.runtime_update_stale_after_ms = published.runtime_update_stale_after_ms;
         published.snapshot = snapshot;
         published.published_at = published_at;
-        drop(published);
         Ok(())
     }
 
@@ -170,7 +189,6 @@ impl DiagnosticsStore {
                 .as_millis(),
         )
         .unwrap_or(u64::MAX);
-        drop(published);
         Ok(snapshot)
     }
 }
@@ -236,14 +254,7 @@ pub fn serve_diagnostics(
                                 continue;
                             }
                         };
-                        let mut response = match serde_json::to_vec(&current) {
-                            Ok(response) => response,
-                            Err(error) => {
-                                eprintln!("diagnostics response serialization failed: {error}");
-                                continue;
-                            }
-                        };
-                        response.push(b'\n');
+                        let response = current.to_proto().encode_to_vec();
                         if let Err(error) = stream.write_all(&response) {
                             eprintln!("diagnostics response write failed: {error}");
                         }
@@ -271,7 +282,7 @@ pub fn serve_diagnostics(
 ///
 /// # Errors
 ///
-/// Returns an error for socket, protocol, timeout, or JSON failures.
+/// Returns an error for socket, protocol, timeout, or protobuf failures.
 pub fn read_diagnostics(socket_path: &Path) -> Result<DiagnosticsSnapshot, String> {
     use std::{io::Read, io::Write, os::unix::net::UnixStream};
 
@@ -287,5 +298,7 @@ pub fn read_diagnostics(socket_path: &Path) -> Result<DiagnosticsSnapshot, Strin
     stream
         .read_to_end(&mut response)
         .map_err(|error| error.to_string())?;
-    serde_json::from_slice(&response).map_err(|error| error.to_string())
+    let snapshot = proto::DiagnosticsSnapshot::decode(response.as_slice())
+        .map_err(|error| error.to_string())?;
+    DiagnosticsSnapshot::from_proto(snapshot)
 }

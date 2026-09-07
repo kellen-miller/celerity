@@ -24,18 +24,27 @@ thermal-envelope validation, or road/track acceptance.
 - `firmware/duct-controller`: STM32G431 Embassy image and host conformance.
 - `services/home`: FastAPI, SQLite/filesystem archive, managed jobs, models, and
   bounded webhook delivery.
-- `contracts`: fixed controller, Run, home API, webhook, configuration, and
-  model-bundle v1 boundaries.
+- `contracts/celerity/v1/celerity.proto`: the one cross-language IDL. Rust,
+  Python, and TypeScript bindings are committed and checked for regeneration.
+- `contracts/controller-can-v1.md` and `config/schema-v1.md`: transport and
+  startup-configuration adapters that retain their exact external formats.
 
 ## Development
 
-Install the checked-in Rust toolchain, `uv`, and Node/npm, then run:
+Install the checked-in Rust toolchain, `uv`, and Node/npm. Run `npm ci` in
+`crates/vehicle-ui/web`, then:
 
 ```sh
+./scripts/check-protos
 ./scripts/check-rust --portable
 ./scripts/check-python
 ./scripts/check-ui
 ```
+
+When `contracts/celerity/v1/celerity.proto` changes, regenerate the committed
+Rust, Python, and TypeScript bindings with `./scripts/generate-protos`. CI runs
+the regeneration in a temporary tree and fails if any checked-in binding is
+missing or stale.
 
 Linux CI additionally creates separate `vcan-powertrain` and
 `vcan-controller` interfaces and runs `./scripts/check-linux`, including exact

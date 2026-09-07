@@ -5,16 +5,24 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import sqlite3
 import zipfile
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
 
 import numpy as np
 import onnx
 from onnx.reference import ReferenceEvaluator
 
+from celerity.v1.celerity_pb2 import (
+    WEBHOOK_EVENT_TYPE_CANDIDATE_REJECTION,
+    WEBHOOK_EVENT_TYPE_TRAINING_FAILURE,
+    ModelBundleManifest,
+    ModelCompatibility,
+    ModelInputRange,
+    ModelNormalization,
+    RunManifest,
+)
+from celerity_home.database import connect as _connect
+from celerity_home.notifications import webhook_event as _webhook_event
 from celerity_home.training import (
     MAXIMUM_PARITY_ERROR,
     NoEligibleTrainingData,
@@ -23,14 +31,6 @@ from celerity_home.training import (
     export_and_compare,
     load_training_examples,
 )
-
-
-def _connect(database: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(database, timeout=5)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys=ON")
-    connection.execute("PRAGMA busy_timeout=5000")
-    return connection
 
 
 def classify_evaluation(
@@ -60,28 +60,33 @@ def run(storage_root: Path, job_id: str) -> None:
         raise RuntimeError(f"unknown job {job_id}")
     output = storage_root / "jobs" / job_id
     output.mkdir(parents=True, exist_ok=True)
-    run_digests: list[str] = json.loads(job["input_digests_json"])
-    manifests: list[dict[str, Any]] = [
-        json.loads(
-            connection.execute(
-                "SELECT manifest_json FROM runs WHERE digest=?", (digest,)
-            ).fetchone()["manifest_json"]
+    run_digests = json.loads(job["input_digests_json"])
+    manifests = [
+        RunManifest.FromString(
+            connection.execute("SELECT manifest_pb FROM runs WHERE digest=?", (digest,)).fetchone()[
+                "manifest_pb"
+            ]
         )
         for digest in run_digests
     ]
-    contract_fields = (
-        "model_abi",
-        "model_input_signals",
-        "model_history_length",
-        "sample_period_ms",
-        "command_lattice",
-        "maximum_calibration_error",
-    )
-    contract: dict[str, Any] = {field: manifests[0].get(field) for field in contract_fields}
-    if any(not contract[field] for field in contract_fields) or any(
-        manifest.get(field) != contract[field]
+    contract = {
+        "model_abi": manifests[0].model_abi,
+        "model_input_signals": list(manifests[0].model_input_signals),
+        "model_history_length": manifests[0].model_history_length,
+        "sample_period_ms": manifests[0].sample_period_ms,
+        "command_lattice": list(manifests[0].command_lattice),
+        "maximum_calibration_error": manifests[0].maximum_calibration_error,
+    }
+    if any(not contract[field] for field in contract) or any(
+        (
+            list(manifest.model_input_signals) != contract["model_input_signals"]
+            or list(manifest.command_lattice) != contract["command_lattice"]
+            or manifest.model_abi != contract["model_abi"]
+            or manifest.model_history_length != contract["model_history_length"]
+            or manifest.sample_period_ms != contract["sample_period_ms"]
+            or manifest.maximum_calibration_error != contract["maximum_calibration_error"]
+        )
         for manifest in manifests
-        for field in contract_fields
     ):
         raise RuntimeError("Run model contracts are absent or incompatible")
     derivation_digest = derive_run_index(run_digests, output / "derived.parquet")
@@ -110,7 +115,7 @@ def run(storage_root: Path, job_id: str) -> None:
         [max(float(np.std(values)), 1e-6) for values in zip(*observed_values, strict=True)],
         dtype=np.float32,
     )
-    evaluation: dict[str, Any] = export_and_compare(
+    evaluation = export_and_compare(
         model_path,
         recipe,
         training_inputs,
@@ -121,35 +126,38 @@ def run(storage_root: Path, job_id: str) -> None:
         signal_scales,
     )
     model_bytes = model_path.read_bytes()
-    manifest = {
-        "schema_version": 1,
-        "onnx_sha256": hashlib.sha256(model_bytes).hexdigest(),
-        "signal_order": contract["model_input_signals"],
-        "units": ["native"] * len(contract["model_input_signals"]),
-        "sample_period_ms": contract["sample_period_ms"],
-        "history_length": contract["model_history_length"],
-        "horizons": [1],
-        "output_order": ["coolant", "post_intercooler_iat"],
-        "command_lattice": contract["command_lattice"],
-        "compatibility": {
-            "model_abi": contract["model_abi"],
-            "input_shape": evaluation["input_shape"],
-            "derivation_digest": derivation_digest,
-            "input_runs": run_digests,
-            "maximum_parity_error": evaluation["maximum_parity_error"],
-            "held_out_mse": evaluation["held_out_mse"],
-        },
-        "input_ranges": [
-            {"minimum": min(values), "maximum": max(values)}
+    manifest = ModelBundleManifest(
+        schema_version=1,
+        onnx_sha256=hashlib.sha256(model_bytes).hexdigest(),
+        signal_order=contract["model_input_signals"],
+        units=["native"] * len(contract["model_input_signals"]),
+        sample_period_ms=contract["sample_period_ms"],
+        history_length=contract["model_history_length"],
+        horizons=[1],
+        output_order=["coolant", "post_intercooler_iat"],
+        command_lattice=contract["command_lattice"],
+        compatibility=ModelCompatibility(
+            model_abi=contract["model_abi"],
+            input_shape=evaluation["input_shape"],
+            derivation_digest=derivation_digest,
+            input_runs=run_digests,
+            maximum_parity_error=evaluation["maximum_parity_error"],
+            held_out_mse=evaluation["held_out_mse"],
+        ),
+        input_ranges=[
+            ModelInputRange(minimum=min(values), maximum=max(values))
             for values in zip(*observed_values, strict=True)
         ],
-        "normalization": evaluation["normalization"],
-        "calibration_error": float(evaluation["held_out_mse"]) ** 0.5,
-    }
-    manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode() + b"\n"
+        normalization=[
+            ModelNormalization(mean=value["mean"], scale=value["scale"])
+            for value in evaluation["normalization"]
+        ],
+        calibration_error=float(evaluation["held_out_mse"]) ** 0.5,
+    )
+    manifest_bytes = manifest.SerializeToString()
     bundle_path = output / "candidate.zip"
     with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_STORED) as archive:
-        for name, data in (("manifest.json", manifest_bytes), ("model.onnx", model_bytes)):
+        for name, data in (("manifest.pb", manifest_bytes), ("model.onnx", model_bytes)):
             entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             entry.compress_type = zipfile.ZIP_STORED
             entry.external_attr = 0o100644 << 16
@@ -176,26 +184,20 @@ def run(storage_root: Path, job_id: str) -> None:
         if baseline is None:
             raise RuntimeError("desired baseline model is absent or not staged")
         with zipfile.ZipFile(baseline["path"]) as archive:
-            baseline_manifest = json.loads(archive.read("manifest.json"))
+            baseline_manifest = ModelBundleManifest.FromString(archive.read("manifest.pb"))
             baseline_model_bytes = archive.read("model.onnx")
         baseline_contract_matches = (
-            baseline_manifest.get("signal_order") == contract["model_input_signals"]
-            and baseline_manifest.get("sample_period_ms") == contract["sample_period_ms"]
-            and baseline_manifest.get("history_length") == contract["model_history_length"]
-            and baseline_manifest.get("command_lattice") == contract["command_lattice"]
-            and baseline_manifest.get("compatibility", {}).get("model_abi") == contract["model_abi"]
+            list(baseline_manifest.signal_order) == contract["model_input_signals"]
+            and baseline_manifest.sample_period_ms == contract["sample_period_ms"]
+            and baseline_manifest.history_length == contract["model_history_length"]
+            and list(baseline_manifest.command_lattice) == contract["command_lattice"]
+            and baseline_manifest.compatibility.model_abi == contract["model_abi"]
         )
         if not baseline_contract_matches:
             raise RuntimeError("desired baseline model contract is incompatible")
         evaluator = ReferenceEvaluator(onnx.load_from_string(baseline_model_bytes))
         prediction = np.concatenate(
-            [
-                cast(
-                    list[np.ndarray],
-                    evaluator.run(None, {"thermal_history": row.reshape(1, -1)}),
-                )[0]
-                for row in held_inputs
-            ]
+            [evaluator.run(None, {"thermal_history": row.reshape(1, -1)})[0] for row in held_inputs]
         )
         baseline_mse = float(np.mean((prediction - held_targets) ** 2))
         if not np.isfinite(baseline_mse):
@@ -233,19 +235,17 @@ def run(storage_root: Path, job_id: str) -> None:
             (state, digest, f"model {state}", job_id),
         )
         if state == "rejected":
-            payload = {
-                "schema_version": 1,
-                "event_id": str(job_id),
-                "event_type": "candidate_rejection",
-                "occurred_at": datetime.now(UTC).isoformat(),
-                "job_id": job_id,
-                "artifact_digest": digest,
-                "summary": f"recipe {job['recipe']} rejected",
-            }
+            payload = _webhook_event(
+                str(job_id),
+                WEBHOOK_EVENT_TYPE_CANDIDATE_REJECTION,
+                f"recipe {job['recipe']} rejected",
+                job_id=job_id,
+                artifact_digest=digest,
+            )
             connection.execute(
-                "INSERT OR IGNORE INTO notifications(event_id, job_id, payload_json, state) "
+                "INSERT OR IGNORE INTO notifications(event_id, job_id, payload_pb, state) "
                 "VALUES (?, ?, ?, 'pending')",
-                (str(job_id), job_id, json.dumps(payload, sort_keys=True)),
+                (str(job_id), job_id, payload),
             )
     connection.close()
 
@@ -260,15 +260,12 @@ def main() -> None:
     except Exception as error:
         database = arguments.storage_root / "home.sqlite3"
         connection = _connect(database)
-        payload = {
-            "schema_version": 1,
-            "event_id": str(arguments.job_id),
-            "event_type": "training_failure",
-            "occurred_at": datetime.now(UTC).isoformat(),
-            "job_id": arguments.job_id,
-            "artifact_digest": None,
-            "summary": str(error),
-        }
+        payload = _webhook_event(
+            str(arguments.job_id),
+            WEBHOOK_EVENT_TYPE_TRAINING_FAILURE,
+            str(error),
+            job_id=arguments.job_id,
+        )
         with connection:
             connection.execute(
                 "UPDATE jobs SET state='failed', terminal_summary=? WHERE id=?",
@@ -276,11 +273,11 @@ def main() -> None:
             )
             connection.execute(
                 "INSERT OR REPLACE INTO notifications"
-                "(event_id, job_id, payload_json, state) VALUES (?, ?, ?, 'pending')",
+                "(event_id, job_id, payload_pb, state) VALUES (?, ?, ?, 'pending')",
                 (
                     str(arguments.job_id),
                     arguments.job_id,
-                    json.dumps(payload, sort_keys=True),
+                    payload,
                 ),
             )
         connection.close()

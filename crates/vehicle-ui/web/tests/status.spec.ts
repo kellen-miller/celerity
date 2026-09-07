@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
+import { encodeStatusEnvelope } from "../src/status";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixtures = path.resolve(here, "../fixtures/status");
 const current = readFixture("current.json");
@@ -72,8 +74,8 @@ for (const scenario of scenarios) {
       await page.route("**/v1/status", (route) =>
         route.fulfill({
           status: 200,
-          contentType: "application/json",
-          json: scenario.fixture,
+          contentType: "application/x-protobuf",
+          body: Buffer.from(encodeStatusEnvelope(scenario.fixture)),
         }),
       );
 
@@ -135,8 +137,8 @@ for (const viewport of viewports) {
       if (requests === 1) {
         await route.fulfill({
           status: 200,
-          contentType: "application/json",
-          json: current,
+          contentType: "application/x-protobuf",
+          body: Buffer.from(encodeStatusEnvelope(current)),
         });
       } else {
         await route.abort("connectionrefused");
@@ -186,8 +188,8 @@ test("production response renders the shipped asset with strict headers", async 
   await page.route("**/v1/status", (route) =>
     route.fulfill({
       status: 200,
-      contentType: "application/json",
-      json: current,
+      contentType: "application/x-protobuf",
+      body: Buffer.from(encodeStatusEnvelope(current)),
     }),
   );
   const response = await page.goto("/");
@@ -210,11 +212,13 @@ test("healthy polling keeps the live announcement stable", async ({ page }) => {
     requests += 1;
     route.fulfill({
       status: 200,
-      contentType: "application/json",
-      json: {
-        ...current,
-        last_success_age_ms: 125 + requests * 1_000,
-      },
+      contentType: "application/x-protobuf",
+      body: Buffer.from(
+        encodeStatusEnvelope({
+          ...current,
+          last_success_age_ms: 125 + requests * 1_000,
+        }),
+      ),
     });
   });
 

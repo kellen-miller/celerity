@@ -8,7 +8,11 @@ use std::{
     time::Duration,
 };
 
-use serde_json::json;
+use celerity_proto::celerity::v1::{
+    CompletedRun, Completion, ModelBundleManifest, ModelCompatibility, ModelInputRange,
+    ModelNormalization, ReconcileRequest, ReconcileResponse, RunChunk, RunManifest,
+};
+use prost::Message;
 use sha2::{Digest, Sha256};
 use sync::{
     HomeApi, LinuxNetworkPresence, NetworkPresence, ReconcileOutcome, SyncConfiguration, SyncError,
@@ -31,17 +35,14 @@ struct RecordingHome {
 }
 
 impl HomeApi for RecordingHome {
-    fn reconcile(&self, request: &serde_json::Value) -> Result<serde_json::Value, SyncError> {
-        *self.missing.borrow_mut() = request["completed_run_digests"]
-            .as_array()
-            .expect("run array")
-            .iter()
-            .map(|value| value.as_str().expect("digest").to_owned())
-            .collect();
-        Ok(json!({
-            "missing_run_digests": *self.missing.borrow(),
-            "desired_model_digest": self.model.borrow().as_ref().map(|bytes| digest(bytes)),
-        }))
+    fn reconcile(&self, request: &ReconcileRequest) -> Result<ReconcileResponse, SyncError> {
+        self.missing
+            .borrow_mut()
+            .clone_from(&request.completed_run_digests);
+        Ok(ReconcileResponse {
+            missing_run_digests: self.missing.borrow().clone(),
+            desired_model_digest: self.model.borrow().as_ref().map(|bytes| digest(bytes)),
+        })
     }
 
     fn put_chunk(&self, run: &str, _chunk: &str, _path: &Path) -> Result<(), SyncError> {
@@ -49,8 +50,10 @@ impl HomeApi for RecordingHome {
         Ok(())
     }
 
-    fn complete(&self, run: &str, _manifest: &[u8]) -> Result<String, SyncError> {
-        Ok(run.to_owned())
+    fn complete(&self, run: &str, _manifest: &[u8]) -> Result<CompletedRun, SyncError> {
+        Ok(CompletedRun {
+            run_digest: run.to_owned(),
+        })
     }
 
     fn get_model(&self, _digest: &str) -> Result<Vec<u8>, SyncError> {
@@ -79,33 +82,52 @@ fn model_bundle() -> Vec<u8> {
     let model =
         fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx"))
             .expect("model fixture");
-    let manifest = serde_json::to_vec(&json!({
-        "schema_version": 1,
-        "onnx_sha256": digest(&model),
-        "signal_order": ["coolant_temperature_c", "air_temperature_c"],
-        "units": ["native", "native"],
-        "sample_period_ms": 20,
-        "history_length": 4,
-        "horizons": [1],
-        "output_order": ["coolant", "post_intercooler_iat"],
-        "command_lattice": [1000, 5000, 9000],
-        "compatibility": {"model_abi": "thermal-v1", "input_shape": [1, 9]},
-        "input_ranges": [
-            {"minimum": 60.0, "maximum": 120.0},
-            {"minimum": 0.0, "maximum": 100.0}
+    let manifest = ModelBundleManifest {
+        schema_version: 1,
+        onnx_sha256: digest(&model),
+        signal_order: vec![
+            "coolant_temperature_c".to_owned(),
+            "air_temperature_c".to_owned(),
         ],
-        "normalization": [
-            {"mean": 90.0, "scale": 10.0},
-            {"mean": 40.0, "scale": 10.0}
+        units: vec!["native".to_owned(), "native".to_owned()],
+        sample_period_ms: 20,
+        history_length: 4,
+        horizons: vec![1],
+        output_order: vec!["coolant".to_owned(), "post_intercooler_iat".to_owned()],
+        command_lattice: vec![1000, 5000, 9000],
+        compatibility: Some(ModelCompatibility {
+            model_abi: "thermal-v1".to_owned(),
+            input_shape: vec![1, 9],
+            ..ModelCompatibility::default()
+        }),
+        input_ranges: vec![
+            ModelInputRange {
+                minimum: 60.0,
+                maximum: 120.0,
+            },
+            ModelInputRange {
+                minimum: 0.0,
+                maximum: 100.0,
+            },
         ],
-        "calibration_error": 0.01
-    }))
-    .expect("manifest");
+        normalization: vec![
+            ModelNormalization {
+                mean: 90.0,
+                scale: 10.0,
+            },
+            ModelNormalization {
+                mean: 40.0,
+                scale: 10.0,
+            },
+        ],
+        calibration_error: 0.01,
+    }
+    .encode_to_vec();
     let cursor = Cursor::new(Vec::new());
     let mut archive = zip::ZipWriter::new(cursor);
     let options = zip::write::SimpleFileOptions::default();
     archive
-        .start_file("manifest.json", options)
+        .start_file("manifest.pb", options)
         .expect("manifest entry");
     archive.write_all(&manifest).expect("manifest bytes");
     archive
@@ -121,15 +143,20 @@ fn write_run(root: &Path, name: &str) {
     let bytes = format!("chunk-{name}").into_bytes();
     fs::write(directory.join("events.chunk"), &bytes).expect("chunk");
     fs::write(
-        directory.join("manifest.json"),
-        serde_json::to_vec_pretty(&json!({
-            "schema_version": 1,
-            "run_id": name,
-            "completion": "complete",
-            "chunk_file": "events.chunk",
-            "chunk_sha256": digest(&bytes),
-        }))
-        .expect("manifest"),
+        directory.join("manifest.pb"),
+        RunManifest {
+            schema_version: 1,
+            run_id: name.to_owned(),
+            completion: Completion::Complete as i32,
+            chunk_file: "events.chunk".to_owned(),
+            chunk_sha256: digest(&bytes),
+            chunks: vec![RunChunk {
+                file: "events.chunk".to_owned(),
+                sha256: digest(&bytes),
+            }],
+            ..RunManifest::default()
+        }
+        .encode_to_vec(),
     )
     .expect("write manifest");
 }

@@ -221,7 +221,7 @@ fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
                 let event = RunEvent::decode_length_delimited(&mut input).expect("Run event");
                 match event.payload {
                     Some(Payload::RawCan(raw)) if raw.id == 0x601 => {
-                        raw_sequences.push(event.sequence)
+                        raw_sequences.push(event.sequence);
                     }
                     Some(Payload::SignalObservation(signal))
                         if signal.signal == "ambient_air_temperature_c" =>

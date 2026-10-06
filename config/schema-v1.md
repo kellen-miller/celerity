@@ -18,9 +18,18 @@ bounds, timing/ordering violations, insufficient Run free-space thresholds,
 model ABI mismatch, and mode mismatch. Runtime freshness windows are explicit:
 input/model evidence uses its configured age, while controller truth is bounded
 by two heartbeat periods and the controller runtime lease. The input window
-must exceed the documented 200 ms powertrain temperature broadcast period.
+must exceed the selected ECU profile's maximum period budget.
 Environment variables may supply only deployment paths and secrets, never
 control behavior.
+
+The required `powertrain.haltech` table is tagged by `mode`. `broadcast-v2`
+accepts no additional fields and retains the 200 ms temperature period budget.
+`nexus-gcan-v1` requires a standard-ID `base_id` for four consecutive frames and
+a positive `maximum_period_ms`. Both input/model freshness windows must exceed
+that period. IDs cannot overlap decoded Haltech IDs or the configured CANTCU
+range. The Nexus profile explicitly maps intercooler outlet temperature to
+the existing `air_temperature_c` ABI. Unknown profile versions/fields fail.
+Existing bundles must add this table; profile selection is never inferred.
 
 The required `powertrain.cantcu` table is tagged by `mode`. `disabled` accepts
 no base ID. `default` requires the commissioned decimal base ID for CANTCU's

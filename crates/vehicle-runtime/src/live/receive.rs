@@ -58,6 +58,18 @@ impl LiveRuntime {
         };
         let observed_ms = self.monotonic_ms();
         for signal in decoded.signals {
+            self.event_sequence = self.event_sequence.saturating_add(1);
+            let mut observation = RunRecord::signal(
+                self.event_sequence,
+                observed_ms.saturating_mul(1_000_000),
+                signal.name,
+                signal.value,
+                self.bundle.decoder_generation(),
+                0,
+                raw_sequence,
+            );
+            observation.source = "powertrain_signal".to_owned();
+            self.enqueue_bulk_record(observation);
             self.signal_values.insert(
                 signal.name.to_owned(),
                 (signal.value, observed_ms, raw_sequence),

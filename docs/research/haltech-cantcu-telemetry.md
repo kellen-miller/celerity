@@ -1,5 +1,10 @@
 > **Supersession:** This is decoder provenance, not installed-car validation. Live Celerity remains RX-only and enables only a measured, collision-free CANTCU datastream; unknown frames remain raw evidence.
 
+For the planned Nexus upgrade, select the explicit
+[Celerity Nexus GCAN v1 profile](../../contracts/nexus-gcan-v1.md). Its custom
+wire layout and commissioned timing replace the Elite fixed broadcast decoding
+when selected. The receive-only powertrain boundary remains unchanged.
+
 # Haltech Elite 2500 and CANTCU telemetry boundary
 
 Research current through 2026-07-30. Sources are first-party Haltech,

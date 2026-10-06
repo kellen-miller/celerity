@@ -9,6 +9,10 @@ This repository is pre-deployment software. It does not claim installed
 hardware, electrical fail-silence, target timing, vehicle-trained model quality,
 thermal-envelope validation, or road/track acceptance.
 
+Nexus ECU upgrades can use the explicit
+[Celerity GCAN telemetry profile](contracts/nexus-gcan-v1.md), with commissioned
+sensor mappings and timing. The powertrain connection remains receive-only.
+
 ## Repository shape
 
 - `crates/control-protocol`: `no_std` exact CAN v1 codec and golden vectors.

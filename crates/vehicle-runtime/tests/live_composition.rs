@@ -179,6 +179,18 @@ fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
                 runtime.outcome().command_source,
                 CommandSource::ControllerLocalFallback
             );
+            let expired = vehicle_diagnostics::read_diagnostics(&diagnostics_socket)
+                .expect("expired-input diagnostics");
+            let temperature = expired.coolant_temperature.expect("last valid temperature");
+            assert!((temperature.degrees_celsius - 100.0).abs() < f64::EPSILON);
+            assert!(temperature.observation_age_ms >= 250);
+            assert!(
+                expired
+                    .intake_air_temperature
+                    .expect("last valid outlet temperature")
+                    .observation_age_ms
+                    >= 250
+            );
         }
 
         let manifest = runtime.shutdown().expect("Run must seal");
@@ -214,7 +226,7 @@ fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
                     Some(Payload::SignalObservation(signal))
                         if signal.signal == "ambient_air_temperature_c" =>
                     {
-                        assert_eq!(event.source, "powertrain_signal");
+                        assert_eq!(event.source, "decoded_signal");
                         supplementary = Some(signal);
                     }
                     _ => {}

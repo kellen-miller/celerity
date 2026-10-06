@@ -1,9 +1,25 @@
+mod haltech;
+mod nexus;
+
+use haltech::HaltechFrame;
+use nexus::NexusFrame;
+use num_enum::TryFromPrimitive;
 use serde::Deserialize;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(tag = "mode", rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) enum HaltechReception {
+    BroadcastV2 {},
+    NexusGcanV1 {
+        base_id: u16,
+        maximum_period_ms: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(tag = "mode", rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) enum CantcuReception {
-    Disabled,
+    Disabled {},
     Default { base_id: u16 },
 }
 
@@ -16,6 +32,7 @@ pub struct DecodedSignal {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PowertrainSource {
     HaltechBroadcastV2,
+    NexusGcanV1,
     CantcuDefault,
     Unknown,
 }
@@ -33,104 +50,85 @@ pub enum PowertrainDecodeError {
     InvalidCantcuBase,
     CantcuIdCollision,
     WrongLength,
-}
-
-/// Published Haltech ECU Broadcast v2 message layouts.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HaltechFrame {
-    EngineLoadAndPressure,
-    FuelAndOilPressure,
-    WheelSpeeds,
-    EngineLimiting,
-    VehicleSpeed,
-    BatteryAndBarometricPressure,
-    ExhaustGasTemperatureGroup { group: u8 },
-    AmbientAir,
-    PreIntercoolerBoostPressure,
-    FluidTemperatures,
-    DrivelineTemperatures,
-    ThermoFansAndCheckEngine,
-    GenericSensorGroup { group: u8 },
-    EcuTemperature,
-    EngineProtection,
-    EngineState,
-    CalculatedAirTemperature,
-}
-
-impl HaltechFrame {
-    const fn from_id(can_id: u16) -> Option<Self> {
-        Some(match can_id {
-            0x360 => Self::EngineLoadAndPressure,
-            0x361 => Self::FuelAndOilPressure,
-            0x36c => Self::WheelSpeeds,
-            0x36e => Self::EngineLimiting,
-            0x370 => Self::VehicleSpeed,
-            0x372 => Self::BatteryAndBarometricPressure,
-            0x373..=0x375 => Self::ExhaustGasTemperatureGroup {
-                group: (can_id - 0x373) as u8,
-            },
-            0x376 => Self::AmbientAir,
-            0x377 => Self::PreIntercoolerBoostPressure,
-            0x3e0 => Self::FluidTemperatures,
-            0x3e1 => Self::DrivelineTemperatures,
-            0x3e4 => Self::ThermoFansAndCheckEngine,
-            0x3e7..=0x3e9 => Self::GenericSensorGroup {
-                group: (can_id - 0x3e7) as u8,
-            },
-            0x469 => Self::EcuTemperature,
-            0x6f3 => Self::EngineProtection,
-            0x6f4 => Self::EngineState,
-            0x6f7 => Self::CalculatedAirTemperature,
-            _ => return None,
-        })
-    }
+    InvalidNexusBase,
+    NexusIdCollision,
+    InvalidNexusPeriod,
+    InvalidNexusPayload,
 }
 
 /// Relative message layouts in the documented CANTCU Default CAN Datastream.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromPrimitive)]
+#[repr(u16)]
 enum CantcuFrame {
-    EngineAndPedal,
-    TorqueAndShift,
-    DrivenWheelAndShifter,
-    DigitalIo,
-    AnalogInputs,
-    ShiftStatus,
-    TargetRpmAndDeltas,
+    EngineAndPedal = 0,
+    TorqueAndShift = 1,
+    DrivenWheelAndShifter = 2,
+    DigitalIo = 3,
+    AnalogInputs = 4,
+    ShiftStatus = 5,
+    TargetRpmAndDeltas = 6,
 }
 
 impl CantcuFrame {
     fn from_id(base_id: u16, can_id: u16) -> Option<Self> {
-        Some(match can_id.checked_sub(base_id)? {
-            0 => Self::EngineAndPedal,
-            1 => Self::TorqueAndShift,
-            2 => Self::DrivenWheelAndShifter,
-            3 => Self::DigitalIo,
-            4 => Self::AnalogInputs,
-            5 => Self::ShiftStatus,
-            6 => Self::TargetRpmAndDeltas,
-            _ => return None,
-        })
+        Self::try_from(can_id.checked_sub(base_id)?).ok()
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PowertrainDecoder {
+    haltech: HaltechReception,
     cantcu: Option<CantcuDefaultStream>,
 }
 
 impl PowertrainDecoder {
-    pub(crate) const fn disabled() -> Self {
-        Self { cantcu: None }
+    pub(crate) const fn unconfigured() -> Self {
+        Self {
+            haltech: HaltechReception::BroadcastV2 {},
+            cantcu: None,
+        }
     }
 
     pub(crate) fn from_reception(
+        haltech: HaltechReception,
         reception: CantcuReception,
     ) -> Result<Self, PowertrainDecodeError> {
-        match reception {
-            CantcuReception::Disabled => Ok(Self { cantcu: None }),
-            CantcuReception::Default { base_id } => Ok(Self {
-                cantcu: Some(CantcuDefaultStream::new(base_id)?),
-            }),
+        let cantcu = match reception {
+            CantcuReception::Disabled {} => None,
+            CantcuReception::Default { base_id } => Some(CantcuDefaultStream::new(base_id)?),
+        };
+
+        if let HaltechReception::NexusGcanV1 {
+            base_id,
+            maximum_period_ms,
+        } = haltech
+        {
+            let last = base_id
+                .checked_add(NexusFrame::OperatingContext as u16)
+                .filter(|last| *last <= 0x7ff)
+                .ok_or(PowertrainDecodeError::InvalidNexusBase)?;
+            if maximum_period_ms == 0 {
+                return Err(PowertrainDecodeError::InvalidNexusPeriod);
+            }
+
+            if (base_id..=last).any(|id| {
+                HaltechFrame::from_id(id).is_some()
+                    || cantcu
+                        .is_some_and(|stream| CantcuFrame::from_id(stream.base_id, id).is_some())
+            }) {
+                return Err(PowertrainDecodeError::NexusIdCollision);
+            }
+        }
+
+        Ok(Self { haltech, cantcu })
+    }
+
+    pub(crate) const fn maximum_period_ms(&self) -> u64 {
+        match self.haltech {
+            HaltechReception::BroadcastV2 {} => 200,
+            HaltechReception::NexusGcanV1 {
+                maximum_period_ms, ..
+            } => maximum_period_ms,
         }
     }
 
@@ -138,13 +136,26 @@ impl PowertrainDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `WrongLength` when a recognized fixed-layout frame is not 8 bytes.
+    /// Rejects recognized frames with incorrect length or invalid Nexus values.
     pub fn decode(
         &self,
         can_id: u16,
         payload: &[u8],
     ) -> Result<DecodedPowertrainFrame, PowertrainDecodeError> {
-        decode_powertrain_frame(can_id, payload, self.cantcu)
+        match self.haltech {
+            HaltechReception::BroadcastV2 {} => {
+                if let Some(frame) = HaltechFrame::from_id(can_id) {
+                    return frame.decode(can_id, payload);
+                }
+            }
+            HaltechReception::NexusGcanV1 { base_id, .. } => {
+                if let Some(frame) = NexusFrame::from_id(base_id, can_id) {
+                    return nexus::decode(frame, can_id, payload);
+                }
+            }
+        }
+
+        decode_cantcu_frame(can_id, payload, self.cantcu)
     }
 }
 
@@ -163,7 +174,7 @@ impl CantcuDefaultStream {
     /// Haltech Broadcast v2 identifier consumed by Celerity.
     fn new(base_id: u16) -> Result<Self, PowertrainDecodeError> {
         let last = base_id
-            .checked_add(6)
+            .checked_add(CantcuFrame::TargetRpmAndDeltas as u16)
             .ok_or(PowertrainDecodeError::InvalidCantcuBase)?;
         if last > 0x7ff {
             return Err(PowertrainDecodeError::InvalidCantcuBase);
@@ -175,152 +186,17 @@ impl CantcuDefaultStream {
     }
 }
 
-/// Decodes published Haltech Broadcast v2 big-endian fields and, only when
-/// deliberately enabled, the opposite-endian CANTCU Default stream. Unknown
-/// frames preserve their exact bytes without invented semantics.
+/// Decodes the explicitly enabled little-endian CANTCU Default stream.
+/// Unknown frames preserve their exact bytes without invented semantics.
 ///
 /// # Errors
 ///
 /// Returns `WrongLength` when a recognized fixed-layout frame is not 8 bytes.
-fn decode_powertrain_frame(
+fn decode_cantcu_frame(
     can_id: u16,
     payload: &[u8],
     cantcu: Option<CantcuDefaultStream>,
 ) -> Result<DecodedPowertrainFrame, PowertrainDecodeError> {
-    if let Some(frame) = HaltechFrame::from_id(can_id) {
-        if payload.len() != 8 {
-            return Err(PowertrainDecodeError::WrongLength);
-        }
-        let be = |offset: usize| u16::from_be_bytes([payload[offset], payload[offset + 1]]);
-        let mut signals = Vec::new();
-        match frame {
-            HaltechFrame::EngineLoadAndPressure => {
-                signals.push(signal("engine_rpm", f64::from(be(0))));
-                signals.push(signal("map_kpa_absolute", f64::from(be(2)) / 10.0));
-                signals.push(signal("throttle_percent", f64::from(be(4)) / 10.0));
-                signals.push(signal(
-                    "coolant_pressure_kpa_gauge",
-                    f64::from(be(6)) / 10.0 - 101.3,
-                ));
-            }
-            HaltechFrame::FuelAndOilPressure => {
-                signals.push(signal(
-                    "fuel_pressure_kpa_gauge",
-                    f64::from(be(0)) / 10.0 - 101.3,
-                ));
-                signals.push(signal(
-                    "oil_pressure_kpa_gauge",
-                    f64::from(be(2)) / 10.0 - 101.3,
-                ));
-                signals.push(signal("engine_demand_percent", f64::from(be(4)) / 10.0));
-            }
-            HaltechFrame::WheelSpeeds => {
-                for (index, name) in [
-                    "wheel_speed_front_left_kph",
-                    "wheel_speed_front_right_kph",
-                    "wheel_speed_rear_left_kph",
-                    "wheel_speed_rear_right_kph",
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    signals.push(signal(name, f64::from(be(index * 2)) / 10.0));
-                }
-            }
-            HaltechFrame::EngineLimiting => signals.push(signal(
-                "engine_limiting_active",
-                if be(0) != 0 { 1.0 } else { 0.0 },
-            )),
-            HaltechFrame::VehicleSpeed => {
-                signals.push(signal("vehicle_speed_kph", f64::from(be(0)) / 10.0));
-            }
-            HaltechFrame::BatteryAndBarometricPressure => {
-                signals.push(signal("battery_voltage_v", f64::from(be(0)) / 10.0));
-                signals.push(signal("barometric_pressure_kpa", f64::from(be(6)) / 10.0));
-            }
-            HaltechFrame::ExhaustGasTemperatureGroup { group } => {
-                let first = usize::from(group) * 4 + 1;
-                for index in 0..4 {
-                    signals.push(signal(
-                        egt_name(first + index),
-                        f64::from(be(index * 2)) / 10.0 - 273.1,
-                    ));
-                }
-            }
-            HaltechFrame::AmbientAir => signals.push(signal(
-                "ambient_air_temperature_c",
-                f64::from(be(0)) / 10.0 - 273.1,
-            )),
-            HaltechFrame::PreIntercoolerBoostPressure => signals.push(signal(
-                "pre_intercooler_boost_pressure_kpa",
-                f64::from(be(0)) / 10.0,
-            )),
-            HaltechFrame::FluidTemperatures => {
-                for (offset, name) in [
-                    "coolant_temperature_c",
-                    "air_temperature_c",
-                    "fuel_temperature_c",
-                    "oil_temperature_c",
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    signals.push(signal(name, f64::from(be(offset * 2)) / 10.0 - 273.1));
-                }
-            }
-            HaltechFrame::DrivelineTemperatures => {
-                signals.push(signal(
-                    "gearbox_oil_temperature_c",
-                    f64::from(be(0)) / 10.0 - 273.1,
-                ));
-                signals.push(signal(
-                    "differential_oil_temperature_c",
-                    f64::from(be(2)) / 10.0 - 273.1,
-                ));
-                signals.push(signal(
-                    "pre_intercooler_air_temperature_c",
-                    f64::from(be(6)) / 10.0 - 273.1,
-                ));
-            }
-            HaltechFrame::ThermoFansAndCheckEngine => {
-                signals.push(signal("thermo_fan_1", bool_value(payload[3] & 0x01 != 0)));
-                signals.push(signal("thermo_fan_2", bool_value(payload[3] & 0x02 != 0)));
-                signals.push(signal("thermo_fan_3", bool_value(payload[3] & 0x04 != 0)));
-                signals.push(signal("thermo_fan_4", bool_value(payload[3] & 0x08 != 0)));
-                signals.push(signal("check_engine", bool_value(payload[7] & 0x80 != 0)));
-            }
-            HaltechFrame::GenericSensorGroup { group } => {
-                let first = usize::from(group) * 4 + 1;
-                for index in 0..(11 - first).min(4) {
-                    signals.push(signal(
-                        generic_sensor_name(first + index),
-                        f64::from(be(index * 2)),
-                    ));
-                }
-            }
-            HaltechFrame::EcuTemperature => {
-                signals.push(signal("ecu_temperature_c", f64::from(be(0)) / 10.0 - 273.1));
-            }
-            HaltechFrame::EngineProtection => {
-                signals.push(signal("engine_protection_severity", f64::from(payload[5])));
-                signals.push(signal("engine_protection_obd_reason", f64::from(be(6))));
-            }
-            HaltechFrame::EngineState => {
-                signals.push(signal("engine_state", f64::from(payload[1] & 0x0f)));
-            }
-            HaltechFrame::CalculatedAirTemperature => signals.push(signal(
-                "calculated_air_temperature_c",
-                f64::from(be(4)) / 10.0 - 273.1,
-            )),
-        }
-        return Ok(DecodedPowertrainFrame {
-            can_id,
-            source: PowertrainSource::HaltechBroadcastV2,
-            signals,
-            raw: payload.to_vec(),
-        });
-    }
-
     if let Some(stream) = cantcu
         && let Some(frame) = CantcuFrame::from_id(stream.base_id, can_id)
     {
@@ -408,32 +284,6 @@ const fn signal(name: &'static str, value: f64) -> DecodedSignal {
     DecodedSignal { name, value }
 }
 
-const fn bool_value(value: bool) -> f64 {
-    if value { 1.0 } else { 0.0 }
-}
-
-const fn egt_name(index: usize) -> &'static str {
-    [
-        "egt_1_c", "egt_2_c", "egt_3_c", "egt_4_c", "egt_5_c", "egt_6_c", "egt_7_c", "egt_8_c",
-        "egt_9_c", "egt_10_c", "egt_11_c", "egt_12_c",
-    ][index - 1]
-}
-
-const fn generic_sensor_name(index: usize) -> &'static str {
-    [
-        "generic_sensor_1_raw",
-        "generic_sensor_2_raw",
-        "generic_sensor_3_raw",
-        "generic_sensor_4_raw",
-        "generic_sensor_5_raw",
-        "generic_sensor_6_raw",
-        "generic_sensor_7_raw",
-        "generic_sensor_8_raw",
-        "generic_sensor_9_raw",
-        "generic_sensor_10_raw",
-    ][index - 1]
-}
-
 const fn cantcu_digital_name(index: usize) -> &'static str {
     [
         "cantcu_digital_input_1",
@@ -468,7 +318,7 @@ mod tests {
         );
         assert_eq!(
             HaltechFrame::from_id(0x375),
-            Some(HaltechFrame::ExhaustGasTemperatureGroup { group: 2 })
+            Some(HaltechFrame::ExhaustGasTemperatures9To12)
         );
         assert_eq!(HaltechFrame::from_id(0x3e6), None);
     }

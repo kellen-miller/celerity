@@ -6,10 +6,9 @@ use serde::Deserialize;
 use validation::{breakpoint_index, digest, load_experiment};
 
 use crate::{
-    ExperimentPlan, PowertrainDecodeError, PowertrainDecoder, powertrain::CantcuReception,
+    ExperimentPlan, PowertrainDecodeError, PowertrainDecoder,
+    powertrain::{CantcuReception, HaltechReception},
 };
-
-const POWERTRAIN_TEMPERATURE_PERIOD_MS: u64 = 200;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -37,6 +36,7 @@ pub enum BundleError {
     NonmonotonicPolicy,
     InvalidRuntimeTiming,
     InvalidCantcuConfiguration(PowertrainDecodeError),
+    InvalidHaltechConfiguration(PowertrainDecodeError),
     InvalidStorage,
     InvalidSync,
 }
@@ -48,7 +48,7 @@ pub struct ValidatedBundle {
     configuration_sha256: String,
     #[serde(skip)]
     loaded_experiment_plan: Option<ExperimentPlan>,
-    #[serde(skip, default = "PowertrainDecoder::disabled")]
+    #[serde(skip, default = "PowertrainDecoder::unconfigured")]
     powertrain_decoder: PowertrainDecoder,
     schema_version: u32,
     generation: u64,
@@ -95,6 +95,7 @@ pub struct TimingModel {
 #[serde(deny_unknown_fields)]
 struct PowertrainConfiguration {
     decoder_generation: u64,
+    haltech: HaltechReception,
     cantcu: CantcuReception,
 }
 
@@ -262,8 +263,16 @@ impl ValidatedBundle {
             toml::from_str(&source).map_err(|error| BundleError::Parse(error.to_string()))?;
         bundle.configuration_sha256 = digest(&source);
         bundle.loaded_experiment_plan = load_experiment(&bundle, path)?;
-        bundle.powertrain_decoder = PowertrainDecoder::from_reception(bundle.powertrain.cantcu)
-            .map_err(BundleError::InvalidCantcuConfiguration)?;
+        bundle.powertrain_decoder =
+            PowertrainDecoder::from_reception(bundle.powertrain.haltech, bundle.powertrain.cantcu)
+                .map_err(|error| match error {
+                    PowertrainDecodeError::InvalidNexusBase
+                    | PowertrainDecodeError::NexusIdCollision
+                    | PowertrainDecodeError::InvalidNexusPeriod => {
+                        BundleError::InvalidHaltechConfiguration(error)
+                    }
+                    _ => BundleError::InvalidCantcuConfiguration(error),
+                })?;
         Ok(bundle)
     }
 

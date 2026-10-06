@@ -2,9 +2,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use super::{
-    BundleError, Composition, POWERTRAIN_TEMPERATURE_PERIOD_MS, StartupMode, ValidatedBundle,
-};
+use super::{BundleError, Composition, StartupMode, ValidatedBundle};
 use crate::ExperimentPlan;
 
 impl ValidatedBundle {
@@ -97,8 +95,9 @@ impl ValidatedBundle {
             return Err(BundleError::InvalidRuntimeTiming);
         }
         let heartbeat_window_ms = u64::from(controller.heartbeat_period_ms).saturating_mul(2);
-        if self.runtime.input_stale_after <= POWERTRAIN_TEMPERATURE_PERIOD_MS
-            || self.runtime.model_signals_stale_after <= POWERTRAIN_TEMPERATURE_PERIOD_MS
+        let powertrain_period_ms = self.powertrain_decoder.maximum_period_ms();
+        if self.runtime.input_stale_after <= powertrain_period_ms
+            || self.runtime.model_signals_stale_after <= powertrain_period_ms
             || self.runtime.cycle >= u64::from(controller.acknowledgement_deadline_ms)
             || controller.acknowledgement_deadline_ms >= controller.command_lease_ms
             || heartbeat_window_ms >= self.runtime.controller_truth_stale_after

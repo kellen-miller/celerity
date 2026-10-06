@@ -227,7 +227,8 @@ pub fn serve_diagnostics(
                         use std::io::{Read, Write};
 
                         if let Err(error) = stream
-                            .set_read_timeout(Some(IO_TIMEOUT))
+                            .set_nonblocking(false)
+                            .and_then(|()| stream.set_read_timeout(Some(IO_TIMEOUT)))
                             .and_then(|()| stream.set_write_timeout(Some(IO_TIMEOUT)))
                         {
                             eprintln!("diagnostics connection configuration failed: {error}");

@@ -119,7 +119,7 @@ impl RunRecord {
         Self {
             sequence,
             monotonic_ns,
-            source: "model_signal".to_owned(),
+            source: "decoded_signal".to_owned(),
             payload: wire::run_event::Payload::SignalObservation(wire::SignalObservation {
                 signal: signal.to_owned(),
                 value,

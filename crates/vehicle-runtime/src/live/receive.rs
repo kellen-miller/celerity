@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use control_core::{EnqueueResult, RawCanEvidence, RunRecord, RuntimeEvent};
+use control_core::{ControllerMode, EnqueueResult, RawCanEvidence, RunRecord, RuntimeEvent};
 use control_protocol::{DiscoveryProbe, Frame};
 use vehicle_diagnostics::AcceptedRadiatorSplitCommand;
 
@@ -58,6 +58,16 @@ impl LiveRuntime {
         };
         let observed_ms = self.monotonic_ms();
         for signal in decoded.signals {
+            self.event_sequence = self.event_sequence.saturating_add(1);
+            self.enqueue_bulk_record(RunRecord::signal(
+                self.event_sequence,
+                observed_ms.saturating_mul(1_000_000),
+                signal.name,
+                signal.value,
+                self.bundle.decoder_generation(),
+                0,
+                raw_sequence,
+            ));
             self.signal_values.insert(
                 signal.name.to_owned(),
                 (signal.value, observed_ms, raw_sequence),
@@ -304,10 +314,13 @@ impl LiveRuntime {
                     self.record("controller_heartbeat_ignored", &format!("{message:?}"));
                     return Ok(());
                 }
-                let state_consistent = match message.state_flags {
-                    1 => message.current_epoch == 0 || message.current_epoch == self.epoch,
-                    2 => message.current_epoch == self.epoch,
-                    _ => false,
+                let state_consistent = match ControllerMode::try_from(message.state_flags) {
+                    Ok(ControllerMode::LocalFallback) => {
+                        message.current_epoch == 0 || message.current_epoch == self.epoch
+                    }
+
+                    Ok(ControllerMode::RemoteAuthority) => message.current_epoch == self.epoch,
+                    Err(_) => false,
                 };
                 let truth_matches = Some(message.boot_session) == self.boot_session
                     && message.configuration_generation == self.controller.configuration_generation

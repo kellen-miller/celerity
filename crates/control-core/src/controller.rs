@@ -1,12 +1,16 @@
+use num_enum::TryFromPrimitive;
+
 use control_protocol::{
     CapabilityReport, CommandAck, ConfigurationAck, Frame, Heartbeat, NodeAnnounce,
     RuntimeLeaseAck, WireError, decode, encode,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Controller mode codes carried by acknowledgements and state flags.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromPrimitive)]
+#[repr(u16)]
 pub enum ControllerMode {
-    LocalFallback,
-    RemoteAuthority,
+    LocalFallback = 1,
+    RemoteAuthority = 2,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -111,10 +115,7 @@ impl ControllerEmulator {
                         protocol_major: 1,
                         protocol_minor: 0,
                         lifecycle: if self.configuration.is_some() { 2 } else { 1 },
-                        state_flags: match self.mode {
-                            ControllerMode::LocalFallback => 1,
-                            ControllerMode::RemoteAuthority => 2,
-                        },
+                        state_flags: self.mode as u8,
                         boot_session: self.provisioning.boot_session,
                         provisioned_identity: self.provisioning.identity,
                         firmware_generation: self.provisioning.firmware_generation,
@@ -210,10 +211,7 @@ impl ControllerEmulator {
                         epoch: message.epoch,
                         command_sequence: message.command_sequence,
                         accepted_basis_points: self.accepted_basis_points,
-                        mode: match self.mode {
-                            ControllerMode::LocalFallback => 1,
-                            ControllerMode::RemoteAuthority => 2,
-                        },
+                        mode: self.mode as u8,
                         fault_latch: 1,
                         result: if accepted { 1 } else { 2 },
                         output_state: 1,
@@ -230,7 +228,7 @@ impl ControllerEmulator {
                         boot_session: self.provisioning.boot_session,
                         request_sequence: message.request_sequence,
                         accepted_basis_points: self.accepted_basis_points,
-                        mode: 1,
+                        mode: self.mode as u8,
                         fault_latch: 1,
                         result: 1,
                     },
@@ -288,10 +286,7 @@ impl ControllerEmulator {
                 current_epoch: self.runtime_lease.map_or(0, |lease| lease.epoch),
                 last_command_sequence: self.last_command_sequence.unwrap_or(0),
                 accepted_basis_points: self.accepted_basis_points,
-                state_flags: match self.mode {
-                    ControllerMode::LocalFallback => 1,
-                    ControllerMode::RemoteAuthority => 2,
-                },
+                state_flags: self.mode as u16,
             },
         })
         .map(Some)

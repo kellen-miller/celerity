@@ -19,6 +19,8 @@ use vehicle_diagnostics::{
     serve_diagnostics,
 };
 
+use prost::Message;
+
 #[test]
 fn startup_snapshot_is_typed_and_socket_is_group_readable() {
     let temporary = tempfile::tempdir().expect("temporary directory");
@@ -65,6 +67,35 @@ fn startup_snapshot_is_typed_and_socket_is_group_readable() {
     worker.join().expect("worker join").expect("worker result");
     assert!(!socket.exists());
     assert!(published_at.elapsed() < Duration::from_secs(2));
+}
+
+#[test]
+fn status_request_can_arrive_after_connection_is_accepted() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let socket = temporary.path().join("diagnostics.sock");
+    let stopping = Arc::new(AtomicBool::new(false));
+    let store = DiagnosticsStore::new(DiagnosticsSnapshot::startup_fallback(), 20, Instant::now());
+    let worker = serve_diagnostics(&socket, Arc::clone(&stopping), store).expect("server");
+    let mut client = UnixStream::connect(&socket).expect("delayed client");
+    client
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("read timeout");
+    thread::sleep(Duration::from_millis(80));
+    client.write_all(b"status\n").expect("delayed request");
+    let mut response = Vec::new();
+    client.read_to_end(&mut response).expect("delayed response");
+    let wire = celerity_proto::celerity::v1::DiagnosticsSnapshot::decode(response.as_slice())
+        .expect("wire snapshot");
+    assert_eq!(wire.schema_version, 2);
+    assert_eq!(
+        wire.global_authority,
+        DiagnosticsSnapshot::startup_fallback()
+            .to_proto()
+            .global_authority,
+    );
+
+    stopping.store(true, Ordering::Relaxed);
+    worker.join().expect("worker join").expect("worker result");
 }
 
 #[test]

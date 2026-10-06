@@ -1,8 +1,33 @@
 use super::{DecodedPowertrainFrame, PowertrainDecodeError, PowertrainSource, signal};
 
+const CONTROL_TEMPERATURES_OFFSET: u16 = 0;
+const AIR_PATH_OFFSET: u16 = 1;
+const FLUID_HEALTH_OFFSET: u16 = 2;
+pub(super) const OPERATING_CONTEXT_OFFSET: u16 = 3;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum NexusFrame {
+    ControlTemperatures,
+    AirPath,
+    FluidHealth,
+    OperatingContext,
+}
+
+impl NexusFrame {
+    pub(super) fn from_id(base_id: u16, can_id: u16) -> Option<Self> {
+        Some(match can_id.checked_sub(base_id)? {
+            CONTROL_TEMPERATURES_OFFSET => Self::ControlTemperatures,
+            AIR_PATH_OFFSET => Self::AirPath,
+            FLUID_HEALTH_OFFSET => Self::FluidHealth,
+            OPERATING_CONTEXT_OFFSET => Self::OperatingContext,
+            _ => return None,
+        })
+    }
+}
+
 /// Celerity's commissioned Nexus GCAN v1 profile, not a factory Haltech stream.
 pub(super) fn decode(
-    frame: u16,
+    frame: NexusFrame,
     can_id: u16,
     payload: &[u8],
 ) -> Result<DecodedPowertrainFrame, PowertrainDecodeError> {
@@ -16,7 +41,7 @@ pub(super) fn decode(
         f64::from(i16::from_be_bytes([payload[offset], payload[offset + 1]])) / 10.0
     };
     let fields: &[(&'static str, f64, f64, f64)] = match frame {
-        0 => {
+        NexusFrame::ControlTemperatures => {
             if payload[4..] != [0; 4] {
                 return Err(PowertrainDecodeError::InvalidNexusPayload);
             }
@@ -31,7 +56,8 @@ pub(super) fn decode(
                 ),
             ]
         }
-        1 => &[
+
+        NexusFrame::AirPath => &[
             ("pre_intercooler_air_temperature_c", signed(0), -50.0, 300.0),
             ("ambient_air_temperature_c", signed(2), -50.0, 300.0),
             (
@@ -42,13 +68,13 @@ pub(super) fn decode(
             ),
             ("map_kpa_absolute", unsigned(6) / 10.0, 0.0, 1_000.0),
         ],
-        2 => &[
+        NexusFrame::FluidHealth => &[
             ("oil_temperature_c", signed(0), -50.0, 300.0),
             ("gearbox_oil_temperature_c", signed(2), -50.0, 300.0),
             ("coolant_pressure_kpa_gauge", signed(4), -100.0, 1_000.0),
             ("oil_pressure_kpa_gauge", signed(6), -100.0, 2_000.0),
         ],
-        3 => {
+        NexusFrame::OperatingContext => {
             if payload[6] > 1 || payload[7] > 1 {
                 return Err(PowertrainDecodeError::InvalidNexusPayload);
             }
@@ -60,7 +86,6 @@ pub(super) fn decode(
                 ("thermo_fan_1", f64::from(payload[6]), 0.0, 1.0),
             ]
         }
-        _ => unreachable!("only commissioned Nexus frame offsets reach this decoder"),
     };
 
     let mut signals = Vec::new();
@@ -72,10 +97,10 @@ pub(super) fn decode(
         signals.push(signal(name, value));
     }
 
-    if frame == 0 {
+    if frame == NexusFrame::ControlTemperatures {
         // Preserve the thermal-v1 ABI: its air input is explicitly the outlet sensor.
         signals.push(signal("air_temperature_c", signed(2)));
-    } else if frame == 3 {
+    } else if frame == NexusFrame::OperatingContext {
         signals.push(signal("thermo_fan_2", f64::from(payload[7])));
     }
 

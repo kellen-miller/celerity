@@ -8,6 +8,9 @@ use super::{
     CONFIGURATION_RETRY_INTERVAL, DISCOVERY_RETRY_INTERVAL, LiveRuntime, map_command_source,
 };
 
+const CONTROLLER_LOCAL_FALLBACK_STATE: u16 = 1;
+const CONTROLLER_REMOTE_AUTHORITY_STATE: u16 = 2;
+
 impl LiveRuntime {
     pub(crate) fn receive_powertrain(&mut self) {
         let received = match self.powertrain.receive() {
@@ -315,8 +318,11 @@ impl LiveRuntime {
                     return Ok(());
                 }
                 let state_consistent = match message.state_flags {
-                    1 => message.current_epoch == 0 || message.current_epoch == self.epoch,
-                    2 => message.current_epoch == self.epoch,
+                    CONTROLLER_LOCAL_FALLBACK_STATE => {
+                        message.current_epoch == 0 || message.current_epoch == self.epoch
+                    }
+
+                    CONTROLLER_REMOTE_AUTHORITY_STATE => message.current_epoch == self.epoch,
                     _ => false,
                 };
                 let truth_matches = Some(message.boot_session) == self.boot_session

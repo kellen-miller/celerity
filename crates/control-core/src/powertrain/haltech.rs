@@ -1,76 +1,37 @@
+use num_enum::TryFromPrimitive;
+
 use super::{DecodedPowertrainFrame, PowertrainDecodeError, PowertrainSource, signal};
 
-const ENGINE_LOAD_AND_PRESSURE_ID: u16 = 0x360;
-const FUEL_AND_OIL_PRESSURE_ID: u16 = 0x361;
-const WHEEL_SPEEDS_ID: u16 = 0x36c;
-const ENGINE_LIMITING_ID: u16 = 0x36e;
-const VEHICLE_SPEED_ID: u16 = 0x370;
-const BATTERY_AND_BAROMETRIC_PRESSURE_ID: u16 = 0x372;
-const EXHAUST_GAS_TEMPERATURE_FIRST_ID: u16 = 0x373;
-const EXHAUST_GAS_TEMPERATURE_LAST_ID: u16 = 0x375;
-const AMBIENT_AIR_ID: u16 = 0x376;
-const PRE_INTERCOOLER_BOOST_PRESSURE_ID: u16 = 0x377;
-const FLUID_TEMPERATURES_ID: u16 = 0x3e0;
-const DRIVELINE_TEMPERATURES_ID: u16 = 0x3e1;
-const THERMO_FANS_AND_CHECK_ENGINE_ID: u16 = 0x3e4;
-const GENERIC_SENSOR_FIRST_ID: u16 = 0x3e7;
-const GENERIC_SENSOR_LAST_ID: u16 = 0x3e9;
-const ECU_TEMPERATURE_ID: u16 = 0x469;
-const ENGINE_PROTECTION_ID: u16 = 0x6f3;
-const ENGINE_STATE_ID: u16 = 0x6f4;
-const CALCULATED_AIR_TEMPERATURE_ID: u16 = 0x6f7;
-
-/// Published Haltech ECU Broadcast v2 message layouts.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Published Haltech ECU Broadcast v2 identifiers and message layouts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromPrimitive)]
+#[repr(u16)]
 pub(super) enum HaltechFrame {
-    EngineLoadAndPressure,
-    FuelAndOilPressure,
-    WheelSpeeds,
-    EngineLimiting,
-    VehicleSpeed,
-    BatteryAndBarometricPressure,
-    ExhaustGasTemperatureGroup { group: u8 },
-    AmbientAir,
-    PreIntercoolerBoostPressure,
-    FluidTemperatures,
-    DrivelineTemperatures,
-    ThermoFansAndCheckEngine,
-    GenericSensorGroup { group: u8 },
-    EcuTemperature,
-    EngineProtection,
-    EngineState,
-    CalculatedAirTemperature,
+    EngineLoadAndPressure = 0x360,
+    FuelAndOilPressure = 0x361,
+    WheelSpeeds = 0x36c,
+    EngineLimiting = 0x36e,
+    VehicleSpeed = 0x370,
+    BatteryAndBarometricPressure = 0x372,
+    ExhaustGasTemperatures1To4 = 0x373,
+    ExhaustGasTemperatures5To8 = 0x374,
+    ExhaustGasTemperatures9To12 = 0x375,
+    AmbientAir = 0x376,
+    PreIntercoolerBoostPressure = 0x377,
+    FluidTemperatures = 0x3e0,
+    DrivelineTemperatures = 0x3e1,
+    ThermoFansAndCheckEngine = 0x3e4,
+    GenericSensors1To4 = 0x3e7,
+    GenericSensors5To8 = 0x3e8,
+    GenericSensors9To10 = 0x3e9,
+    EcuTemperature = 0x469,
+    EngineProtection = 0x6f3,
+    EngineState = 0x6f4,
+    CalculatedAirTemperature = 0x6f7,
 }
 
 impl HaltechFrame {
-    pub(super) const fn from_id(can_id: u16) -> Option<Self> {
-        Some(match can_id {
-            ENGINE_LOAD_AND_PRESSURE_ID => Self::EngineLoadAndPressure,
-            FUEL_AND_OIL_PRESSURE_ID => Self::FuelAndOilPressure,
-            WHEEL_SPEEDS_ID => Self::WheelSpeeds,
-            ENGINE_LIMITING_ID => Self::EngineLimiting,
-            VEHICLE_SPEED_ID => Self::VehicleSpeed,
-            BATTERY_AND_BAROMETRIC_PRESSURE_ID => Self::BatteryAndBarometricPressure,
-            EXHAUST_GAS_TEMPERATURE_FIRST_ID..=EXHAUST_GAS_TEMPERATURE_LAST_ID => {
-                Self::ExhaustGasTemperatureGroup {
-                    group: (can_id - EXHAUST_GAS_TEMPERATURE_FIRST_ID) as u8,
-                }
-            }
-
-            AMBIENT_AIR_ID => Self::AmbientAir,
-            PRE_INTERCOOLER_BOOST_PRESSURE_ID => Self::PreIntercoolerBoostPressure,
-            FLUID_TEMPERATURES_ID => Self::FluidTemperatures,
-            DRIVELINE_TEMPERATURES_ID => Self::DrivelineTemperatures,
-            THERMO_FANS_AND_CHECK_ENGINE_ID => Self::ThermoFansAndCheckEngine,
-            GENERIC_SENSOR_FIRST_ID..=GENERIC_SENSOR_LAST_ID => Self::GenericSensorGroup {
-                group: (can_id - GENERIC_SENSOR_FIRST_ID) as u8,
-            },
-            ECU_TEMPERATURE_ID => Self::EcuTemperature,
-            ENGINE_PROTECTION_ID => Self::EngineProtection,
-            ENGINE_STATE_ID => Self::EngineState,
-            CALCULATED_AIR_TEMPERATURE_ID => Self::CalculatedAirTemperature,
-            _ => return None,
-        })
+    pub(super) fn from_id(can_id: u16) -> Option<Self> {
+        Self::try_from(can_id).ok()
     }
 
     pub(super) fn decode(
@@ -128,8 +89,11 @@ impl HaltechFrame {
                 signals.push(signal("battery_voltage_v", f64::from(be(0)) / 10.0));
                 signals.push(signal("barometric_pressure_kpa", f64::from(be(6)) / 10.0));
             }
-            Self::ExhaustGasTemperatureGroup { group } => {
-                let first = usize::from(group) * 4 + 1;
+            Self::ExhaustGasTemperatures1To4
+            | Self::ExhaustGasTemperatures5To8
+            | Self::ExhaustGasTemperatures9To12 => {
+                let first =
+                    usize::from(self as u16 - Self::ExhaustGasTemperatures1To4 as u16) * 4 + 1;
                 for index in 0..4 {
                     signals.push(signal(
                         egt_name(first + index),
@@ -179,8 +143,8 @@ impl HaltechFrame {
                 signals.push(signal("thermo_fan_4", bool_value(payload[3] & 0x08 != 0)));
                 signals.push(signal("check_engine", bool_value(payload[7] & 0x80 != 0)));
             }
-            Self::GenericSensorGroup { group } => {
-                let first = usize::from(group) * 4 + 1;
+            Self::GenericSensors1To4 | Self::GenericSensors5To8 | Self::GenericSensors9To10 => {
+                let first = usize::from(self as u16 - Self::GenericSensors1To4 as u16) * 4 + 1;
                 for index in 0..(11 - first).min(4) {
                     signals.push(signal(
                         generic_sensor_name(first + index),

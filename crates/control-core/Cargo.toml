@@ -9,6 +9,7 @@ version.workspace = true
 celerity-proto = { path = "../celerity-proto" }
 control-protocol = { path = "../control-protocol" }
 fs4 = "1.1.0"
+num_enum = "0.7.6"
 prost = "0.14.4"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

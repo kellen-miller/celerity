@@ -1,15 +1,12 @@
 use std::time::Instant;
 
-use control_core::{EnqueueResult, RawCanEvidence, RunRecord, RuntimeEvent};
+use control_core::{ControllerMode, EnqueueResult, RawCanEvidence, RunRecord, RuntimeEvent};
 use control_protocol::{DiscoveryProbe, Frame};
 use vehicle_diagnostics::AcceptedRadiatorSplitCommand;
 
 use super::{
     CONFIGURATION_RETRY_INTERVAL, DISCOVERY_RETRY_INTERVAL, LiveRuntime, map_command_source,
 };
-
-const CONTROLLER_LOCAL_FALLBACK_STATE: u16 = 1;
-const CONTROLLER_REMOTE_AUTHORITY_STATE: u16 = 2;
 
 impl LiveRuntime {
     pub(crate) fn receive_powertrain(&mut self) {
@@ -317,13 +314,13 @@ impl LiveRuntime {
                     self.record("controller_heartbeat_ignored", &format!("{message:?}"));
                     return Ok(());
                 }
-                let state_consistent = match message.state_flags {
-                    CONTROLLER_LOCAL_FALLBACK_STATE => {
+                let state_consistent = match ControllerMode::try_from(message.state_flags) {
+                    Ok(ControllerMode::LocalFallback) => {
                         message.current_epoch == 0 || message.current_epoch == self.epoch
                     }
 
-                    CONTROLLER_REMOTE_AUTHORITY_STATE => message.current_epoch == self.epoch,
-                    _ => false,
+                    Ok(ControllerMode::RemoteAuthority) => message.current_epoch == self.epoch,
+                    Err(_) => false,
                 };
                 let truth_matches = Some(message.boot_session) == self.boot_session
                     && message.configuration_generation == self.controller.configuration_generation

@@ -3,15 +3,8 @@ mod nexus;
 
 use haltech::HaltechFrame;
 use nexus::NexusFrame;
+use num_enum::TryFromPrimitive;
 use serde::Deserialize;
-
-const CANTCU_ENGINE_AND_PEDAL_OFFSET: u16 = 0;
-const CANTCU_TORQUE_AND_SHIFT_OFFSET: u16 = 1;
-const CANTCU_DRIVEN_WHEEL_AND_SHIFTER_OFFSET: u16 = 2;
-const CANTCU_DIGITAL_IO_OFFSET: u16 = 3;
-const CANTCU_ANALOG_INPUTS_OFFSET: u16 = 4;
-const CANTCU_SHIFT_STATUS_OFFSET: u16 = 5;
-const CANTCU_TARGET_RPM_AND_DELTAS_OFFSET: u16 = 6;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(tag = "mode", rename_all = "kebab-case", deny_unknown_fields)]
@@ -64,29 +57,21 @@ pub enum PowertrainDecodeError {
 }
 
 /// Relative message layouts in the documented CANTCU Default CAN Datastream.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromPrimitive)]
+#[repr(u16)]
 enum CantcuFrame {
-    EngineAndPedal,
-    TorqueAndShift,
-    DrivenWheelAndShifter,
-    DigitalIo,
-    AnalogInputs,
-    ShiftStatus,
-    TargetRpmAndDeltas,
+    EngineAndPedal = 0,
+    TorqueAndShift = 1,
+    DrivenWheelAndShifter = 2,
+    DigitalIo = 3,
+    AnalogInputs = 4,
+    ShiftStatus = 5,
+    TargetRpmAndDeltas = 6,
 }
 
 impl CantcuFrame {
     fn from_id(base_id: u16, can_id: u16) -> Option<Self> {
-        Some(match can_id.checked_sub(base_id)? {
-            CANTCU_ENGINE_AND_PEDAL_OFFSET => Self::EngineAndPedal,
-            CANTCU_TORQUE_AND_SHIFT_OFFSET => Self::TorqueAndShift,
-            CANTCU_DRIVEN_WHEEL_AND_SHIFTER_OFFSET => Self::DrivenWheelAndShifter,
-            CANTCU_DIGITAL_IO_OFFSET => Self::DigitalIo,
-            CANTCU_ANALOG_INPUTS_OFFSET => Self::AnalogInputs,
-            CANTCU_SHIFT_STATUS_OFFSET => Self::ShiftStatus,
-            CANTCU_TARGET_RPM_AND_DELTAS_OFFSET => Self::TargetRpmAndDeltas,
-            _ => return None,
-        })
+        Self::try_from(can_id.checked_sub(base_id)?).ok()
     }
 }
 
@@ -119,7 +104,7 @@ impl PowertrainDecoder {
         } = haltech
         {
             let last = base_id
-                .checked_add(nexus::OPERATING_CONTEXT_OFFSET)
+                .checked_add(NexusFrame::OperatingContext as u16)
                 .filter(|last| *last <= 0x7ff)
                 .ok_or(PowertrainDecodeError::InvalidNexusBase)?;
             if maximum_period_ms == 0 {
@@ -189,7 +174,7 @@ impl CantcuDefaultStream {
     /// Haltech Broadcast v2 identifier consumed by Celerity.
     fn new(base_id: u16) -> Result<Self, PowertrainDecodeError> {
         let last = base_id
-            .checked_add(CANTCU_TARGET_RPM_AND_DELTAS_OFFSET)
+            .checked_add(CantcuFrame::TargetRpmAndDeltas as u16)
             .ok_or(PowertrainDecodeError::InvalidCantcuBase)?;
         if last > 0x7ff {
             return Err(PowertrainDecodeError::InvalidCantcuBase);
@@ -333,7 +318,7 @@ mod tests {
         );
         assert_eq!(
             HaltechFrame::from_id(0x375),
-            Some(HaltechFrame::ExhaustGasTemperatureGroup { group: 2 })
+            Some(HaltechFrame::ExhaustGasTemperatures9To12)
         );
         assert_eq!(HaltechFrame::from_id(0x3e6), None);
     }

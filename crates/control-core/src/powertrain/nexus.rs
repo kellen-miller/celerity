@@ -1,27 +1,20 @@
+use num_enum::TryFromPrimitive;
+
 use super::{DecodedPowertrainFrame, PowertrainDecodeError, PowertrainSource, signal};
 
-const CONTROL_TEMPERATURES_OFFSET: u16 = 0;
-const AIR_PATH_OFFSET: u16 = 1;
-const FLUID_HEALTH_OFFSET: u16 = 2;
-pub(super) const OPERATING_CONTEXT_OFFSET: u16 = 3;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Relative identifiers in Celerity's commissioned Nexus GCAN v1 profile.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromPrimitive)]
+#[repr(u16)]
 pub(super) enum NexusFrame {
-    ControlTemperatures,
-    AirPath,
-    FluidHealth,
-    OperatingContext,
+    ControlTemperatures = 0,
+    AirPath = 1,
+    FluidHealth = 2,
+    OperatingContext = 3,
 }
 
 impl NexusFrame {
     pub(super) fn from_id(base_id: u16, can_id: u16) -> Option<Self> {
-        Some(match can_id.checked_sub(base_id)? {
-            CONTROL_TEMPERATURES_OFFSET => Self::ControlTemperatures,
-            AIR_PATH_OFFSET => Self::AirPath,
-            FLUID_HEALTH_OFFSET => Self::FluidHealth,
-            OPERATING_CONTEXT_OFFSET => Self::OperatingContext,
-            _ => return None,
-        })
+        Self::try_from(can_id.checked_sub(base_id)?).ok()
     }
 }
 

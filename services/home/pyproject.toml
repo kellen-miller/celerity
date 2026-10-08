@@ -10,7 +10,7 @@ dependencies = [
   "onnx>=1.18,<2",
   "onnxscript>=0.5,<1",
   "pyarrow>=21,<24",
-  "protobuf>=6.31.1,<8",
+  "protobuf>=7.36.2,<8",
   "torch>=2.8,<3",
   "uvicorn>=0.35,<1",
 ]

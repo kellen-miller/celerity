@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:0.8.15-python3.13-bookworm-slim
+FROM ghcr.io/astral-sh/uv:0.9.30-python3.13-bookworm-slim
 
 WORKDIR /app
 COPY pyproject.toml uv.lock ./

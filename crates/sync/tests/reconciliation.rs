@@ -244,7 +244,7 @@ fn away_state_performs_no_inventory_or_http_work() {
         sync.reconcile_once(&Away, &home, None, None, &[]),
         Ok(ReconcileOutcome::Away)
     );
-    assert_eq!(*home.missing.borrow(), []);
+    assert_eq!(*home.missing.borrow(), Vec::<String>::new());
 }
 
 #[test]

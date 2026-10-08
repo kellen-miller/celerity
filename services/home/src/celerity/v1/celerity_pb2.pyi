@@ -213,7 +213,7 @@ class RawCanFrame(_message.Message):
     hardware_timestamp_ns: int
     receive_overflow_count: int
     dropped_count: int
-    def __init__(self, channel: _Optional[str] = ..., direction: _Optional[_Union[Direction, str]] = ..., id: _Optional[int] = ..., extended: bool = ..., fd: bool = ..., bit_rate_switch: bool = ..., error_state_indicator: bool = ..., data: _Optional[bytes] = ..., hardware_timestamp_ns: _Optional[int] = ..., receive_overflow_count: _Optional[int] = ..., dropped_count: _Optional[int] = ...) -> None: ...
+    def __init__(self, channel: _Optional[str] = ..., direction: _Optional[_Union[Direction, str]] = ..., id: _Optional[int] = ..., extended: _Optional[bool] = ..., fd: _Optional[bool] = ..., bit_rate_switch: _Optional[bool] = ..., error_state_indicator: _Optional[bool] = ..., data: _Optional[bytes] = ..., hardware_timestamp_ns: _Optional[int] = ..., receive_overflow_count: _Optional[int] = ..., dropped_count: _Optional[int] = ...) -> None: ...
 
 class SignalObservation(_message.Message):
     __slots__ = ("signal", "value", "unit", "reference", "quality", "reason", "source_event_sequence", "decoder_generation", "age_ns")

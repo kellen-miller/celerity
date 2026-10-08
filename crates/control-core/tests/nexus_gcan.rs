@@ -90,7 +90,7 @@ fn nexus_selection_keeps_factory_broadcast_opaque_and_cantcu_independent() {
     for id in [0x360, 0x3e0, 0x5ff, 0x604] {
         let observation = decoder.decode(id, &[1, 2, 3]).expect("opaque evidence");
         assert_eq!(observation.source, PowertrainSource::Unknown);
-        assert!(observation.signals.is_empty());
+        assert_eq!(observation.signals, []);
         assert_eq!(observation.raw, [1, 2, 3]);
     }
 

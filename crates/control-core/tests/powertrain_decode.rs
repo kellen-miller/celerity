@@ -106,7 +106,7 @@ fn unknown_frames_remain_opaque_and_recognized_dlc_is_strict() {
     let decoder = decoder("mode = \"disabled\"", "unknown");
     let unknown = decoder.decode(0x123, &[1, 2, 3]).expect("opaque frame");
     assert_eq!(unknown.source, PowertrainSource::Unknown);
-    assert!(unknown.signals.is_empty());
+    assert_eq!(unknown.signals, []);
     assert_eq!(unknown.raw, [1, 2, 3]);
     assert_eq!(
         decoder.decode(0x360, &[0; 7]),

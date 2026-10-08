@@ -15,7 +15,7 @@ vehicle-diagnostics = { path = "../vehicle-diagnostics" }
 sd-notify = "0.5.0"
 signal-hook = "0.4.4"
 socketcan = { version = "3.6.2", default-features = false }
-nix = { version = "0.29.0", features = ["poll", "socket"] }
+nix = { version = "0.31.0", features = ["poll", "socket"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 celerity-proto = { path = "../celerity-proto" }

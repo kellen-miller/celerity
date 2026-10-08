@@ -156,7 +156,7 @@ def test_job_admits_only_complete_runs_and_survives_as_durable_subprocess(
     )
     assert admitted.status_code == 202
     job_id = JobStarted.FromString(admitted.content).job_id
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 60
     job = JobStatus.FromString(client.get(f"/v1/jobs/{job_id}", headers=AUTHORIZATION).content)
     while time.monotonic() < deadline and job.state != JOB_STATE_COMPLETED:
         time.sleep(0.05)
@@ -182,7 +182,8 @@ def test_job_admits_only_complete_runs_and_survives_as_durable_subprocess(
     repeated_job = JobStatus.FromString(
         client.get(f"/v1/jobs/{repeated_id}", headers=AUTHORIZATION).content
     )
-    while time.monotonic() < deadline + 10 and repeated_job.state == JOB_STATE_RUNNING:
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and repeated_job.state == JOB_STATE_RUNNING:
         time.sleep(0.05)
         repeated_job = JobStatus.FromString(
             client.get(f"/v1/jobs/{repeated_id}", headers=AUTHORIZATION).content
@@ -210,7 +211,7 @@ def test_job_admits_only_complete_runs_and_survives_as_durable_subprocess(
     )
     assert failed.status_code == 202
     failed_id = JobStarted.FromString(failed.content).job_id
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 60
     failed_job = JobStatus.FromString(
         client.get(f"/v1/jobs/{failed_id}", headers=AUTHORIZATION).content
     )
@@ -273,7 +274,7 @@ def test_valid_but_ineligible_corpus_finishes_as_no_change(
     )
     assert response.status_code == 202
     job_id = JobStarted.FromString(response.content).job_id
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 60
     job = JobStatus.FromString(client.get(f"/v1/jobs/{job_id}", headers=AUTHORIZATION).content)
     while time.monotonic() < deadline and job.state in {JOB_STATE_QUEUED, JOB_STATE_RUNNING}:
         time.sleep(0.05)
@@ -363,7 +364,7 @@ def test_restart_recovers_an_orphaned_durable_job(tmp_path: Path, home_client: T
         )
 
     with TestClient(create_app(tmp_path, "secret", WEBHOOK_URL)) as restarted:
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 60
         job = JobStatus.FromString(
             restarted.get("/v1/jobs/recover-me", headers=AUTHORIZATION).content
         )

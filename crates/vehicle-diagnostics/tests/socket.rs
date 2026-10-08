@@ -157,6 +157,6 @@ fn client_read_times_out_when_server_never_responds() {
     let error = read_diagnostics(&socket).expect_err("silent server must time out");
     assert!(started.elapsed() >= Duration::from_millis(200));
     assert!(started.elapsed() < Duration::from_secs(1));
-    assert!(!error.is_empty());
+    assert_ne!(error, "");
     server.join().expect("fake server");
 }

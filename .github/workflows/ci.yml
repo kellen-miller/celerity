@@ -10,7 +10,157 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    uses: kellen-miller/ci/.github/workflows/changed-paths.yaml@f01aacda5b78c7b67d1dc840bd0432be852a69a4
+    with:
+      filters: |
+        {
+          "contracts": [
+            ".github/workflows/**",
+            "scripts/**",
+            "contracts/**",
+            "crates/proto-codegen/**",
+            "crates/celerity-proto/src/generated/**",
+            "services/home/src/celerity/**",
+            "crates/vehicle-ui/web/src/generated/**",
+            "crates/vehicle-ui/web/package*.json",
+            "Cargo.toml",
+            "Cargo.lock",
+            ".cargo/**",
+            "rust-toolchain.toml"
+          ],
+          "rust": [
+            ".github/workflows/**",
+            "scripts/**",
+            "Cargo.toml",
+            "Cargo.lock",
+            ".cargo/**",
+            "rust-toolchain.toml",
+            "crates/**",
+            "firmware/**",
+            "config/**",
+            "contracts/**",
+            "fixtures/**",
+            "testdata/**"
+          ],
+          "python": [
+            ".github/workflows/**",
+            "scripts/**",
+            "services/home/**",
+            "contracts/**",
+            "fixtures/**",
+            "testdata/**",
+            ".python-version",
+            "pyproject.toml",
+            "uv.lock"
+          ],
+          "e2e": [
+            ".github/workflows/**",
+            "scripts/**",
+            "Cargo.toml",
+            "Cargo.lock",
+            ".cargo/**",
+            "rust-toolchain.toml",
+            "crates/**",
+            "firmware/**",
+            "config/**",
+            "contracts/**",
+            "fixtures/**",
+            "testdata/**",
+            "services/home/**",
+            ".python-version",
+            "pyproject.toml",
+            "uv.lock"
+          ],
+          "ui": [
+            ".github/workflows/**",
+            "scripts/**",
+            "Cargo.toml",
+            "Cargo.lock",
+            ".cargo/**",
+            "rust-toolchain.toml",
+            "crates/**",
+            "firmware/**",
+            "config/**",
+            "contracts/**",
+            "fixtures/**",
+            "testdata/**"
+          ],
+          "artifacts": [
+            ".github/workflows/**",
+            "scripts/**",
+            "Cargo.toml",
+            "Cargo.lock",
+            ".cargo/**",
+            "rust-toolchain.toml",
+            "crates/**",
+            "firmware/**",
+            "config/**",
+            "contracts/**",
+            "fixtures/**",
+            "testdata/**",
+            "services/home/**",
+            "deploy/helm/**",
+            ".python-version",
+            "pyproject.toml",
+            "uv.lock"
+          ],
+          "linux": [
+            ".github/workflows/**",
+            "scripts/**",
+            "Cargo.toml",
+            "Cargo.lock",
+            ".cargo/**",
+            "rust-toolchain.toml",
+            "crates/**",
+            "firmware/**",
+            "config/**",
+            "contracts/**",
+            "fixtures/**",
+            "testdata/**",
+            "deploy/systemd/**",
+            "deploy/tmpfiles.d/**",
+            "services/home/**"
+          ],
+          "shell": [
+            ".github/workflows/**",
+            "scripts/**"
+          ],
+          "docker": [
+            ".github/workflows/**",
+            "scripts/**",
+            "services/home/Dockerfile",
+            ".hadolint*"
+          ],
+          "length": [
+            ".github/workflows/**",
+            "scripts/**",
+            "**/*.rs",
+            "**/*.py",
+            "**/*.ts",
+            "**/*.tsx",
+            "**/*.js",
+            "**/*.jsx",
+            "**/*.svelte",
+            "**/*.css",
+            "**/*.html",
+            "**/*.proto",
+            "**/*.sh",
+            "**/*.bash",
+            "**/*.yaml",
+            "**/*.yml",
+            "**/*.toml",
+            "**/*.json",
+            "**/*.service",
+            "**/*.conf",
+            "**/Dockerfile",
+            "Dockerfile"
+          ]
+        }
+
   prerelease:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).contracts) }}
     name: Prerelease generated contracts
     runs-on: ubuntu-24.04
     steps:
@@ -32,6 +182,8 @@ jobs:
         run: ./scripts/check-protos
 
   portable:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).python || fromJSON(needs.changes.outputs.changes).e2e || fromJSON(needs.changes.outputs.changes).ui || fromJSON(needs.changes.outputs.changes).artifacts) }}
     strategy:
       fail-fast: false
       matrix:
@@ -42,31 +194,36 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).e2e || fromJSON(needs.changes.outputs.changes).ui || fromJSON(needs.changes.outputs.changes).artifacts) }}
         with:
           cache-on-failure: true
           cache-key: portable
           rustflags: ""
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).python || fromJSON(needs.changes.outputs.changes).e2e || fromJSON(needs.changes.outputs.changes).artifacts) }}
         with:
           enable-cache: true
           cache-dependency-glob: services/home/uv.lock
           cache-suffix: ${{ matrix.os }}
       - name: Set up Node project
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).ui) }}
         uses: kellen-miller/ci/.github/actions/setup-node@d1c91763535a5866b55282018f301d921b22bcd5
         with:
           node-version: '26'
           working-directory: crates/vehicle-ui/web
 
       - name: Set up Playwright
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).ui) }}
         uses: kellen-miller/ci/.github/actions/playwright-setup@d1c91763535a5866b55282018f301d921b22bcd5
         with:
           working-directory: crates/vehicle-ui/web
           browsers: chromium
       - uses: Azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).artifacts) }}
         with:
           version: v4.2.3
       - name: Set up virtual CAN on Linux
-        if: runner.os == 'Linux'
+        if: ${{ success() && runner.os == 'Linux' && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).e2e || fromJSON(needs.changes.outputs.changes).ui) }}
         run: |
           sudo apt-get update
           sudo apt-get install --yes "linux-modules-extra-$(uname -r)"
@@ -76,29 +233,41 @@ jobs:
           sudo ip link set up vcan-powertrain
           sudo ip link set up vcan-controller
       - run: ./scripts/check-rust --portable
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
       - run: ./scripts/check-python
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).python) }}
       - run: ./scripts/check-e2e
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).e2e) }}
       - run: ./scripts/check-ui
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).ui) }}
       - run: ./scripts/check-artifacts
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).artifacts) }}
 
   quality:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).shell || fromJSON(needs.changes.outputs.changes).docker || fromJSON(needs.changes.outputs.changes).length) }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: ShellCheck
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).shell) }}
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
         with:
           scandir: ./scripts
       - name: Hadolint
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).docker) }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: services/home/Dockerfile
       - name: Check source file lengths
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).length) }}
         run: ./scripts/check-file-length
 
   linux:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

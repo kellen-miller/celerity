@@ -11,152 +11,161 @@ concurrency:
 
 jobs:
   changes:
-    uses: kellen-miller/ci/.github/workflows/changed-paths.yaml@f01aacda5b78c7b67d1dc840bd0432be852a69a4
-    with:
-      filters: |
-        {
-          "contracts": [
-            ".github/workflows/**",
-            "scripts/**",
-            "contracts/**",
-            "crates/proto-codegen/**",
-            "crates/celerity-proto/src/generated/**",
-            "services/home/src/celerity/**",
-            "crates/vehicle-ui/web/src/generated/**",
-            "crates/vehicle-ui/web/package*.json",
-            "Cargo.toml",
-            "Cargo.lock",
-            ".cargo/**",
-            "rust-toolchain.toml"
-          ],
-          "rust": [
-            ".github/workflows/**",
-            "scripts/**",
-            "Cargo.toml",
-            "Cargo.lock",
-            ".cargo/**",
-            "rust-toolchain.toml",
-            "crates/**",
-            "firmware/**",
-            "config/**",
-            "contracts/**",
-            "fixtures/**",
-            "testdata/**"
-          ],
-          "python": [
-            ".github/workflows/**",
-            "scripts/**",
-            "services/home/**",
-            "contracts/**",
-            "fixtures/**",
-            "testdata/**",
-            ".python-version",
-            "pyproject.toml",
-            "uv.lock"
-          ],
-          "e2e": [
-            ".github/workflows/**",
-            "scripts/**",
-            "Cargo.toml",
-            "Cargo.lock",
-            ".cargo/**",
-            "rust-toolchain.toml",
-            "crates/**",
-            "firmware/**",
-            "config/**",
-            "contracts/**",
-            "fixtures/**",
-            "testdata/**",
-            "services/home/**",
-            ".python-version",
-            "pyproject.toml",
-            "uv.lock"
-          ],
-          "ui": [
-            ".github/workflows/**",
-            "scripts/**",
-            "Cargo.toml",
-            "Cargo.lock",
-            ".cargo/**",
-            "rust-toolchain.toml",
-            "crates/**",
-            "firmware/**",
-            "config/**",
-            "contracts/**",
-            "fixtures/**",
-            "testdata/**"
-          ],
-          "artifacts": [
-            ".github/workflows/**",
-            "scripts/**",
-            "Cargo.toml",
-            "Cargo.lock",
-            ".cargo/**",
-            "rust-toolchain.toml",
-            "crates/**",
-            "firmware/**",
-            "config/**",
-            "contracts/**",
-            "fixtures/**",
-            "testdata/**",
-            "services/home/**",
-            "deploy/helm/**",
-            ".python-version",
-            "pyproject.toml",
-            "uv.lock"
-          ],
-          "linux": [
-            ".github/workflows/**",
-            "scripts/**",
-            "Cargo.toml",
-            "Cargo.lock",
-            ".cargo/**",
-            "rust-toolchain.toml",
-            "crates/**",
-            "firmware/**",
-            "config/**",
-            "contracts/**",
-            "fixtures/**",
-            "testdata/**",
-            "deploy/systemd/**",
-            "deploy/tmpfiles.d/**",
-            "services/home/**"
-          ],
-          "shell": [
-            ".github/workflows/**",
-            "scripts/**"
-          ],
-          "docker": [
-            ".github/workflows/**",
-            "scripts/**",
-            "services/home/Dockerfile",
-            ".hadolint*"
-          ],
-          "length": [
-            ".github/workflows/**",
-            "scripts/**",
-            "**/*.rs",
-            "**/*.py",
-            "**/*.ts",
-            "**/*.tsx",
-            "**/*.js",
-            "**/*.jsx",
-            "**/*.svelte",
-            "**/*.css",
-            "**/*.html",
-            "**/*.proto",
-            "**/*.sh",
-            "**/*.bash",
-            "**/*.yaml",
-            "**/*.yml",
-            "**/*.toml",
-            "**/*.json",
-            "**/*.service",
-            "**/*.conf",
-            "**/Dockerfile",
-            "Dockerfile"
-          ]
-        }
+    runs-on: ubuntu-latest
+    outputs:
+      changes: ${{ steps.paths.outputs.changes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: paths
+        uses: kellen-miller/ci/.github/actions/changed-paths@9123b953c185a9f2550d88ed89e86dd37d482249
+        with:
+          filters: |
+            {
+              "contracts": [
+                ".github/workflows/**",
+                "scripts/**",
+                "contracts/**",
+                "crates/proto-codegen/**",
+                "crates/celerity-proto/src/generated/**",
+                "services/home/src/celerity/**",
+                "crates/vehicle-ui/web/src/generated/**",
+                "crates/vehicle-ui/web/package*.json",
+                "Cargo.toml",
+                "Cargo.lock",
+                ".cargo/**",
+                "rust-toolchain.toml"
+              ],
+              "rust": [
+                ".github/workflows/**",
+                "scripts/**",
+                "Cargo.toml",
+                "Cargo.lock",
+                ".cargo/**",
+                "rust-toolchain.toml",
+                "crates/**",
+                "firmware/**",
+                "config/**",
+                "contracts/**",
+                "fixtures/**",
+                "testdata/**"
+              ],
+              "python": [
+                ".github/workflows/**",
+                "scripts/**",
+                "services/home/**",
+                "contracts/**",
+                "fixtures/**",
+                "testdata/**",
+                ".python-version",
+                "pyproject.toml",
+                "uv.lock"
+              ],
+              "e2e": [
+                ".github/workflows/**",
+                "scripts/**",
+                "Cargo.toml",
+                "Cargo.lock",
+                ".cargo/**",
+                "rust-toolchain.toml",
+                "crates/**",
+                "firmware/**",
+                "config/**",
+                "contracts/**",
+                "fixtures/**",
+                "testdata/**",
+                "services/home/**",
+                ".python-version",
+                "pyproject.toml",
+                "uv.lock"
+              ],
+              "ui": [
+                ".github/workflows/**",
+                "scripts/**",
+                "Cargo.toml",
+                "Cargo.lock",
+                ".cargo/**",
+                "rust-toolchain.toml",
+                "crates/**",
+                "firmware/**",
+                "config/**",
+                "contracts/**",
+                "fixtures/**",
+                "testdata/**"
+              ],
+              "artifacts": [
+                ".github/workflows/**",
+                "scripts/**",
+                "Cargo.toml",
+                "Cargo.lock",
+                ".cargo/**",
+                "rust-toolchain.toml",
+                "crates/**",
+                "firmware/**",
+                "config/**",
+                "contracts/**",
+                "fixtures/**",
+                "testdata/**",
+                "services/home/**",
+                "deploy/helm/**",
+                ".python-version",
+                "pyproject.toml",
+                "uv.lock"
+              ],
+              "linux": [
+                ".github/workflows/**",
+                "scripts/**",
+                "Cargo.toml",
+                "Cargo.lock",
+                ".cargo/**",
+                "rust-toolchain.toml",
+                "crates/**",
+                "firmware/**",
+                "config/**",
+                "contracts/**",
+                "fixtures/**",
+                "testdata/**",
+                "deploy/systemd/**",
+                "deploy/tmpfiles.d/**",
+                "services/home/**"
+              ],
+              "shell": [
+                ".github/workflows/**",
+                "scripts/**"
+              ],
+              "docker": [
+                ".github/workflows/**",
+                "scripts/**",
+                "services/home/Dockerfile",
+                ".hadolint*"
+              ],
+              "length": [
+                ".github/workflows/**",
+                "scripts/**",
+                "**/*.rs",
+                "**/*.py",
+                "**/*.ts",
+                "**/*.tsx",
+                "**/*.js",
+                "**/*.jsx",
+                "**/*.svelte",
+                "**/*.css",
+                "**/*.html",
+                "**/*.proto",
+                "**/*.sh",
+                "**/*.bash",
+                "**/*.yaml",
+                "**/*.yml",
+                "**/*.toml",
+                "**/*.json",
+                "**/*.service",
+                "**/*.conf",
+                "**/Dockerfile",
+                "Dockerfile"
+              ]
+            }
 
   prerelease:
     needs: changes

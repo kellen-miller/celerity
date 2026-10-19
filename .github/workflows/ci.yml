@@ -241,7 +241,12 @@ jobs:
           sudo ip link add dev vcan-controller type vcan
           sudo ip link set up vcan-powertrain
           sudo ip link set up vcan-controller
-      - run: ./scripts/check-rust --portable
+      - name: Check Rust workspace
+        uses: kellen-miller/ci/.github/actions/rust-check@231cafbffe18e706ce5b786b67b25069886b0f01
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
+        with:
+          setup-toolchain: 'false'
+      - run: ./scripts/check-rust-targets --portable
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
       - run: ./scripts/check-python
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).python) }}
@@ -296,4 +301,8 @@ jobs:
           sudo ip link add dev vcan-controller type vcan
           sudo ip link set up vcan-powertrain
           sudo ip link set up vcan-controller
+      - name: Check Rust workspace
+        uses: kellen-miller/ci/.github/actions/rust-check@231cafbffe18e706ce5b786b67b25069886b0f01
+        with:
+          setup-toolchain: 'false'
       - run: ./scripts/check-linux

@@ -242,7 +242,7 @@ jobs:
           sudo ip link set up vcan-powertrain
           sudo ip link set up vcan-controller
       - name: Check Rust workspace
-        uses: kellen-miller/ci/.github/actions/rust-check@231cafbffe18e706ce5b786b67b25069886b0f01
+        uses: kellen-miller/ci/.github/actions/rust-check@0ee482cdd0ea61bc8b5d95cc8b45195fc0df0d66
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
         with:
           setup-toolchain: 'false'
@@ -302,7 +302,7 @@ jobs:
           sudo ip link set up vcan-powertrain
           sudo ip link set up vcan-controller
       - name: Check Rust workspace
-        uses: kellen-miller/ci/.github/actions/rust-check@231cafbffe18e706ce5b786b67b25069886b0f01
+        uses: kellen-miller/ci/.github/actions/rust-check@0ee482cdd0ea61bc8b5d95cc8b45195fc0df0d66
         with:
           setup-toolchain: 'false'
       - run: ./scripts/check-linux

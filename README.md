@@ -40,7 +40,12 @@ Install the checked-in Rust toolchain, `uv`, and Node/npm. Run `npm ci` in
 
 ```sh
 ./scripts/check-protos
-./scripts/check-rust --portable
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-features --all-targets
+cargo test --locked --workspace --all-features --doc
+cargo build --locked --workspace --all-targets --all-features
+./scripts/check-rust-targets --portable
 ./scripts/check-python
 ./scripts/check-ui
 ```
@@ -50,9 +55,14 @@ Rust, Python, and TypeScript bindings with `./scripts/generate-protos`. CI runs
 the regeneration in a temporary tree and fails if any checked-in binding is
 missing or stale.
 
-Linux CI additionally creates separate `vcan-powertrain` and
-`vcan-controller` interfaces and runs `./scripts/check-linux`, including exact
-systemd-unit lifecycle checks and the ARM64 link. `vcan` demonstrates software
+CI runs the workspace Cargo checks through the shared `rust-check` action after
+preparing the toolchain and platform dependencies. Cargo lint policy and target
+builds remain in this repository. `check-rust-targets --portable` builds firmware
+and links ARM64 when its cross-linker is available.
+
+Linux CI creates separate `vcan-powertrain` and `vcan-controller` interfaces
+before the workspace checks, then runs `./scripts/check-linux` for target builds
+and exact systemd-unit lifecycle checks. `vcan` demonstrates software
 interface separation; it does not prove physical listen-only behavior.
 
 The local panel is built into `celerity-ui`; Node is a build/CI dependency,

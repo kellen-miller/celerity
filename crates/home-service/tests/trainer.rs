@@ -110,6 +110,7 @@ async fn numerical_child_retains_admission_after_supervisor_sigkill() -> HomeRes
         if state == "failed" {
             break;
         }
+
         assert!(Instant::now() < deadline, "numerical child did not exit");
         tokio::time::sleep(Duration::from_millis(10)).await;
     }

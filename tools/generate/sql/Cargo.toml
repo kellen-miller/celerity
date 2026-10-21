@@ -1,0 +1,13 @@
+[package]
+name = "sql-codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+regex = "1.13.1"
+tempfile = "3.27.0"
+
+[lints]
+workspace = true

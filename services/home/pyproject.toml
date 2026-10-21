@@ -1,18 +1,15 @@
 [project]
 name = "celerity-home"
 version = "0.1.0"
-description = "Celerity Run admission, training, and model lifecycle"
+description = "Celerity thermal-model training and ONNX tooling"
 requires-python = ">=3.14,<3.15"
 dependencies = [
-  "fastapi>=0.116,<1",
-  "httpx>=0.28,<1",
+  "celerity-proto",
   "numpy>=2.3,<3",
   "onnx>=1.18,<2",
   "onnxscript>=0.5,<1",
   "pyarrow>=25,<26",
-  "protobuf>=7.36.2,<8",
   "torch>=2.8,<3",
-  "uvicorn>=0.35,<1",
 ]
 
 [dependency-groups]
@@ -28,6 +25,7 @@ requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [tool.uv.sources]
+celerity-proto = { path = "../../gen/python" }
 torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 
 [[tool.uv.index]]
@@ -36,7 +34,7 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/celerity_home", "src/celerity"]
+packages = ["src/celerity_home"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -44,7 +42,6 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-extend-exclude = ["src/celerity"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

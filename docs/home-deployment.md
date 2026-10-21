@@ -1,7 +1,9 @@
 # Home deployment
 
-The home side is one FastAPI/Uvicorn process, one SQLite database, and one
-filesystem on a PVC. The `deploy/helm/celerity-home` chart deliberately
+The home side runs the Rust `celerity-home` service, one SQLite database, and one
+filesystem on a PVC. Detached Rust workers supervise the Python ML adapter. Python
+receives immutable inputs and returns candidate bundles and metrics; Rust owns
+all database writes, model selection and webhook delivery. The `deploy/helm/celerity-home` chart deliberately
 specifies one replica with `Recreate`, resource bounds, non-root/read-only
 security, liveness and readiness probes, a PVC, ConfigMap reference, and Secret
 reference. It does not add a queue, object store, PostgreSQL, or model
@@ -30,7 +32,7 @@ helm upgrade --install celerity-home deploy/helm/celerity-home \
 kubectl -n celerity rollout status deployment/celerity-home
 ```
 
-Vehicle routes require `Authorization: Bearer <token>`. Upload is
+Vehicle RPCs require `authorization: Bearer <token>` metadata. Upload is
 content-addressed and idempotent. The server admits only a complete v1 manifest
 whose exact bytes match the Run digest and whose referenced chunk exists with
 the declared digest. Jobs record immutable input digests, recipe, PID,
@@ -39,3 +41,33 @@ delivery failure cannot change a completed job or staged model.
 
 The rendered chart has not been installed in a cluster in the hardware-free
 report.
+
+Build the image from the repository root so the Rust workspace is available:
+
+```sh
+docker build -f services/home/Dockerfile -t celerity-home:local .
+```
+
+The image starts the Rust service directly. It retains a Python environment for
+training, selected with `CELERITY_HOME_PYTHON`; the default outside the image is
+`python3`. Existing storage, token-file and webhook environment variables and
+storage format remain the same. Home and vehicle sync use the generated
+`celerity.v1.Home` gRPC service over HTTP/2.
+An edge proxy must forward gRPC and use HTTP/2 to the chart's cleartext upstream.
+The Service advertises `kubernetes.io/h2c`; native Kubernetes gRPC probes check
+the public standard health service. Empty service name checks liveness;
+`celerity.v1.Home` checks database readiness. Artifact messages retain the gRPC
+frame limit so oversized single-record chunks remain uploadable. Sync bounds
+complete RPCs, including response bodies, to thirty seconds. Shutdown allows
+five seconds for active RPCs to drain before closing their streams.
+
+For local development after `uv sync --project services/home --locked`, set
+`CELERITY_HOME_PYTHON` to the absolute path of
+`services/home/.venv/bin/python` and run `cargo run -p home-service --bin celerity-home`.
+
+Home initializes the current schema atomically and retains data across restarts.
+The API can restart while a claimed Rust worker continues. A numerical child inherits an admission lock across exec. If its
+supervisor dies, recovery keeps admission occupied until numerical work exits,
+then records one failed job. A delayed child checks ownership before training;
+numerical children cannot publish model/database changes. Candidates are not promoted when the
+desired baseline changed during training.

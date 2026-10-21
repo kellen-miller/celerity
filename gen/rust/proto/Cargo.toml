@@ -1,0 +1,14 @@
+[package]
+name = "celerity-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.ci]
+generated = true
+
+[dependencies]
+prost = "0.14.4"
+tonic = "0.14.6"
+tonic-prost = "0.14.6"

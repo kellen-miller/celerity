@@ -46,18 +46,18 @@ spec:
                   name: {{ .Release.Name }}
                   key: webhook-url
           ports:
-            - name: http
+            - name: grpc
               containerPort: 8080
           readinessProbe:
-            httpGet:
-              path: /health/ready
-              port: http
+            grpc:
+              port: 8080
+              service: celerity.v1.Home
             periodSeconds: 10
             timeoutSeconds: 2
           livenessProbe:
-            httpGet:
-              path: /health/live
-              port: http
+            grpc:
+              port: 8080
+              service: ""
             periodSeconds: 20
             timeoutSeconds: 2
           resources:

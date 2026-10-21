@@ -1,0 +1,38 @@
+[package]
+name = "home-service"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+celerity-proto = { path = "../../gen/rust/proto" }
+celerity-sql = { path = "../../gen/rust/sql" }
+hex = "0.4.3"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+prost = "0.14.4"
+reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls"] }
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+subtle = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+tonic = "0.14.6"
+tonic-health = "0.14.6"
+tokio-stream = { version = "0.1", features = ["net"] }
+uuid = { version = "1", features = ["v4"] }
+zip = { version = "7.2.0", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31.3", features = ["fs"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[[bin]]
+name = "celerity-home"
+path = "src/main.rs"
+
+[lints]
+workspace = true

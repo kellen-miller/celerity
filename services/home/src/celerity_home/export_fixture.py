@@ -5,14 +5,13 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 import onnx
-from onnx import TensorProto, helper
-
 from celerity.v1.celerity_pb2 import (
     ModelBundleManifest,
     ModelCompatibility,
     ModelInputRange,
     ModelNormalization,
 )
+from onnx import TensorProto, helper
 
 
 def export(output: Path) -> None:

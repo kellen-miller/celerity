@@ -7,8 +7,6 @@ import math
 import struct
 from dataclasses import dataclass
 
-from celerity.v1.celerity_pb2 import RunManifest
-
 
 class RunFormatError(RuntimeError):
     """A Run chunk is not structurally valid canonical v1 evidence."""
@@ -182,18 +180,3 @@ def _read_varint(data: bytes, offset: int) -> tuple[int, int]:
             return value, offset
         shift += 7
     raise RunFormatError("invalid protobuf varint")
-
-
-def run_contract(manifest: RunManifest) -> str:
-    """Return the stable model contract key for one immutable Run."""
-    return json.dumps(
-        [
-            manifest.model_abi,
-            list(manifest.model_input_signals),
-            manifest.model_history_length,
-            manifest.sample_period_ms,
-            list(manifest.command_lattice),
-            manifest.maximum_calibration_error,
-        ],
-        sort_keys=True,
-    )

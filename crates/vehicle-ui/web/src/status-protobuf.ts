@@ -12,7 +12,7 @@ import {
   type DiagnosticStatus as ProtoDiagnosticStatusType,
   type ObservedTemperature as ProtoObservedTemperatureType,
   type StatusEnvelope as ProtoStatusEnvelopeType,
-} from "./generated/celerity/v1/celerity";
+} from "@celerity/proto/celerity/v1/celerity";
 import type {
   AcceptedRadiatorSplitCommand,
   CommandSource,

@@ -26,9 +26,11 @@ sensor mappings and timing. The powertrain connection remains receive-only.
   Svelte panel, and `celerity-ui` binary.
 - `crates/sync`: authority-free Run/model reconciliation with SQLite.
 - `firmware/duct-controller`: STM32G431 Embassy image and host conformance.
-- `services/home`: FastAPI, SQLite/filesystem archive, managed jobs, models, and
-  bounded webhook delivery.
-- `contracts/celerity/v1/celerity.proto`: the one cross-language IDL. Rust,
+- `crates/home-service`: tonic gRPC API, SQLite/filesystem archive, durable
+  job supervision, model staging and bounded webhook delivery.
+- `services/home`: Python ML data preparation, PyTorch training, ONNX export and
+  evaluation, plus deterministic model fixtures.
+- `proto/celerity/v1/celerity.proto`: the one cross-language IDL. Rust,
   Python, and TypeScript bindings are committed and checked for regeneration.
 - `contracts/controller-can-v1.md` and `config/schema-v1.md`: transport and
   startup-configuration adapters that retain their exact external formats.
@@ -40,8 +42,10 @@ Install the checked-in Rust toolchain, `uv`, and Node/npm. Run `npm ci` in
 
 ```sh
 ./scripts/check-protos
+./scripts/check-sql
 cargo fmt --all -- --check
-cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo clippy --locked --workspace --all-targets --all-features \
+  --exclude celerity-proto --exclude celerity-sql --no-deps -- -D warnings
 cargo test --locked --workspace --all-features --all-targets
 cargo test --locked --workspace --all-features --doc
 cargo build --locked --workspace --all-targets --all-features
@@ -50,10 +54,23 @@ cargo build --locked --workspace --all-targets --all-features
 ./scripts/check-ui
 ```
 
-When `contracts/celerity/v1/celerity.proto` changes, regenerate the committed
+When `proto/celerity/v1/celerity.proto` changes, regenerate the committed
 Rust, Python, and TypeScript bindings with `./scripts/generate-protos`. CI runs
 the regeneration in a temporary tree and fails if any checked-in binding is
 missing or stale.
+
+Contracts follow the local monorepo layout: `proto/` owns protobuf sources;
+`sql/migrations/<owner>/` owns the initial SQLite schemas, and
+`sql/queries/<owner>/` owns sqlc queries. `tools/generate/` owns generators and
+pinned configuration. Generated packages live under `gen/rust/`, `gen/python/`,
+and `gen/typescript/`; Rust SQL modules retain the `home` and `sync` owners.
+Use sqlc 1.31.1 and `./scripts/generate-sql` after changing SQL;
+`./scripts/check-sql` verifies committed Rust bindings. The Rust generation command
+pins the sqlc Rust plugin and normalizes its Rust output. Generated packages
+declare `package.metadata.ci.generated`; CI formats, builds and tests them while
+applying handwritten-code Clippy rules to the service packages. Home RPCs and
+Rust/Python training IPC use generated protobuf contracts; numerical evaluation
+JSON remains a local report.
 
 CI runs the workspace Cargo checks through the shared `rust-check` action after
 preparing the toolchain and platform dependencies. Formatting and Clippy use
@@ -67,7 +84,8 @@ Locally, `check-rust-targets --portable` builds firmware and links ARM64 when it
 cross-linker is available.
 
 `check-e2e` runs the ignored cross-language acceptance test with the same workspace
-features as the normal Rust tests. Run `check-python` for the full home test suite;
+features as the normal Rust tests. Cargo covers the Rust home service;
+`check-python` covers numerical training and ONNX tooling;
 install UI dependencies with `npm ci` before running `check-ui` locally.
 
 Linux CI creates separate `vcan-powertrain` and `vcan-controller` interfaces

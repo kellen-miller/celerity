@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+generated_root=$(mktemp -d)
+trap 'rm -rf "$generated_root"' EXIT
+
+"$repo_root/scripts/generate-sql" --output-root "$generated_root"
+diff -ru --exclude=lib.rs "$repo_root/gen/rust/sql/src" \
+  "$generated_root/gen/rust/sql/src"
+
+echo "SQL sources and generated bindings are synchronized"

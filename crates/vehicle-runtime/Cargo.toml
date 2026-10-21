@@ -18,7 +18,7 @@ socketcan = { version = "4.0.0", default-features = false }
 nix = { version = "0.31.0", features = ["poll", "socket"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-celerity-proto = { path = "../celerity-proto" }
+celerity-proto = { path = "../../gen/rust/proto" }
 prost = "0.14.4"
 tempfile = "3.27.0"
 

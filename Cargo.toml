@@ -1,9 +1,12 @@
 [workspace]
 members = [
-    "crates/celerity-proto",
+    "crates/home-service",
+    "gen/rust/proto",
+    "gen/rust/sql",
     "crates/control-core",
     "crates/control-protocol",
-    "crates/proto-codegen",
+    "tools/generate/proto",
+    "tools/generate/sql",
     "crates/sync",
     "crates/vehicle-diagnostics",
     "crates/vehicle-runtime",

@@ -10,7 +10,7 @@ mod journal;
 mod network;
 mod transfer;
 
-pub use api::{HomeApi, ReqwestHomeApi};
+pub use api::{GrpcHomeApi, HomeApi};
 pub use configuration::SyncConfiguration;
 pub use journal::TransferJournal;
 pub use network::{LinuxNetworkPresence, NetworkPresence};
@@ -43,10 +43,6 @@ fn sync_io(error: std::io::Error) -> SyncError {
 }
 
 fn sync_sql(error: rusqlite::Error) -> SyncError {
-    SyncError(error.to_string())
-}
-
-fn sync_http(error: reqwest::Error) -> SyncError {
     SyncError(error.to_string())
 }
 

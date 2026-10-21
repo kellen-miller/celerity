@@ -4,7 +4,7 @@ import currentFixture from "../fixtures/status/current.json";
 import producerStaleFixture from "../fixtures/status/producer-stale.json";
 import unavailableFixture from "../fixtures/status/unavailable.json";
 import unknownFixture from "../fixtures/status/unknown.json";
-import { StatusEnvelope as ProtoStatusEnvelope } from "./generated/celerity/v1/celerity";
+import { StatusEnvelope as ProtoStatusEnvelope } from "@celerity/proto/celerity/v1/celerity";
 import {
   commandRatio,
   diagnosticStatusLabel,

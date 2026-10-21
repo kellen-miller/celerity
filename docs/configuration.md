@@ -46,4 +46,4 @@ base_id = 1280
 The sync section declares spool ownership, acknowledged retention count, the
 home interface and expected default gateway, home API URL, and bearer-token
 path. A link is "home" only when it is up and its default route uses that exact
-gateway. HTTP success never grants vehicle authority.
+gateway. A successful home RPC never grants vehicle authority.

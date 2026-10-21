@@ -27,6 +27,6 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ["../assets/", "src/generated/", "test-results/"],
+    ignores: ["../assets/", "test-results/"],
   },
 );

@@ -10,9 +10,9 @@ cargo run --locked --quiet -p proto-codegen --manifest-path "$repo_root/Cargo.to
 
 generated_files() {
   find \
-    "$1/crates/celerity-proto/src/generated" \
-    "$1/services/home/src/celerity" \
-    "$1/crates/vehicle-ui/web/src/generated" \
+    "$1/gen/rust/proto/src/generated" \
+    "$1/gen/python/celerity" \
+    "$1/gen/typescript/src" \
     -type f \
     ! -path '*/__pycache__/*' \
     ! -name '*.pyc' \

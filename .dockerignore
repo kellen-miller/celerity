@@ -1,0 +1,13 @@
+.git
+.worktrees
+.agent
+.tmp
+.idea
+**/target
+**/.venv
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/test-results
+**/playwright-report

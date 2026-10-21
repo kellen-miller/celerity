@@ -1,8 +1,8 @@
 # Architecture decision records
 
 These records preserve durable architectural choices and their rationale.
-Normative wire formats, schemas, and configuration remain in `contracts/` and
-`config/`; ADRs link to those sources instead of duplicating them.
+Normative contracts live in `proto/`, `sql/`, `contracts/`, and `config/`.
+ADRs link to those sources instead of duplicating them.
 
 - [0001: Name Rust crates by responsibility](0001-name-rust-crates-by-responsibility.md)
 - [0002: Isolate vehicle authority and powertrain observation](0002-isolate-authority-and-observation.md)

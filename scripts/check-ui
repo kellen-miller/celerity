@@ -6,6 +6,9 @@ fixture_root="$ui_root/fixtures/status"
 check_root=$(mktemp -d)
 trap 'rm -rf "$check_root"' EXIT
 
+npm --prefix gen/typescript ci
+npm --prefix gen/typescript run build
+
 npm --prefix "$ui_root" run format:check
 npm --prefix "$ui_root" run lint
 npm --prefix "$ui_root" run check

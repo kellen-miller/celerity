@@ -57,14 +57,26 @@ missing or stale.
 
 CI runs the workspace Cargo checks through the shared `rust-check` action after
 preparing the toolchain and platform dependencies. Formatting and Clippy use
-the action's bundled policy alongside the workspace lint settings. Tests and
-target builds retain their existing platform setup. `check-rust-targets --portable`
-builds firmware and links ARM64 when its cross-linker is available.
+the action's bundled policy alongside the workspace lint settings. Rust and
+end-to-end, Python and artifacts, and UI checks run in parallel on both macOS
+and Ubuntu. The required portable checks collect those results. Pushes to `main`
+refresh caches for subsequent pull requests. Linux training uses CPU-only PyTorch
+instead of downloading CUDA packages. A separate target job builds ARM64 services
+and controller firmware once, in parallel with the host checks.
+Locally, `check-rust-targets --portable` builds firmware and links ARM64 when its
+cross-linker is available.
+
+`check-e2e` runs the ignored cross-language acceptance test with the same workspace
+features as the normal Rust tests. Run `check-python` for the full home test suite;
+install UI dependencies with `npm ci` before running `check-ui` locally.
 
 Linux CI creates separate `vcan-powertrain` and `vcan-controller` interfaces
-before the workspace checks, then runs `./scripts/check-linux` for target builds
-and exact systemd-unit lifecycle checks. `vcan` demonstrates software
-interface separation; it does not prove physical listen-only behavior.
+before the workspace checks. The Linux service job runs `./scripts/check-systemd`
+against native release binaries, with its own build cache. Expected access denials
+and startup retries are quiet; passing checks print explicit results. Locally,
+`./scripts/check-linux` runs both target builds and the service checks. `vcan`
+demonstrates software interface separation; it does not prove physical
+listen-only behavior.
 
 The local panel is built into `celerity-ui`; Node is a build/CI dependency,
 not a vehicle runtime dependency. With the independently managed viewer

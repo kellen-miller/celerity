@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches: [main]
 permissions:
   contents: read
 
@@ -190,9 +192,9 @@ jobs:
       - name: Check committed protobuf bindings
         run: ./scripts/check-protos
 
-  portable:
+  rust:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).python || fromJSON(needs.changes.outputs.changes).e2e || fromJSON(needs.changes.outputs.changes).ui || fromJSON(needs.changes.outputs.changes).artifacts) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).e2e) }}
     strategy:
       fail-fast: false
       matrix:
@@ -203,36 +205,19 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).e2e || fromJSON(needs.changes.outputs.changes).ui || fromJSON(needs.changes.outputs.changes).artifacts) }}
         with:
           cache-on-failure: true
-          cache-key: portable
+          cache-key: portable-rust-v2
           rustflags: ""
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).python || fromJSON(needs.changes.outputs.changes).e2e || fromJSON(needs.changes.outputs.changes).artifacts) }}
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).e2e) }}
         with:
+          python-version: '3.14'
           enable-cache: true
           cache-dependency-glob: services/home/uv.lock
           cache-suffix: ${{ matrix.os }}
-      - name: Set up Node project
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).ui) }}
-        uses: kellen-miller/ci/.github/actions/setup-node@2af77688327c2fc0f164e91f77e8784ef25e14c6
-        with:
-          node-version: '26'
-          working-directory: crates/vehicle-ui/web
-
-      - name: Set up Playwright
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).ui) }}
-        uses: kellen-miller/ci/.github/actions/playwright-setup@2af77688327c2fc0f164e91f77e8784ef25e14c6
-        with:
-          working-directory: crates/vehicle-ui/web
-          browsers: chromium
-      - uses: Azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).artifacts) }}
-        with:
-          version: v4.2.3
       - name: Set up virtual CAN on Linux
-        if: ${{ success() && runner.os == 'Linux' && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).e2e || fromJSON(needs.changes.outputs.changes).ui) }}
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           modules_package="linux-modules-extra-$(uname -r)"
@@ -256,16 +241,94 @@ jobs:
         with:
           setup-toolchain: 'false'
           checks: test build
-      - run: ./scripts/check-rust-targets --portable
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
-      - run: ./scripts/check-python
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).python) }}
       - run: ./scripts/check-e2e
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).e2e) }}
-      - run: ./scripts/check-ui
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).ui) }}
+
+  home:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).python || fromJSON(needs.changes.outputs.changes).artifacts) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: '3.14'
+          enable-cache: true
+          cache-dependency-glob: services/home/uv.lock
+          cache-suffix: ${{ matrix.os }}
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).artifacts) }}
+        with:
+          cache-on-failure: true
+          cache-key: home-artifacts-v1
+          rustflags: ""
+      - uses: Azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).artifacts) }}
+        with:
+          version: v4.2.3
+      - run: ./scripts/check-python
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).python) }}
       - run: ./scripts/check-artifacts
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).artifacts) }}
+
+  ui:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).ui) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache-on-failure: true
+          cache-key: ui-v1
+          rustflags: ""
+      - name: Set up Node project
+        uses: kellen-miller/ci/.github/actions/setup-node@2af77688327c2fc0f164e91f77e8784ef25e14c6
+        with:
+          node-version: '26'
+          working-directory: crates/vehicle-ui/web
+      - name: Set up Playwright
+        uses: kellen-miller/ci/.github/actions/playwright-setup@2af77688327c2fc0f164e91f77e8784ef25e14c6
+        with:
+          working-directory: crates/vehicle-ui/web
+          browsers: chromium
+      - run: ./scripts/check-ui
+
+  portable:
+    needs: [changes, rust, home, ui]
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).python || fromJSON(needs.changes.outputs.changes).e2e || fromJSON(needs.changes.outputs.changes).ui || fromJSON(needs.changes.outputs.changes).artifacts) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Require portable checks
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          HOME_RESULT: ${{ needs.home.result }}
+          UI_RESULT: ${{ needs.ui.result }}
+          EXPECTED_RUST: ${{ (fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).e2e) && 'success' || 'skipped' }}
+          EXPECTED_HOME: ${{ (fromJSON(needs.changes.outputs.changes).python || fromJSON(needs.changes.outputs.changes).artifacts) && 'success' || 'skipped' }}
+          EXPECTED_UI: ${{ fromJSON(needs.changes.outputs.changes).ui && 'success' || 'skipped' }}
+        run: |
+          printf 'changes=%s rust=%s home=%s ui=%s\n'             "$CHANGES_RESULT" "$RUST_RESULT" "$HOME_RESULT" "$UI_RESULT"
+          if [[ "$CHANGES_RESULT" != success || "$RUST_RESULT" != "$EXPECTED_RUST"             || "$HOME_RESULT" != "$EXPECTED_HOME" || "$UI_RESULT" != "$EXPECTED_UI" ]]; then
+            exit 1
+          fi
 
   quality:
     needs: changes
@@ -289,7 +352,8 @@ jobs:
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).length) }}
         run: ./scripts/check-file-length
 
-  linux:
+  systemd:
+    name: Linux service lifecycle
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
     runs-on: ubuntu-24.04
@@ -300,12 +364,11 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           cache-on-failure: true
-          cache-key: linux-full
+          cache-key: linux-systemd-v1
           rustflags: ""
-      - name: Install cross linker and vcan
+      - name: Set up virtual CAN
         run: |
           sudo apt-get update
-          sudo apt-get install --yes gcc-aarch64-linux-gnu
           modules_package="linux-modules-extra-$(uname -r)"
           if apt-cache show "$modules_package" 2>/dev/null | grep -q '^Package:'; then
             sudo apt-get install --yes "$modules_package"
@@ -315,14 +378,45 @@ jobs:
           sudo ip link add dev vcan-controller type vcan
           sudo ip link set up vcan-powertrain
           sudo ip link set up vcan-controller
-      - name: Check Rust workspace
-        uses: kellen-miller/ci/.github/actions/rust-check@2af77688327c2fc0f164e91f77e8784ef25e14c6
+      # Workspace checks already run in portable (ubuntu-24.04).
+      - name: Check Linux service lifecycle
+        run: ./scripts/check-systemd
+
+  targets:
+    name: Cross-compile ARM64 and firmware
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          setup-toolchain: 'false'
-          checks: fmt clippy
-      - name: Test and build Rust workspace
-        uses: kellen-miller/ci/.github/actions/rust-check@2af77688327c2fc0f164e91f77e8784ef25e14c6
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
-          setup-toolchain: 'false'
-          checks: test build
-      - run: ./scripts/check-linux
+          cache-on-failure: true
+          cache-key: cross-targets-v1
+          rustflags: ""
+      - name: Install ARM64 cross linker
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc-aarch64-linux-gnu
+      - name: Build ARM64 services and controller firmware
+        run: ./scripts/check-rust-targets
+
+  linux:
+    needs: [changes, systemd, targets]
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require Linux service and target checks
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SYSTEMD_RESULT: ${{ needs.systemd.result }}
+          TARGETS_RESULT: ${{ needs.targets.result }}
+        run: |
+          printf 'changes=%s systemd=%s targets=%s\n' \
+            "$CHANGES_RESULT" "$SYSTEMD_RESULT" "$TARGETS_RESULT"
+          if [[ "$CHANGES_RESULT" != success || "$SYSTEMD_RESULT" != success \
+            || "$TARGETS_RESULT" != success ]]; then
+            exit 1
+          fi

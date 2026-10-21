@@ -27,6 +27,14 @@ dev = [
 requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/celerity_home", "src/celerity"]
 

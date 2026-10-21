@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cargo test -p sync --all-features --test end_to_end -- --ignored --nocapture
-cargo test -p control-core --all-features --test model_slots
-uv run --project services/home pytest services/home/tests/test_application.py
+# Install before the acceptance test starts its bounded server-readiness wait.
+uv sync --project services/home --locked
+
+# Keep workspace feature unification identical to the preceding workspace tests.
+# model_slots and the home application are covered by their full test suites.
+cargo test --locked --workspace --all-features --test end_to_end -- --ignored --nocapture

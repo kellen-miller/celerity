@@ -116,7 +116,7 @@ if id -nG celerity-no-diagnostics | tr ' ' '\n' | grep -Fx celerity-diagnostics;
   exit 1
 fi
 
-cargo build --release --all-features \
+cargo build --locked --release --all-features \
   -p vehicle-runtime -p vehicle-diagnostics -p vehicle-ui -p sync
 sudo install -m 0755 "$build_root/release/celerityd" "$runtime_binary"
 sudo install -m 0755 "$build_root/release/celerityctl" "$ctl_binary"
@@ -297,7 +297,8 @@ if sudo -u celerity-ui head -c 1 "$run_file" 2>"$check_root/ui-run-error" \
   echo "celerity-ui unexpectedly read a Run file" >&2
   exit 1
 fi
-grep -F "Permission denied" "$check_root/ui-run-error"
+grep -Fq "Permission denied" "$check_root/ui-run-error"
+echo "PASS: viewer cannot read private Run files"
 
 sudo systemctl start celerityd.service celerity-sync.service
 sudo systemctl is-active --quiet celerityd.service
@@ -319,7 +320,8 @@ if sudo -u celerity-no-diagnostics "$ctl_binary" status \
   echo "nonmember unexpectedly read diagnostics" >&2
   exit 1
 fi
-grep -F "Permission denied" "$check_root/nonmember-error"
+grep -Fq "Permission denied" "$check_root/nonmember-error"
+echo "PASS: nonmember cannot access diagnostics"
 sudo -u celerity-ui -g celerity-diagnostics "$ctl_binary" status \
   --socket /run/celerity/diagnostics.sock \
   | tee "$check_root/member-status" >/dev/null
@@ -330,12 +332,18 @@ sudo systemctl start celerity-ui.service
 for _ in {1..50}; do
   if curl --max-time 1 -fsS -H 'Host: localhost:8080' \
     http://127.0.0.1:8080/v1/status >"$check_root/status.pb" \
-    && assert_status_response "$check_root/status.pb" current present; then
+    2>"$check_root/status-error" \
+    && assert_status_response "$check_root/status.pb" current present \
+      2>>"$check_root/status-error"; then
     break
   fi
   sleep 0.2
 done
-assert_status_response "$check_root/status.pb" current present
+if ! assert_status_response "$check_root/status.pb" current present; then
+  cat "$check_root/status-error" >&2
+  exit 1
+fi
+echo "PASS: viewer serves current status"
 sudo systemctl is-active --quiet celerity-ui.service
 
 ui_properties=$(sudo systemctl show celerity-ui.service \
@@ -387,23 +395,36 @@ sudo systemctl is-active --quiet celerity-ui.service
 for _ in {1..30}; do
   if curl --max-time 1 -fsS -H 'Host: localhost:8080' \
     http://127.0.0.1:8080/v1/status >"$check_root/unavailable.pb" \
-    && assert_status_response "$check_root/unavailable.pb" unavailable absent; then
+    2>"$check_root/unavailable-error" \
+    && assert_status_response "$check_root/unavailable.pb" unavailable absent \
+      2>>"$check_root/unavailable-error"; then
     break
   fi
   sleep 0.2
 done
-assert_status_response "$check_root/unavailable.pb" unavailable absent
+if ! assert_status_response "$check_root/unavailable.pb" unavailable absent; then
+  cat "$check_root/unavailable-error" >&2
+  exit 1
+fi
+echo "PASS: viewer reports unavailable status when runtime stops"
 
 sudo systemctl stop celerity-ui.service
 python3 -m http.server 8080 --bind 127.0.0.1 \
   >"$check_root/port-holder.log" 2>&1 &
 port_holder_pid=$!
+port_holder_ready=false
 for _ in {1..20}; do
-  if curl --max-time 1 -fsS http://127.0.0.1:8080/ >/dev/null; then
+  if curl --max-time 1 -fsS http://127.0.0.1:8080/ >/dev/null \
+    2>"$check_root/port-holder-error"; then
+    port_holder_ready=true
     break
   fi
   sleep 0.1
 done
+if [[ "$port_holder_ready" != true ]]; then
+  cat "$check_root/port-holder-error" "$check_root/port-holder.log" >&2
+  exit 1
+fi
 sudo systemctl start celerity-ui.service || true
 for _ in {1..60}; do
   if [[ "$(sudo systemctl show celerity-ui.service --property ActiveState --value)" == \
@@ -455,7 +476,7 @@ sudo "$ctl_binary" status --socket /run/celerity/diagnostics.sock \
   | tee "$check_root/no-viewer-provisioning-status" >/dev/null
 python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["schema_version"] == 2' \
   "$check_root/no-viewer-provisioning-status"
-echo "celerityd no-viewer-provisioning: runtime=750 root:root socket=660 root:root"
+echo "PASS: runtime works without viewer provisioning (directory=750 socket=660 root:root)"
 sudo systemctl stop celerityd.service
 if sudo test -e /run/celerity; then
   echo "celerityd did not remove its unit-owned runtime directory" >&2

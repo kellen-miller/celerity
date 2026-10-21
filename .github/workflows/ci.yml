@@ -349,6 +349,9 @@ jobs:
           SYSTEMD_RESULT: ${{ needs.systemd.result }}
           TARGETS_RESULT: ${{ needs.targets.result }}
         run: |
-          [[ "$CHANGES_RESULT" == success ]]
-          [[ "$SYSTEMD_RESULT" == success ]]
-          [[ "$TARGETS_RESULT" == success ]]
+          printf 'changes=%s systemd=%s targets=%s\n' \
+            "$CHANGES_RESULT" "$SYSTEMD_RESULT" "$TARGETS_RESULT"
+          if [[ "$CHANGES_RESULT" != success || "$SYSTEMD_RESULT" != success \
+            || "$TARGETS_RESULT" != success ]]; then
+            exit 1
+          fi

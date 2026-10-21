@@ -287,7 +287,8 @@ jobs:
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).length) }}
         run: ./scripts/check-file-length
 
-  linux:
+  systemd:
+    name: Linux service lifecycle
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
     runs-on: ubuntu-24.04
@@ -319,7 +320,7 @@ jobs:
   targets:
     name: Cross-compile ARM64 and firmware
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -336,3 +337,18 @@ jobs:
           sudo apt-get install --yes gcc-aarch64-linux-gnu
       - name: Build ARM64 services and controller firmware
         run: ./scripts/check-rust-targets
+
+  linux:
+    needs: [changes, systemd, targets]
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require Linux service and target checks
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SYSTEMD_RESULT: ${{ needs.systemd.result }}
+          TARGETS_RESULT: ${{ needs.targets.result }}
+        run: |
+          [[ "$CHANGES_RESULT" == success ]]
+          [[ "$SYSTEMD_RESULT" == success ]]
+          [[ "$TARGETS_RESULT" == success ]]

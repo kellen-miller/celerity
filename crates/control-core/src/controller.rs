@@ -114,7 +114,9 @@ impl ControllerEmulator {
                     provisioned_identity: self.provisioning.identity,
                     firmware_generation: self.provisioning.firmware_generation,
                     capability_generation: self.provisioning.capability_generation,
-                    configuration_generation: self.configuration.map_or(0, |configuration| configuration.generation),
+                    configuration_generation: self
+                        .configuration
+                        .map_or(0, |configuration| configuration.generation),
                     announce_sequence: message.probe_sequence,
                 },
             }),
@@ -176,7 +178,9 @@ impl ControllerEmulator {
                     self.runtime_lease_valid(now_ms)
                         && message.boot_session == self.provisioning.boot_session
                         && message.configuration_generation == configuration.generation
-                        && self.runtime_lease.is_some_and(|lease| message.epoch == lease.epoch)
+                        && self
+                            .runtime_lease
+                            .is_some_and(|lease| message.epoch == lease.epoch)
                         && self
                             .last_command_sequence
                             .is_none_or(|sequence| message.command_sequence > sequence)
@@ -252,7 +256,10 @@ impl ControllerEmulator {
         let Some(configuration) = self.configuration else {
             return Ok(None);
         };
-        if self.next_heartbeat_ms.is_none_or(|deadline| now_ms < deadline) {
+        if self
+            .next_heartbeat_ms
+            .is_none_or(|deadline| now_ms < deadline)
+        {
             return Ok(None);
         }
 
@@ -279,7 +286,9 @@ impl ControllerEmulator {
             self.runtime_lease = None;
             self.select_fallback();
         } else if self.mode == ControllerMode::RemoteAuthority
-            && self.command_deadline_ms.is_none_or(|deadline| now_ms >= deadline)
+            && self
+                .command_deadline_ms
+                .is_none_or(|deadline| now_ms >= deadline)
         {
             self.select_fallback();
         }
@@ -297,7 +306,8 @@ impl ControllerEmulator {
 
     #[must_use]
     pub fn runtime_lease_valid(&self, now_ms: u64) -> bool {
-        self.runtime_lease.is_some_and(|lease| now_ms < lease.deadline_ms)
+        self.runtime_lease
+            .is_some_and(|lease| now_ms < lease.deadline_ms)
     }
 
     #[must_use]

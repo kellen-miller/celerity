@@ -48,7 +48,9 @@ fn output_root(repository_root: &Path) -> Result<PathBuf, String> {
 
     while let Some(argument) = args.next() {
         if argument == "--output-root" {
-            let value = args.next().ok_or_else(|| "--output-root requires a path".to_owned())?;
+            let value = args
+                .next()
+                .ok_or_else(|| "--output-root requires a path".to_owned())?;
             output_root = PathBuf::from(value);
         } else {
             return Err(format!("unexpected argument: {}", argument.to_string_lossy()));

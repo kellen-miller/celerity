@@ -176,8 +176,11 @@ impl DiagnosticsStore {
     fn snapshot(&self, now: Instant) -> Result<DiagnosticsSnapshot, String> {
         let published = self.shared.read().map_err(|error| error.to_string())?;
         let mut snapshot = published.snapshot.clone();
-        snapshot.runtime_update_age_ms =
-            u64::try_from(now.saturating_duration_since(published.published_at).as_millis()).unwrap_or(u64::MAX);
+        snapshot.runtime_update_age_ms = u64::try_from(
+            now.saturating_duration_since(published.published_at)
+                .as_millis(),
+        )
+        .unwrap_or(u64::MAX);
         drop(published);
         Ok(snapshot)
     }
@@ -287,9 +290,13 @@ pub fn read_diagnostics(socket_path: &Path) -> Result<DiagnosticsSnapshot, Strin
         .set_read_timeout(Some(IO_TIMEOUT))
         .and_then(|()| stream.set_write_timeout(Some(IO_TIMEOUT)))
         .map_err(|error| error.to_string())?;
-    stream.write_all(b"status\n").map_err(|error| error.to_string())?;
+    stream
+        .write_all(b"status\n")
+        .map_err(|error| error.to_string())?;
     let mut response = Vec::new();
-    stream.read_to_end(&mut response).map_err(|error| error.to_string())?;
+    stream
+        .read_to_end(&mut response)
+        .map_err(|error| error.to_string())?;
     let snapshot = proto::DiagnosticsSnapshot::decode(response.as_slice()).map_err(|error| error.to_string())?;
     DiagnosticsSnapshot::from_proto(snapshot)
 }

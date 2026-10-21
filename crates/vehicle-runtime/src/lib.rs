@@ -111,7 +111,11 @@ pub fn verify_powertrain_netdevice(
     if link.get("operstate").and_then(serde_json::Value::as_str) != Some("UP") {
         return Err(LiveNetdeviceError::LinkDown);
     }
-    if link.pointer("/linkinfo/info_kind").and_then(serde_json::Value::as_str) != Some("can") {
+    if link
+        .pointer("/linkinfo/info_kind")
+        .and_then(serde_json::Value::as_str)
+        != Some("can")
+    {
         return Err(LiveNetdeviceError::NotClassicalCan);
     }
     let data = link
@@ -127,7 +131,11 @@ pub fn verify_powertrain_netdevice(
     let listen_only = data
         .get("ctrlmode")
         .and_then(serde_json::Value::as_array)
-        .is_some_and(|modes| modes.iter().any(|mode| mode.as_str() == Some("LISTEN-ONLY")));
+        .is_some_and(|modes| {
+            modes
+                .iter()
+                .any(|mode| mode.as_str() == Some("LISTEN-ONLY"))
+        });
     if !listen_only {
         return Err(LiveNetdeviceError::NotListenOnly);
     }
@@ -225,7 +233,9 @@ impl PowertrainCanReceiver {
         socket
             .set_error_filter_accept_all()
             .map_err(|error| error.to_string())?;
-        socket.set_recv_timestamp(true).map_err(|error| error.to_string())?;
+        socket
+            .set_recv_timestamp(true)
+            .map_err(|error| error.to_string())?;
         socket
             .set_timestamping(
                 socketcan::timestamp::SOF_TIMESTAMPING_RX_HARDWARE
@@ -341,7 +351,9 @@ impl ActuatorCanTransport {
         let mut frame = socketcan::CanFdFrame::new(id, &payload[..encoded.len])
             .ok_or_else(|| "controller frame has invalid CAN FD length".to_owned())?;
         frame.set_brs(true);
-        self.socket.write_frame(&frame).map_err(|error| error.to_string())
+        self.socket
+            .write_frame(&frame)
+            .map_err(|error| error.to_string())
     }
 
     /// Reads one controller frame. CAN error frames and unknown protocol IDs
@@ -353,7 +365,10 @@ impl ActuatorCanTransport {
     pub(crate) fn receive(&self) -> Result<ReceivedControllerFrame, String> {
         use socketcan::{EmbeddedFrame, Frame, Socket};
 
-        let frame = self.socket.read_frame().map_err(|error| error.to_string())?;
+        let frame = self
+            .socket
+            .read_frame()
+            .map_err(|error| error.to_string())?;
         let id = frame.raw_id();
         let data = frame.data().to_vec();
         let (decoded, ignored_reason) = if let socketcan::CanAnyFrame::Error(error) = frame {

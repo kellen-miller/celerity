@@ -50,7 +50,11 @@ fn startup_snapshot_is_typed_and_socket_is_group_readable() {
     assert_eq!(snapshot.feature_authority, expected.feature_authority);
     assert_eq!(snapshot.command_source, expected.command_source);
     assert_eq!(
-        fs::metadata(&socket).expect("socket metadata").permissions().mode() & 0o777,
+        fs::metadata(&socket)
+            .expect("socket metadata")
+            .permissions()
+            .mode()
+            & 0o777,
         0o660
     );
 
@@ -79,7 +83,9 @@ fn status_request_can_arrive_after_connection_is_accepted() {
     assert_eq!(wire.schema_version, 2);
     assert_eq!(
         wire.global_authority,
-        DiagnosticsSnapshot::startup_fallback().to_proto().global_authority,
+        DiagnosticsSnapshot::startup_fallback()
+            .to_proto()
+            .global_authority,
     );
 
     stopping.store(true, Ordering::Relaxed);
@@ -104,13 +110,20 @@ fn bounded_transport_survives_silent_and_malformed_peers() {
         .expect("read timeout");
     malformed.write_all(b"mutate\n").expect("malformed request");
     let mut rejection = String::new();
-    malformed.read_to_string(&mut rejection).expect("bounded rejection");
+    malformed
+        .read_to_string(&mut rejection)
+        .expect("bounded rejection");
     assert_eq!(rejection, "{\"error\":\"read-only status request required\"}\n");
 
     let mut disconnected = UnixStream::connect(&socket).expect("disconnecting client");
     disconnected.write_all(b"status\n").expect("status request");
     drop(disconnected);
-    assert_eq!(read_diagnostics(&socket).expect("subsequent status").schema_version, 2);
+    assert_eq!(
+        read_diagnostics(&socket)
+            .expect("subsequent status")
+            .schema_version,
+        2
+    );
 
     let stop_started = Instant::now();
     stopping.store(true, Ordering::Relaxed);

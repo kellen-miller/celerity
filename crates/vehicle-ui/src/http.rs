@@ -63,7 +63,9 @@ pub fn run_http(
                     "Content-Security-Policy",
                     "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:",
                 )?);
-            request.respond(response).map_err(|error| error.to_string())?;
+            request
+                .respond(response)
+                .map_err(|error| error.to_string())?;
             continue;
         }
         let envelope = observer
@@ -75,7 +77,9 @@ pub fn run_http(
             .with_header(header("Content-Type", "application/x-protobuf")?)
             .with_header(header("Cache-Control", "no-store")?)
             .with_header(header("X-Content-Type-Options", "nosniff")?);
-        request.respond(response).map_err(|error| error.to_string())?;
+        request
+            .respond(response)
+            .map_err(|error| error.to_string())?;
     }
     Ok(())
 }

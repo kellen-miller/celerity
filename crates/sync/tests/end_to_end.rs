@@ -154,7 +154,11 @@ fn production_http_upload_trains_and_stages_exact_model() {
         .build()
         .expect("HTTP client");
     let ready_deadline = Instant::now() + Duration::from_secs(10);
-    while client.get(format!("{base_url}/health/ready")).send().is_err() {
+    while client
+        .get(format!("{base_url}/health/ready"))
+        .send()
+        .is_err()
+    {
         assert!(Instant::now() < ready_deadline, "home API did not become ready");
         thread::sleep(Duration::from_millis(50));
     }

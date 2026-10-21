@@ -143,7 +143,11 @@ impl ValidatedBundle {
                 .command_lattice
                 .iter()
                 .any(|command| !(controller.minimum_basis_points..=controller.maximum_basis_points).contains(command))
-            || self.model.command_lattice.windows(2).any(|pair| pair[0] >= pair[1])
+            || self
+                .model
+                .command_lattice
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
         {
             return Err(BundleError::InvalidRuntimeTiming);
         }
@@ -247,7 +251,10 @@ pub(super) fn load_experiment(
     let path = if configured.is_absolute() {
         configured.to_path_buf()
     } else {
-        bundle_path.parent().unwrap_or_else(|| Path::new(".")).join(configured)
+        bundle_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(configured)
     };
     ExperimentPlan::load(&path)
         .map(Some)

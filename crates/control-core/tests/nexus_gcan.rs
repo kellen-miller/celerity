@@ -94,7 +94,10 @@ fn nexus_selection_keeps_factory_broadcast_opaque_and_cantcu_independent() {
         .expect("broadcast profile")
         .powertrain_decoder();
     assert_eq!(
-        broadcast.decode(0x600, &[0; 8]).expect("opaque GCAN").source,
+        broadcast
+            .decode(0x600, &[0; 8])
+            .expect("opaque GCAN")
+            .source,
         PowertrainSource::Unknown,
     );
 }

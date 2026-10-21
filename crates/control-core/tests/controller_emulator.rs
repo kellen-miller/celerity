@@ -74,7 +74,9 @@ fn discovery_emits_announce_then_capability() {
         panic!("expected node announce")
     };
     assert_eq!(message.state_flags, 1);
-    let capability = announce.follow_up().expect("capability must follow announce");
+    let capability = announce
+        .follow_up()
+        .expect("capability must follow announce");
     assert!(matches!(
         decode(capability.can_id, capability.payload()).expect("capability must decode"),
         Frame::CapabilityReport { .. }

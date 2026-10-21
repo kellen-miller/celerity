@@ -101,7 +101,10 @@ impl RunWriter {
             self.mark_degraded();
             return EnqueueResult::Degraded;
         };
-        if sender.try_send(WorkerMessage::FirmwareGeneration(generation)).is_ok() {
+        if sender
+            .try_send(WorkerMessage::FirmwareGeneration(generation))
+            .is_ok()
+        {
             EnqueueResult::Accepted
         } else {
             self.mark_degraded();
@@ -167,7 +170,8 @@ impl RunWriter {
     }
 
     fn mark_degraded(&self) {
-        self.degraded_reason.store(DEGRADE_QUEUE_FAILURE, Ordering::Release);
+        self.degraded_reason
+            .store(DEGRADE_QUEUE_FAILURE, Ordering::Release);
     }
 }
 

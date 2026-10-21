@@ -65,7 +65,9 @@ async fn main(_spawner: embassy_executor::Spawner) {
         boot_session = random.next_u32();
     }
     drop(random);
-    pac::TAMP.bkpr(0).write(|register| register.set_bkp(boot_session));
+    pac::TAMP
+        .bkpr(0)
+        .write(|register| register.set_bkp(boot_session));
     pac::PWR.cr1().modify(|register| register.set_dbp(false));
 
     // Configuration is intentionally volatile. Every reset creates a fresh

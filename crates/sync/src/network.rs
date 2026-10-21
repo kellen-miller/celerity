@@ -53,7 +53,10 @@ impl NetworkPresence for LinuxNetworkPresence {
                 continue;
             }
             let encoded = u32::from_str_radix(columns[2], 16).unwrap_or_default();
-            let gateway = encoded.to_le_bytes().map(|octet| octet.to_string()).join(".");
+            let gateway = encoded
+                .to_le_bytes()
+                .map(|octet| octet.to_string())
+                .join(".");
             return Ok(gateway == expected_gateway);
         }
         Ok(false)

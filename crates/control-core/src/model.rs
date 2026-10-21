@@ -101,7 +101,10 @@ pub struct InferenceBudget {
 impl InferenceBudget {
     #[must_use]
     pub const fn allows(self, remaining_cycle_ns: u64) -> bool {
-        remaining_cycle_ns >= self.measured_ceiling_ns.saturating_add(self.required_post_work_ns)
+        remaining_cycle_ns
+            >= self
+                .measured_ceiling_ns
+                .saturating_add(self.required_post_work_ns)
     }
 }
 

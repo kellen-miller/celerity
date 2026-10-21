@@ -34,7 +34,9 @@ struct RecordingHome {
 
 impl HomeApi for RecordingHome {
     fn reconcile(&self, request: &ReconcileRequest) -> Result<ReconcileResponse, SyncError> {
-        self.missing.borrow_mut().clone_from(&request.completed_run_digests);
+        self.missing
+            .borrow_mut()
+            .clone_from(&request.completed_run_digests);
         Ok(ReconcileResponse {
             missing_run_digests: self.missing.borrow().clone(),
             desired_model_digest: self.model.borrow().as_ref().map(|bytes| digest(bytes)),

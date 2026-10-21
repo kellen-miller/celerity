@@ -38,7 +38,9 @@ fn production_dependency_closure_excludes_authority_can_run_and_onnx() {
         ])
     );
 
-    let resolve = metadata["resolve"]["nodes"].as_array().expect("resolve nodes");
+    let resolve = metadata["resolve"]["nodes"]
+        .as_array()
+        .expect("resolve nodes");
     let root_id = viewer["id"].as_str().expect("vehicle-ui ID");
     let mut pending = vec![root_id];
     let mut visited = BTreeSet::new();

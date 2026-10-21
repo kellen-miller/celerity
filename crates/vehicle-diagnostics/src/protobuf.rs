@@ -185,14 +185,18 @@ pub(super) fn from_proto(snapshot: proto::DiagnosticsSnapshot) -> Result<Diagnos
         feature_authority: feature_authority_from_proto(snapshot.feature_authority)?,
         command_source: command_source_from_proto(snapshot.command_source)?,
         accepted_radiator_split_command,
-        coolant_temperature: snapshot.coolant_temperature.map(|temperature| ObservedTemperature {
-            degrees_celsius: temperature.degrees_celsius,
-            observation_age_ms: temperature.observation_age_ms,
-        }),
-        intake_air_temperature: snapshot.intake_air_temperature.map(|temperature| ObservedTemperature {
-            degrees_celsius: temperature.degrees_celsius,
-            observation_age_ms: temperature.observation_age_ms,
-        }),
+        coolant_temperature: snapshot
+            .coolant_temperature
+            .map(|temperature| ObservedTemperature {
+                degrees_celsius: temperature.degrees_celsius,
+                observation_age_ms: temperature.observation_age_ms,
+            }),
+        intake_air_temperature: snapshot
+            .intake_air_temperature
+            .map(|temperature| ObservedTemperature {
+                degrees_celsius: temperature.degrees_celsius,
+                observation_age_ms: temperature.observation_age_ms,
+            }),
         controller_runtime_lease_health: diagnostic_status_from_proto(
             snapshot.controller_runtime_lease_health.as_ref(),
         )?,

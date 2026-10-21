@@ -20,7 +20,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - id: paths
-        uses: kellen-miller/ci/.github/actions/changed-paths@6d83b6c0e8b6f407fa2f11e1c974449649cfa1f6
+        uses: kellen-miller/ci/.github/actions/changed-paths@c7d3bb1cf4ddd49dc3fd32a8739449960f6b7416
         with:
           filters: |
             {
@@ -182,7 +182,7 @@ jobs:
           cache-key: prerelease-protos
           rustflags: ""
       - name: Set up Node project
-        uses: kellen-miller/ci/.github/actions/setup-node@6d83b6c0e8b6f407fa2f11e1c974449649cfa1f6
+        uses: kellen-miller/ci/.github/actions/setup-node@c7d3bb1cf4ddd49dc3fd32a8739449960f6b7416
         with:
           node-version: '26'
           working-directory: crates/vehicle-ui/web
@@ -216,14 +216,14 @@ jobs:
           cache-suffix: ${{ matrix.os }}
       - name: Set up Node project
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).ui) }}
-        uses: kellen-miller/ci/.github/actions/setup-node@6d83b6c0e8b6f407fa2f11e1c974449649cfa1f6
+        uses: kellen-miller/ci/.github/actions/setup-node@c7d3bb1cf4ddd49dc3fd32a8739449960f6b7416
         with:
           node-version: '26'
           working-directory: crates/vehicle-ui/web
 
       - name: Set up Playwright
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).ui) }}
-        uses: kellen-miller/ci/.github/actions/playwright-setup@6d83b6c0e8b6f407fa2f11e1c974449649cfa1f6
+        uses: kellen-miller/ci/.github/actions/playwright-setup@c7d3bb1cf4ddd49dc3fd32a8739449960f6b7416
         with:
           working-directory: crates/vehicle-ui/web
           browsers: chromium
@@ -245,13 +245,13 @@ jobs:
           sudo ip link set up vcan-powertrain
           sudo ip link set up vcan-controller
       - name: Check Rust workspace
-        uses: kellen-miller/ci/.github/actions/rust-check@6d83b6c0e8b6f407fa2f11e1c974449649cfa1f6
+        uses: kellen-miller/ci/.github/actions/rust-check@c7d3bb1cf4ddd49dc3fd32a8739449960f6b7416
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
         with:
           setup-toolchain: 'false'
           checks: fmt clippy
       - name: Test and build Rust workspace
-        uses: kellen-miller/ci/.github/actions/rust-check@6d83b6c0e8b6f407fa2f11e1c974449649cfa1f6
+        uses: kellen-miller/ci/.github/actions/rust-check@c7d3bb1cf4ddd49dc3fd32a8739449960f6b7416
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
         with:
           setup-toolchain: 'false'
@@ -316,12 +316,12 @@ jobs:
           sudo ip link set up vcan-powertrain
           sudo ip link set up vcan-controller
       - name: Check Rust workspace
-        uses: kellen-miller/ci/.github/actions/rust-check@6d83b6c0e8b6f407fa2f11e1c974449649cfa1f6
+        uses: kellen-miller/ci/.github/actions/rust-check@c7d3bb1cf4ddd49dc3fd32a8739449960f6b7416
         with:
           setup-toolchain: 'false'
           checks: fmt clippy
       - name: Test and build Rust workspace
-        uses: kellen-miller/ci/.github/actions/rust-check@6d83b6c0e8b6f407fa2f11e1c974449649cfa1f6
+        uses: kellen-miller/ci/.github/actions/rust-check@c7d3bb1cf4ddd49dc3fd32a8739449960f6b7416
         with:
           setup-toolchain: 'false'
           checks: test build

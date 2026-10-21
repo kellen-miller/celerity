@@ -135,7 +135,9 @@ impl ControllerState {
             self.runtime_lease = None;
             self.select_fallback();
         } else if self.mode == FirmwareMode::RemoteAuthority
-            && self.command_deadline_ms.is_none_or(|deadline| now_ms >= deadline)
+            && self
+                .command_deadline_ms
+                .is_none_or(|deadline| now_ms >= deadline)
         {
             self.select_fallback();
         }
@@ -143,7 +145,8 @@ impl ControllerState {
 
     #[must_use]
     pub fn runtime_lease_valid(&self, now_ms: u64) -> bool {
-        self.runtime_lease.is_some_and(|lease| now_ms < lease.deadline_ms)
+        self.runtime_lease
+            .is_some_and(|lease| now_ms < lease.deadline_ms)
     }
 
     #[must_use]
@@ -158,7 +161,8 @@ impl ControllerState {
 
     #[must_use]
     pub fn configuration_generation(&self) -> Option<u32> {
-        self.active_configuration.map(|configuration| configuration.generation)
+        self.active_configuration
+            .map(|configuration| configuration.generation)
     }
 
     #[must_use]

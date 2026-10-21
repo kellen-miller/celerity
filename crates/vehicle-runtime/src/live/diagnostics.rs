@@ -28,18 +28,25 @@ impl LiveRuntime {
             DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback)
         } else if !self.lease_renewal_expected {
             DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotRenewing)
-        } else if self.last_matching_runtime_lease_ack_at.is_some_and(|acknowledged_at| {
-            now.saturating_duration_since(acknowledged_at)
-                <= Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
-        }) {
+        } else if self
+            .last_matching_runtime_lease_ack_at
+            .is_some_and(|acknowledged_at| {
+                now.saturating_duration_since(acknowledged_at)
+                    <= Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
+            })
+        {
             DiagnosticStatus::Healthy
-        } else if self.lease_renewal_expected_since.is_some_and(|expected_since| {
-            now.saturating_duration_since(expected_since)
-                > Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
-        }) || self.last_sent_runtime_lease.is_some_and(|lease| {
-            now.saturating_duration_since(lease.sent_at)
-                > Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
-        }) {
+        } else if self
+            .lease_renewal_expected_since
+            .is_some_and(|expected_since| {
+                now.saturating_duration_since(expected_since)
+                    > Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
+            })
+            || self.last_sent_runtime_lease.is_some_and(|lease| {
+                now.saturating_duration_since(lease.sent_at)
+                    > Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
+            })
+        {
             DiagnosticStatus::Unhealthy
         } else {
             DiagnosticStatus::Unknown(DiagnosticUnknownReason::AwaitingEvidence)

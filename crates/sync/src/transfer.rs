@@ -112,9 +112,14 @@ impl Synchronizer {
         let active = read_marker("active-digest");
         let known_good = read_marker("known-good-digest");
         let slot_digest = |slot: &str| {
-            fs::read_to_string(self.configuration.model_root.join(slot).join("bundle-digest"))
-                .ok()
-                .map(|value| value.trim().to_owned())
+            fs::read_to_string(
+                self.configuration
+                    .model_root
+                    .join(slot)
+                    .join("bundle-digest"),
+            )
+            .ok()
+            .map(|value| value.trim().to_owned())
         };
         let active_slot = active.as_ref().and_then(|active_digest| {
             ["slot-a", "slot-b"]
@@ -212,12 +217,18 @@ impl Synchronizer {
                 .and_then(|metadata| metadata.modified())
                 .ok()
         });
-        let remove_count = acknowledged.len().saturating_sub(self.configuration.retention_count);
+        let remove_count = acknowledged
+            .len()
+            .saturating_sub(self.configuration.retention_count);
         for run in acknowledged.into_iter().take(remove_count) {
             fs::remove_dir_all(&run.directory).map_err(sync_io)?;
         }
         let mut incomplete = incomplete_inventory(&self.configuration.spool_root)?;
-        incomplete.sort_by_key(|directory| fs::metadata(directory).and_then(|metadata| metadata.modified()).ok());
+        incomplete.sort_by_key(|directory| {
+            fs::metadata(directory)
+                .and_then(|metadata| metadata.modified())
+                .ok()
+        });
         let remove_count = incomplete
             .len()
             .saturating_sub(self.configuration.incomplete_retention_count);

@@ -75,7 +75,10 @@ impl LiveRuntime {
         let iat = self.signal_values.get("air_temperature_c").copied();
         if let (Some((coolant_c, coolant_ms, _)), Some((iat_c, iat_ms, _))) = (coolant, iat) {
             let observed_ms = coolant_ms.min(iat_ms);
-            if self.last_safety_observed_ms.is_some_and(|last| observed_ms <= last) {
+            if self
+                .last_safety_observed_ms
+                .is_some_and(|last| observed_ms <= last)
+            {
                 return Ok(());
             }
             self.last_safety_observed_ms = Some(observed_ms);
@@ -97,9 +100,11 @@ impl LiveRuntime {
             .model_input_signals()
             .iter()
             .map(|signal| {
-                self.signal_values.get(signal).and_then(|(value, observed_ms, _)| {
-                    (now_ms.saturating_sub(*observed_ms) <= maximum_age_ms).then_some(*value)
-                })
+                self.signal_values
+                    .get(signal)
+                    .and_then(|(value, observed_ms, _)| {
+                        (now_ms.saturating_sub(*observed_ms) <= maximum_age_ms).then_some(*value)
+                    })
             })
             .collect::<Option<Vec<_>>>();
         match values {
@@ -222,7 +227,9 @@ impl LiveRuntime {
                     && (message.configuration_generation == 0
                         || message.configuration_generation == self.controller.configuration_generation);
                 if valid {
-                    let session_changed = self.boot_session.is_some_and(|session| session != message.boot_session);
+                    let session_changed = self
+                        .boot_session
+                        .is_some_and(|session| session != message.boot_session);
                     let was_configured = self.configured;
                     if session_changed {
                         self.clear_controller_diagnostics();

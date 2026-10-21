@@ -40,7 +40,9 @@ fn run_live_case(nexus: bool) -> LiveTestResult<()> {
     let bundle_path = temporary.path().join("live.toml");
     let runs = temporary.path().join("runs");
     let slots = temporary.path().join("models");
-    let runs_root = runs.to_str().ok_or_else(|| io::Error::other("run path is not UTF-8"))?;
+    let runs_root = runs
+        .to_str()
+        .ok_or_else(|| io::Error::other("run path is not UTF-8"))?;
     let slots_root = slots
         .to_str()
         .ok_or_else(|| io::Error::other("slot path is not UTF-8"))?;

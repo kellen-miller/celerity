@@ -68,7 +68,9 @@ fn experiment_bundle() -> Result<ValidatedBundle, control_core::BundleError> {
         &path,
         format!(
             "{source}\n[experiment]\nplan = \"{}\"\n",
-            repository.join("fixtures/experiments/duct-sweep.toml").display()
+            repository
+                .join("fixtures/experiments/duct-sweep.toml")
+                .display()
         ),
     )
     .map_err(|error| control_core::BundleError::Read(error.to_string()))?;

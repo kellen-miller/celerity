@@ -78,23 +78,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .select_known_good_startup(bundle.model_abi(), bundle.model_input_length())
                     .map_err(|slot_error| io::Error::other(format!("{slot_error:?}")))?
                     .filter(|known_good| known_good.digest != rejected);
-                if let Some(known_good) = &selected {
-                    match RuntimeModel::load(&known_good.onnx_path, &bundle) {
-                        Ok(loaded) => model = Some(loaded),
-                        Err(error) => {
-                            slots
-                                .mark_rejected(&known_good.digest)
-                                .map_err(|slot_error| {
-                                    io::Error::other(format!("{slot_error:?}"))
-                                })?;
-                            eprintln!(
-                                "rejected known-good startup model {}: {error:?}",
-                                known_good.digest
-                            );
-                            selected = None;
-                        }
-                    }
-                }
+            }
+        }
+    }
+    if model.is_none()
+        && let Some(known_good) = &selected
+    {
+        match RuntimeModel::load(&known_good.onnx_path, &bundle) {
+            Ok(loaded) => model = Some(loaded),
+            Err(error) => {
+                slots
+                    .mark_rejected(&known_good.digest)
+                    .map_err(|slot_error| io::Error::other(format!("{slot_error:?}")))?;
+                eprintln!(
+                    "rejected known-good startup model {}: {error:?}",
+                    known_good.digest
+                );
+                selected = None;
             }
         }
     }

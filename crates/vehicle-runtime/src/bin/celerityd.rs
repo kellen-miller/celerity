@@ -81,6 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+
     if model.is_none()
         && let Some(known_good) = &selected
     {
@@ -98,6 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+
     if bundle.model_required() && selected.is_none() {
         return Err(io::Error::other("required startup model is absent or invalid").into());
     }

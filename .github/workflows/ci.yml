@@ -235,7 +235,10 @@ jobs:
         if: ${{ success() && runner.os == 'Linux' && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).e2e || fromJSON(needs.changes.outputs.changes).ui) }}
         run: |
           sudo apt-get update
-          sudo apt-get install --yes "linux-modules-extra-$(uname -r)"
+          modules_package="linux-modules-extra-$(uname -r)"
+          if apt-cache show "$modules_package" 2>/dev/null | grep -q '^Package:'; then
+            sudo apt-get install --yes "$modules_package"
+          fi
           sudo modprobe vcan
           sudo ip link add dev vcan-powertrain type vcan
           sudo ip link add dev vcan-controller type vcan
@@ -302,7 +305,11 @@ jobs:
       - name: Install cross linker and vcan
         run: |
           sudo apt-get update
-          sudo apt-get install --yes gcc-aarch64-linux-gnu "linux-modules-extra-$(uname -r)"
+          sudo apt-get install --yes gcc-aarch64-linux-gnu
+          modules_package="linux-modules-extra-$(uname -r)"
+          if apt-cache show "$modules_package" 2>/dev/null | grep -q '^Package:'; then
+            sudo apt-get install --yes "$modules_package"
+          fi
           sudo modprobe vcan
           sudo ip link add dev vcan-powertrain type vcan
           sudo ip link add dev vcan-controller type vcan

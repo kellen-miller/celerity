@@ -43,7 +43,9 @@ impl ValidatedBundle {
                 return Err(BundleError::DuplicateControllerAddress(controller.address));
             }
             if !identities.insert(controller.identity) {
-                return Err(BundleError::DuplicateControllerIdentity(controller.identity));
+                return Err(BundleError::DuplicateControllerIdentity(
+                    controller.identity,
+                ));
             }
             addresses[usize::from(controller.address)] = true;
         }
@@ -121,7 +123,9 @@ impl ValidatedBundle {
                 .input_signals
                 .iter()
                 .enumerate()
-                .any(|(index, signal)| signal.is_empty() || self.model.input_signals[..index].contains(signal))
+                .any(|(index, signal)| {
+                    signal.is_empty() || self.model.input_signals[..index].contains(signal)
+                })
             || self.model.history_length == 0
             || self.model.warmup_iterations == 0
             || !self.model.maximum_uncertainty.is_finite()
@@ -138,11 +142,10 @@ impl ValidatedBundle {
             || !self.model.iat_input_maximum_c.is_finite()
             || self.model.iat_input_minimum_c >= self.model.iat_input_maximum_c
             || self.model.command_lattice.is_empty()
-            || self
-                .model
-                .command_lattice
-                .iter()
-                .any(|command| !(controller.minimum_basis_points..=controller.maximum_basis_points).contains(command))
+            || self.model.command_lattice.iter().any(|command| {
+                !(controller.minimum_basis_points..=controller.maximum_basis_points)
+                    .contains(command)
+            })
             || self
                 .model
                 .command_lattice
@@ -151,11 +154,12 @@ impl ValidatedBundle {
         {
             return Err(BundleError::InvalidRuntimeTiming);
         }
-        if self
-            .loaded_experiment_plan
-            .as_ref()
-            .is_some_and(|plan| !plan.commands_within(controller.minimum_basis_points, controller.maximum_basis_points))
-        {
+        if self.loaded_experiment_plan.as_ref().is_some_and(|plan| {
+            !plan.commands_within(
+                controller.minimum_basis_points,
+                controller.maximum_basis_points,
+            )
+        }) {
             return Err(BundleError::InvalidRuntimeTiming);
         }
         if self.sync.spool_root != self.run_storage.root
@@ -196,7 +200,8 @@ impl ValidatedBundle {
 }
 
 pub(super) fn strictly_increasing(values: &[f64; 3]) -> bool {
-    values.iter().all(|value| value.is_finite()) && values.windows(2).all(|window| window[0] < window[1])
+    values.iter().all(|value| value.is_finite())
+        && values.windows(2).all(|window| window[0] < window[1])
 }
 
 pub(super) fn breakpoint_index(value: f64, breakpoints: &[f64; 3]) -> usize {

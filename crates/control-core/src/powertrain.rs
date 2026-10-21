@@ -10,7 +10,10 @@ use serde::Deserialize;
 #[serde(tag = "mode", rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) enum HaltechReception {
     BroadcastV2 {},
-    NexusGcanV1 { base_id: u16, maximum_period_ms: u64 },
+    NexusGcanV1 {
+        base_id: u16,
+        maximum_period_ms: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -110,7 +113,8 @@ impl PowertrainDecoder {
 
             if (base_id..=last).any(|id| {
                 HaltechFrame::from_id(id).is_some()
-                    || cantcu.is_some_and(|stream| CantcuFrame::from_id(stream.base_id, id).is_some())
+                    || cantcu
+                        .is_some_and(|stream| CantcuFrame::from_id(stream.base_id, id).is_some())
             }) {
                 return Err(PowertrainDecodeError::NexusIdCollision);
             }
@@ -122,7 +126,9 @@ impl PowertrainDecoder {
     pub(crate) const fn maximum_period_ms(&self) -> u64 {
         match self.haltech {
             HaltechReception::BroadcastV2 {} => 200,
-            HaltechReception::NexusGcanV1 { maximum_period_ms, .. } => maximum_period_ms,
+            HaltechReception::NexusGcanV1 {
+                maximum_period_ms, ..
+            } => maximum_period_ms,
         }
     }
 
@@ -131,7 +137,11 @@ impl PowertrainDecoder {
     /// # Errors
     ///
     /// Rejects recognized frames with incorrect length or invalid Nexus values.
-    pub fn decode(&self, can_id: u16, payload: &[u8]) -> Result<DecodedPowertrainFrame, PowertrainDecodeError> {
+    pub fn decode(
+        &self,
+        can_id: u16,
+        payload: &[u8],
+    ) -> Result<DecodedPowertrainFrame, PowertrainDecodeError> {
         match self.haltech {
             HaltechReception::BroadcastV2 {} => {
                 if let Some(frame) = HaltechFrame::from_id(can_id) {
@@ -216,7 +226,10 @@ fn decode_cantcu_frame(
                 signals.push(signal("cantcu_driven_wheel_speed", f64::from(le(0))));
                 signals.push(signal("cantcu_gear", f64::from(payload[2].cast_signed())));
                 signals.push(signal("cantcu_shifter_state", f64::from(payload[3])));
-                signals.push(signal("cantcu_clutch_slip", f64::from(payload[4].cast_signed())));
+                signals.push(signal(
+                    "cantcu_clutch_slip",
+                    f64::from(payload[4].cast_signed()),
+                ));
                 signals.push(signal("cantcu_paddles", f64::from(payload[7])));
             }
             CantcuFrame::DigitalIo => {
@@ -226,15 +239,24 @@ fn decode_cantcu_frame(
             }
             CantcuFrame::AnalogInputs => {
                 for index in 0..4 {
-                    signals.push(signal(cantcu_analog_name(index), f64::from(le(index * 2)) / 1_000.0));
+                    signals.push(signal(
+                        cantcu_analog_name(index),
+                        f64::from(le(index * 2)) / 1_000.0,
+                    ));
                 }
             }
             CantcuFrame::ShiftStatus => {
                 signals.push(signal("cantcu_last_shift_time_ms", f64::from(le(0))));
-                signals.push(signal("cantcu_oil_temperature_c", f64::from(payload[2].cast_signed())));
+                signals.push(signal(
+                    "cantcu_oil_temperature_c",
+                    f64::from(payload[2].cast_signed()),
+                ));
                 signals.push(signal("cantcu_drive_mode", f64::from(payload[3])));
                 signals.push(signal("cantcu_launch_state", f64::from(payload[5])));
-                signals.push(signal("cantcu_supply_voltage_v", f64::from(le(6)) / 1_000.0));
+                signals.push(signal(
+                    "cantcu_supply_voltage_v",
+                    f64::from(le(6)) / 1_000.0,
+                ));
             }
             CantcuFrame::TargetRpmAndDeltas => {
                 signals.push(signal("cantcu_target_rpm", f64::from(le(0))));
@@ -290,7 +312,10 @@ mod tests {
 
     #[test]
     fn haltech_ids_map_to_named_frames() {
-        assert_eq!(HaltechFrame::from_id(0x3e0), Some(HaltechFrame::FluidTemperatures));
+        assert_eq!(
+            HaltechFrame::from_id(0x3e0),
+            Some(HaltechFrame::FluidTemperatures)
+        );
         assert_eq!(
             HaltechFrame::from_id(0x375),
             Some(HaltechFrame::ExhaustGasTemperatures9To12)
@@ -300,7 +325,10 @@ mod tests {
 
     #[test]
     fn cantcu_ids_map_to_named_relative_frames() {
-        assert_eq!(CantcuFrame::from_id(0x500, 0x505), Some(CantcuFrame::ShiftStatus));
+        assert_eq!(
+            CantcuFrame::from_id(0x500, 0x505),
+            Some(CantcuFrame::ShiftStatus)
+        );
         assert_eq!(
             CantcuFrame::from_id(0x500, 0x506),
             Some(CantcuFrame::TargetRpmAndDeltas)

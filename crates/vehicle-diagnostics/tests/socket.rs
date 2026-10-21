@@ -14,8 +14,9 @@ use std::{
 };
 
 use vehicle_diagnostics::{
-    CommandSource, DiagnosticStatus, DiagnosticUnknownReason, DiagnosticsSnapshot, DiagnosticsStore, FeatureAuthority,
-    GlobalAuthority, RunStorageHealth, read_diagnostics, serve_diagnostics,
+    CommandSource, DiagnosticStatus, DiagnosticUnknownReason, DiagnosticsSnapshot,
+    DiagnosticsStore, FeatureAuthority, GlobalAuthority, RunStorageHealth, read_diagnostics,
+    serve_diagnostics,
 };
 
 use prost::Message;
@@ -36,8 +37,12 @@ fn startup_snapshot_is_typed_and_socket_is_group_readable() {
         accepted_radiator_split_command: None,
         coolant_temperature: None,
         intake_air_temperature: None,
-        controller_runtime_lease_health: DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback),
-        controller_command_ack_health: DiagnosticStatus::Unknown(DiagnosticUnknownReason::NoOutstandingCommand),
+        controller_runtime_lease_health: DiagnosticStatus::Unknown(
+            DiagnosticUnknownReason::NotExpectedInFallback,
+        ),
+        controller_command_ack_health: DiagnosticStatus::Unknown(
+            DiagnosticUnknownReason::NoOutstandingCommand,
+        ),
         run_storage_health: RunStorageHealth::Unknown,
     };
     let store = DiagnosticsStore::new(expected.clone(), 20, published_at);
@@ -79,7 +84,8 @@ fn status_request_can_arrive_after_connection_is_accepted() {
     client.write_all(b"status\n").expect("delayed request");
     let mut response = Vec::new();
     client.read_to_end(&mut response).expect("delayed response");
-    let wire = celerity_proto::celerity::v1::DiagnosticsSnapshot::decode(response.as_slice()).expect("wire snapshot");
+    let wire = celerity_proto::celerity::v1::DiagnosticsSnapshot::decode(response.as_slice())
+        .expect("wire snapshot");
     assert_eq!(wire.schema_version, 2);
     assert_eq!(
         wire.global_authority,
@@ -113,7 +119,10 @@ fn bounded_transport_survives_silent_and_malformed_peers() {
     malformed
         .read_to_string(&mut rejection)
         .expect("bounded rejection");
-    assert_eq!(rejection, "{\"error\":\"read-only status request required\"}\n");
+    assert_eq!(
+        rejection,
+        "{\"error\":\"read-only status request required\"}\n"
+    );
 
     let mut disconnected = UnixStream::connect(&socket).expect("disconnecting client");
     disconnected.write_all(b"status\n").expect("status request");

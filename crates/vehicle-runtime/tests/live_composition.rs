@@ -12,11 +12,13 @@ use std::{
 use celerity_proto::celerity::v1::{
     ModelBundleManifest, ModelInputRange, ModelNormalization, RunEvent, run_event::Payload,
 };
-use control_core::{CommandSource, Completion, RuntimeModel, StartupMode, ValidatedBundle, replay_events};
+use control_core::{
+    CommandSource, Completion, RuntimeModel, StartupMode, ValidatedBundle, replay_events,
+};
 use prost::Message;
 use vehicle_diagnostics::{
-    CommandSource as DiagnosticCommandSource, DiagnosticStatus, DiagnosticUnknownReason, DiagnosticsSnapshot,
-    DiagnosticsStore, RunStorageHealth,
+    CommandSource as DiagnosticCommandSource, DiagnosticStatus, DiagnosticUnknownReason,
+    DiagnosticsSnapshot, DiagnosticsStore, RunStorageHealth,
 };
 
 #[path = "live_composition/can_bus.rs"]
@@ -86,11 +88,20 @@ fn run_live_case(nexus: bool) -> LiveTestResult<()> {
     )?;
     let model = RuntimeModel::load(&model_path, &bundle)
         .map_err(|error| io::Error::other(format!("production model: {error:?}")))?;
-    let diagnostics = DiagnosticsStore::new(DiagnosticsSnapshot::startup_fallback(), 20, std::time::Instant::now());
+    let diagnostics = DiagnosticsStore::new(
+        DiagnosticsSnapshot::startup_fallback(),
+        20,
+        std::time::Instant::now(),
+    );
     let diagnostics_socket = temporary.path().join("runtime-diagnostics.sock");
     let observed_commands = Arc::new(Mutex::new(Vec::new()));
-    let mut workers = LiveWorkers::start(&diagnostics_socket, diagnostics.clone(), Arc::clone(&observed_commands))?;
-    let startup = vehicle_diagnostics::read_diagnostics(&diagnostics_socket).map_err(io::Error::other)?;
+    let mut workers = LiveWorkers::start(
+        &diagnostics_socket,
+        diagnostics.clone(),
+        Arc::clone(&observed_commands),
+    )?;
+    let startup =
+        vehicle_diagnostics::read_diagnostics(&diagnostics_socket).map_err(io::Error::other)?;
     assert!(startup.accepted_radiator_split_command.is_none());
     assert!(startup.coolant_temperature.is_none());
     assert_eq!(
@@ -117,9 +128,11 @@ fn run_live_case(nexus: bool) -> LiveTestResult<()> {
             return Err(io::Error::other(error).into());
         }
     };
-    let exercise_result = exercise_live_runtime(&mut runtime, nexus, &diagnostics_socket, &observed_commands);
+    let exercise_result =
+        exercise_live_runtime(&mut runtime, nexus, &diagnostics_socket, &observed_commands);
     let manifest_result = runtime.shutdown().map_err(io::Error::other);
-    let stopped_result = vehicle_diagnostics::read_diagnostics(&diagnostics_socket).map_err(io::Error::other);
+    let stopped_result =
+        vehicle_diagnostics::read_diagnostics(&diagnostics_socket).map_err(io::Error::other);
     let workers_result = workers.stop();
     exercise_result?;
     let manifest = manifest_result?;
@@ -156,8 +169,12 @@ fn exercise_live_runtime(
             .map_err(|error| io::Error::other(error.to_string()))?
             .contains(&9_000)
     );
-    let snapshot = vehicle_diagnostics::read_diagnostics(diagnostics_socket).map_err(io::Error::other)?;
-    assert_eq!(snapshot.command_source, DiagnosticCommandSource::ModelOptimized);
+    let snapshot =
+        vehicle_diagnostics::read_diagnostics(diagnostics_socket).map_err(io::Error::other)?;
+    assert_eq!(
+        snapshot.command_source,
+        DiagnosticCommandSource::ModelOptimized
+    );
     assert_eq!(
         snapshot
             .accepted_radiator_split_command
@@ -165,8 +182,14 @@ fn exercise_live_runtime(
             .basis_points,
         9_000
     );
-    assert_eq!(snapshot.controller_runtime_lease_health, DiagnosticStatus::Healthy);
-    assert_eq!(snapshot.controller_command_ack_health, DiagnosticStatus::Healthy);
+    assert_eq!(
+        snapshot.controller_runtime_lease_health,
+        DiagnosticStatus::Healthy
+    );
+    assert_eq!(
+        snapshot.controller_command_ack_health,
+        DiagnosticStatus::Healthy
+    );
     assert_eq!(snapshot.run_storage_health, RunStorageHealth::Healthy);
     let coolant = snapshot
         .coolant_temperature
@@ -174,7 +197,8 @@ fn exercise_live_runtime(
         .degrees_celsius;
     assert!((coolant - 100.0).abs() < f64::EPSILON);
     thread::sleep(Duration::from_millis(120));
-    let delayed = vehicle_diagnostics::read_diagnostics(diagnostics_socket).map_err(io::Error::other)?;
+    let delayed =
+        vehicle_diagnostics::read_diagnostics(diagnostics_socket).map_err(io::Error::other)?;
     assert!(delayed.runtime_update_age_ms >= delayed.runtime_update_stale_after_ms);
     if nexus {
         exercise_nexus_fallback(runtime, diagnostics_socket)?;
@@ -192,8 +216,12 @@ fn exercise_nexus_fallback(
         runtime.run_cycle().map_err(io::Error::other)?;
     }
 
-    assert_eq!(runtime.outcome().command_source, CommandSource::ControllerLocalFallback);
-    let expired = vehicle_diagnostics::read_diagnostics(diagnostics_socket).map_err(io::Error::other)?;
+    assert_eq!(
+        runtime.outcome().command_source,
+        CommandSource::ControllerLocalFallback
+    );
+    let expired =
+        vehicle_diagnostics::read_diagnostics(diagnostics_socket).map_err(io::Error::other)?;
     let temperature = expired
         .coolant_temperature
         .ok_or_else(|| io::Error::other("last valid coolant temperature missing"))?;
@@ -225,7 +253,8 @@ fn verify_sealed_run(
     let run_directory = runs.join("live-kernel");
     assert!(run_directory.join("manifest.pb").is_file());
     assert!(run_directory.join(&manifest.chunk_file).is_file());
-    let replayed = replay_events(&run_directory).map_err(|error| io::Error::other(format!("{error:?}")))?;
+    let replayed =
+        replay_events(&run_directory).map_err(|error| io::Error::other(format!("{error:?}")))?;
     assert!(replayed.len() >= 4, "live Run must contain runtime events");
     if nexus {
         verify_nexus_recording(runs, manifest)?;
@@ -245,7 +274,9 @@ fn verify_nexus_recording(runs: &Path, manifest: &control_core::RunManifest) -> 
             Some(Payload::RawCan(raw)) if raw.id == 0x601 => {
                 raw_sequences.push(event.sequence);
             }
-            Some(Payload::SignalObservation(signal)) if signal.signal == "ambient_air_temperature_c" => {
+            Some(Payload::SignalObservation(signal))
+                if signal.signal == "ambient_air_temperature_c" =>
+            {
                 assert_eq!(event.source, "decoded_signal");
                 supplementary = Some(signal);
             }
@@ -253,7 +284,8 @@ fn verify_nexus_recording(runs: &Path, manifest: &control_core::RunManifest) -> 
         }
     }
 
-    let signal = supplementary.ok_or_else(|| io::Error::other("supplementary channel missing from Run"))?;
+    let signal =
+        supplementary.ok_or_else(|| io::Error::other("supplementary channel missing from Run"))?;
     assert!((signal.value + 5.0).abs() < f64::EPSILON);
     assert_eq!(signal.age_ns, 0);
     assert!(raw_sequences.contains(&signal.source_event_sequence));

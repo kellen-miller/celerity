@@ -36,7 +36,10 @@ pub(crate) const fn exact_length(payload: &[u8], expected: usize) -> Result<(), 
     Ok(())
 }
 
-pub(crate) fn reserved_zero(payload: &[u8], range: core::ops::Range<usize>) -> Result<(), WireError> {
+pub(crate) fn reserved_zero(
+    payload: &[u8],
+    range: core::ops::Range<usize>,
+) -> Result<(), WireError> {
     if payload[range].iter().any(|byte| *byte != 0) {
         return Err(WireError::ReservedNotZero);
     }
@@ -52,7 +55,11 @@ pub(crate) const fn validate_split(value: u16) -> Result<(), WireError> {
     Ok(())
 }
 
-pub(crate) const fn validate_enum(field: &'static str, value: u8, maximum: u8) -> Result<(), WireError> {
+pub(crate) const fn validate_enum(
+    field: &'static str,
+    value: u8,
+    maximum: u8,
+) -> Result<(), WireError> {
     if value == 0 || value > maximum {
         return Err(WireError::InvalidEnum { field, value });
     }
@@ -77,7 +84,12 @@ pub(crate) const fn get_u16(input: &[u8], offset: usize) -> u16 {
 }
 
 pub(crate) const fn get_u32(input: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([input[offset], input[offset + 1], input[offset + 2], input[offset + 3]])
+    u32::from_le_bytes([
+        input[offset],
+        input[offset + 1],
+        input[offset + 2],
+        input[offset + 3],
+    ])
 }
 
 pub(crate) const fn get_u64(input: &[u8], offset: usize) -> u64 {

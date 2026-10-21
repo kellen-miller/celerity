@@ -8,13 +8,14 @@ use std::{
 };
 
 use celerity_proto::celerity::v1::{
-    CompletedRun, Completion, ModelBundleManifest, ModelCompatibility, ModelInputRange, ModelNormalization,
-    ReconcileRequest, ReconcileResponse, RunChunk, RunManifest,
+    CompletedRun, Completion, ModelBundleManifest, ModelCompatibility, ModelInputRange,
+    ModelNormalization, ReconcileRequest, ReconcileResponse, RunChunk, RunManifest,
 };
 use prost::Message;
 use sha2::{Digest, Sha256};
 use sync::{
-    HomeApi, LinuxNetworkPresence, NetworkPresence, ReconcileOutcome, SyncConfiguration, SyncError, Synchronizer,
+    HomeApi, LinuxNetworkPresence, NetworkPresence, ReconcileOutcome, SyncConfiguration, SyncError,
+    Synchronizer,
 };
 
 struct Present;
@@ -77,11 +78,16 @@ fn digest(bytes: &[u8]) -> String {
 }
 
 fn model_bundle() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let model = fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx"))?;
+    let model = fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx"),
+    )?;
     let manifest = ModelBundleManifest {
         schema_version: 1,
         onnx_sha256: digest(&model),
-        signal_order: vec!["coolant_temperature_c".to_owned(), "air_temperature_c".to_owned()],
+        signal_order: vec![
+            "coolant_temperature_c".to_owned(),
+            "air_temperature_c".to_owned(),
+        ],
         units: vec!["native".to_owned(), "native".to_owned()],
         sample_period_ms: 20,
         history_length: 4,
@@ -162,7 +168,10 @@ fn configuration(root: &Path) -> SyncConfiguration {
         journal_path: root.join("sync.sqlite3"),
         model_root: root.join("models"),
         model_abi: "thermal-v1".to_owned(),
-        model_input_signals: vec!["coolant_temperature_c".to_owned(), "air_temperature_c".to_owned()],
+        model_input_signals: vec![
+            "coolant_temperature_c".to_owned(),
+            "air_temperature_c".to_owned(),
+        ],
         model_history_length: 4,
         model_command_lattice: vec![1000, 5000, 9000],
         model_maximum_calibration_error: 0.1,
@@ -251,7 +260,13 @@ fn staging_preserves_the_only_known_good_rollback_slot() {
     let mut sync = Synchronizer::new(configuration(&root)).expect("synchronizer");
 
     assert_eq!(
-        sync.reconcile_once(&Present, &home, Some("unproven-active"), Some("unproven-active"), &[],),
+        sync.reconcile_once(
+            &Present,
+            &home,
+            Some("unproven-active"),
+            Some("unproven-active"),
+            &[],
+        ),
         Ok(ReconcileOutcome::Synchronized {
             uploaded: 0,
             model_staged: false,

@@ -12,11 +12,14 @@ embassy_stm32::bind_interrupts!(struct Irqs {
 });
 
 #[cfg(target_arch = "arm")]
-#[embassy_executor::main(executor = "embassy_stm32::executor::Executor", entry = "cortex_m_rt::entry")]
+#[embassy_executor::main(
+    executor = "embassy_stm32::executor::Executor",
+    entry = "cortex_m_rt::entry"
+)]
 async fn main(_spawner: embassy_executor::Spawner) {
     use control_protocol::{
-        CapabilityReport, CommandAck, ConfigurationAck, FallbackAck, FaultReport, Frame, Heartbeat, NodeAnnounce,
-        RuntimeLeaseAck, decode, encode,
+        CapabilityReport, CommandAck, ConfigurationAck, FallbackAck, FaultReport, Frame, Heartbeat,
+        NodeAnnounce, RuntimeLeaseAck, decode, encode,
     };
     use duct_controller::{ControllerState, FirmwareConfiguration, FirmwareMode};
     use embassy_stm32::can::filter::{Action, Filter, FilterType, StandardFilterSlot};
@@ -75,7 +78,8 @@ async fn main(_spawner: embassy_executor::Spawner) {
     // reconcile Configuration before leases or commands can be accepted.
     let mut state = ControllerState::new(boot_session, 7_500);
 
-    let mut can_configurator = CanConfigurator::new(peripherals.FDCAN1, peripherals.PA11, peripherals.PA12, Irqs);
+    let mut can_configurator =
+        CanConfigurator::new(peripherals.FDCAN1, peripherals.PA11, peripherals.PA12, Irqs);
     can_configurator.set_bitrate(500_000);
     can_configurator.set_fd_data_bitrate(2_000_000, true);
     let can_configuration = can_configurator
@@ -113,7 +117,8 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
         if now_ms >= next_heartbeat_ms {
             heartbeat_sequence = heartbeat_sequence.wrapping_add(1);
-            next_heartbeat_ms = now_ms.saturating_add(u64::from(state.heartbeat_period_ms().unwrap_or(100)));
+            next_heartbeat_ms =
+                now_ms.saturating_add(u64::from(state.heartbeat_period_ms().unwrap_or(100)));
             let heartbeat = Frame::Heartbeat {
                 node: NODE_ADDRESS,
                 message: Heartbeat {
@@ -135,7 +140,10 @@ async fn main(_spawner: embassy_executor::Spawner) {
             if let Ok(encoded) = encode(&heartbeat, &mut payload)
                 && let Some(id) = StandardId::new(encoded.can_id)
                 && let Some(frame) =
-                    <embassy_stm32::can::frame::FdFrame as embedded_can::Frame>::new(id, &payload[..encoded.len])
+                    <embassy_stm32::can::frame::FdFrame as embedded_can::Frame>::new(
+                        id,
+                        &payload[..encoded.len],
+                    )
             {
                 let _superseded = can.write_fd(&frame).await;
             }
@@ -169,10 +177,11 @@ async fn main(_spawner: embassy_executor::Spawner) {
                     let mut payload = [0_u8; 64];
                     if let Ok(encoded) = encode(&fault, &mut payload)
                         && let Some(id) = StandardId::new(encoded.can_id)
-                        && let Some(frame) = <embassy_stm32::can::frame::FdFrame as embedded_can::Frame>::new(
-                            id,
-                            &payload[..encoded.len],
-                        )
+                        && let Some(frame) =
+                            <embassy_stm32::can::frame::FdFrame as embedded_can::Frame>::new(
+                                id,
+                                &payload[..encoded.len],
+                            )
                     {
                         let _superseded = can.write_fd(&frame).await;
                     }
@@ -233,7 +242,10 @@ async fn main(_spawner: embassy_executor::Spawner) {
                 if let Ok(encoded) = encode(&response, &mut payload)
                     && let Some(id) = StandardId::new(encoded.can_id)
                     && let Some(frame) =
-                        <embassy_stm32::can::frame::FdFrame as embedded_can::Frame>::new(id, &payload[..encoded.len])
+                        <embassy_stm32::can::frame::FdFrame as embedded_can::Frame>::new(
+                            id,
+                            &payload[..encoded.len],
+                        )
                 {
                     let _superseded = can.write_fd(&frame).await;
                 }
@@ -255,7 +267,8 @@ async fn main(_spawner: embassy_executor::Spawner) {
                         heartbeat_period_ms: message.heartbeat_period_ms,
                     });
                 if accepted {
-                    next_heartbeat_ms = now_ms.saturating_add(u64::from(message.heartbeat_period_ms));
+                    next_heartbeat_ms =
+                        now_ms.saturating_add(u64::from(message.heartbeat_period_ms));
                 }
                 Some(Frame::ConfigurationAck {
                     node,
@@ -340,7 +353,10 @@ async fn main(_spawner: embassy_executor::Spawner) {
             if let Ok(encoded) = encode(&response, &mut payload)
                 && let Some(id) = StandardId::new(encoded.can_id)
                 && let Some(frame) =
-                    <embassy_stm32::can::frame::FdFrame as embedded_can::Frame>::new(id, &payload[..encoded.len])
+                    <embassy_stm32::can::frame::FdFrame as embedded_can::Frame>::new(
+                        id,
+                        &payload[..encoded.len],
+                    )
             {
                 let _superseded = can.write_fd(&frame).await;
             }

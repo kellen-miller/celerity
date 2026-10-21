@@ -6,13 +6,14 @@ use std::{
 
 use celerity_proto::celerity::v1::{ModelBundleManifest, ModelInputRange, ModelNormalization};
 use control_core::{
-    CommandSource, ExternalAdapters, FeatureAuthority, Runtime, RuntimeEffect, RuntimeEvent, RuntimeModel, StartupMode,
-    ValidatedBundle,
+    CommandSource, ExternalAdapters, FeatureAuthority, Runtime, RuntimeEffect, RuntimeEvent,
+    RuntimeModel, StartupMode, ValidatedBundle,
 };
 use prost::Message;
 
 fn bundle() -> Result<ValidatedBundle, control_core::BundleError> {
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/simulation.toml");
+    let source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/simulation.toml");
     ValidatedBundle::load(&source, StartupMode::Simulation)
 }
 
@@ -147,9 +148,13 @@ fn startup_selected_model_reaches_the_production_command_effect() {
     let bundle = bundle().expect("valid simulation bundle");
     let (_model_directory, model_path) = model_fixture().expect("model fixture");
     let model = RuntimeModel::load(&model_path, &bundle).expect("startup model");
-    let outcome = Runtime::new_with_model(bundle, ExternalAdapters::simulation(healthy_events()), model)
-        .expect("matching composition")
-        .run();
+    let outcome = Runtime::new_with_model(
+        bundle,
+        ExternalAdapters::simulation(healthy_events()),
+        model,
+    )
+    .expect("matching composition")
+    .run();
 
     assert_eq!(outcome.command_source, CommandSource::ModelOptimized);
     assert_eq!(outcome.accepted_basis_points, Some(9_000));
@@ -236,7 +241,10 @@ fn stale_input_revokes_authority_and_stops_renewal() {
     .expect("matching composition")
     .run();
     assert_eq!(outcome.final_feature_authority, FeatureAuthority::Fallback);
-    assert_eq!(outcome.command_source, CommandSource::ControllerLocalFallback);
+    assert_eq!(
+        outcome.command_source,
+        CommandSource::ControllerLocalFallback
+    );
     assert!(outcome.effects.ends_with(&[
         RuntimeEffect::StopLeaseRenewal,
         RuntimeEffect::RequestFallback,

@@ -87,11 +87,14 @@ impl HomeApi for ReqwestHomeApi {
 
     fn put_chunk(&self, run: &str, chunk: &str, path: &Path) -> Result<(), SyncError> {
         let file = File::open(path).map_err(sync_io)?;
-        self.request(reqwest::Method::PUT, &format!("/v1/runs/{run}/chunks/{chunk}"))
-            .body(file)
-            .send()
-            .and_then(reqwest::blocking::Response::error_for_status)
-            .map_err(sync_http)?;
+        self.request(
+            reqwest::Method::PUT,
+            &format!("/v1/runs/{run}/chunks/{chunk}"),
+        )
+        .body(file)
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(sync_http)?;
         Ok(())
     }
 

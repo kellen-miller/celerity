@@ -121,14 +121,23 @@ fn firmware_state_and_emulator_keep_the_same_authority_semantics() -> Result<(),
     assert_eq!(message.result, 1);
     assert_eq!(firmware.mode(), FirmwareMode::RemoteAuthority);
     assert_eq!(emulator.mode(), ControllerMode::RemoteAuthority);
-    assert_eq!(firmware.accepted_basis_points(), emulator.accepted_basis_points());
+    assert_eq!(
+        firmware.accepted_basis_points(),
+        emulator.accepted_basis_points()
+    );
 
     firmware.advance_to(111);
     emulator.advance_to(111);
     assert_eq!(firmware.mode(), FirmwareMode::LocalFallback);
     assert_eq!(emulator.mode(), ControllerMode::LocalFallback);
-    assert_eq!(firmware.accepted_basis_points(), emulator.accepted_basis_points());
-    assert_eq!(firmware.runtime_lease_valid(111), emulator.runtime_lease_valid(111));
+    assert_eq!(
+        firmware.accepted_basis_points(),
+        emulator.accepted_basis_points()
+    );
+    assert_eq!(
+        firmware.runtime_lease_valid(111),
+        emulator.runtime_lease_valid(111)
+    );
 
     Ok(())
 }

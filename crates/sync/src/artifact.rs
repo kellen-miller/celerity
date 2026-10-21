@@ -36,7 +36,10 @@ fn hex_digest(bytes: &[u8]) -> String {
     output
 }
 
-pub(crate) fn read_zip_entry(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Vec<u8>, SyncError> {
+pub(crate) fn read_zip_entry(
+    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    name: &str,
+) -> Result<Vec<u8>, SyncError> {
     let mut entry = archive
         .by_name(name)
         .map_err(|error| SyncError(format!("model bundle is missing {name}: {error}")))?;

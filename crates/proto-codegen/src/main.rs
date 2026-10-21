@@ -23,7 +23,10 @@ fn generate() -> Result<(), String> {
     let contracts_root = repository_root.join("contracts");
 
     if !proto_path.is_file() {
-        return Err(format!("missing authoritative proto: {}", proto_path.display()));
+        return Err(format!(
+            "missing authoritative proto: {}",
+            proto_path.display()
+        ));
     }
 
     generate_rust(&proto_path, &contracts_root, &output_root)?;
@@ -53,14 +56,21 @@ fn output_root(repository_root: &Path) -> Result<PathBuf, String> {
                 .ok_or_else(|| "--output-root requires a path".to_owned())?;
             output_root = PathBuf::from(value);
         } else {
-            return Err(format!("unexpected argument: {}", argument.to_string_lossy()));
+            return Err(format!(
+                "unexpected argument: {}",
+                argument.to_string_lossy()
+            ));
         }
     }
 
     Ok(output_root)
 }
 
-fn generate_rust(proto_path: &Path, contracts_root: &Path, output_root: &Path) -> Result<(), String> {
+fn generate_rust(
+    proto_path: &Path,
+    contracts_root: &Path,
+    output_root: &Path,
+) -> Result<(), String> {
     let output_directory = output_root.join("crates/celerity-proto/src/generated");
     fs::create_dir_all(&output_directory).map_err(|error| error.to_string())?;
 
@@ -69,13 +79,20 @@ fn generate_rust(proto_path: &Path, contracts_root: &Path, output_root: &Path) -
     configuration.out_dir(&output_directory);
     configuration.protoc_executable(&protoc);
     configuration.disable_comments(["."]);
-    configuration.type_attribute("celerity.v1.RawCanFrame", "#[allow(clippy::struct_excessive_bools)]");
+    configuration.type_attribute(
+        "celerity.v1.RawCanFrame",
+        "#[allow(clippy::struct_excessive_bools)]",
+    );
     configuration
         .compile_protos(&[proto_path], &[contracts_root])
         .map_err(|error| error.to_string())
 }
 
-fn generate_python(repository_root: &Path, contracts_root: &Path, output_root: &Path) -> Result<(), String> {
+fn generate_python(
+    repository_root: &Path,
+    contracts_root: &Path,
+    output_root: &Path,
+) -> Result<(), String> {
     let output_directory = output_root.join("services/home/src");
     fs::create_dir_all(&output_directory).map_err(|error| error.to_string())?;
     let protoc = protoc_bin_vendored::protoc_bin_path().map_err(|error| error.to_string())?;
@@ -92,11 +109,16 @@ fn generate_python(repository_root: &Path, contracts_root: &Path, output_root: &
     )
 }
 
-fn generate_typescript(repository_root: &Path, contracts_root: &Path, output_root: &Path) -> Result<(), String> {
+fn generate_typescript(
+    repository_root: &Path,
+    contracts_root: &Path,
+    output_root: &Path,
+) -> Result<(), String> {
     let output_directory = output_root.join("crates/vehicle-ui/web/src/generated");
     fs::create_dir_all(&output_directory).map_err(|error| error.to_string())?;
     let protoc = protoc_bin_vendored::protoc_bin_path().map_err(|error| error.to_string())?;
-    let plugin = repository_root.join("crates/vehicle-ui/web/node_modules/.bin/protoc-gen-ts_proto");
+    let plugin =
+        repository_root.join("crates/vehicle-ui/web/node_modules/.bin/protoc-gen-ts_proto");
 
     if !plugin.is_file() {
         return Err(format!(

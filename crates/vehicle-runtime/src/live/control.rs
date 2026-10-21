@@ -25,8 +25,12 @@ impl LiveRuntime {
                 command_lease_ms: self.controller.command_lease_ms,
                 heartbeat_period_ms: self.controller.heartbeat_period_ms,
                 acknowledgement_deadline_ms: self.controller.acknowledgement_deadline_ms,
-                normal_slew_basis_points_per_second: self.controller.normal_slew_basis_points_per_second,
-                protection_slew_basis_points_per_second: self.controller.protection_slew_basis_points_per_second,
+                normal_slew_basis_points_per_second: self
+                    .controller
+                    .normal_slew_basis_points_per_second,
+                protection_slew_basis_points_per_second: self
+                    .controller
+                    .protection_slew_basis_points_per_second,
                 digest_prefix: self.controller.digest_prefix,
             },
         })?;
@@ -37,8 +41,9 @@ impl LiveRuntime {
     pub(crate) fn ingest(&mut self, event: RuntimeEvent) -> Result<(), String> {
         self.event_sequence = self.event_sequence.saturating_add(1);
         if self.writer.as_ref().is_some_and(|writer| {
-            RunRecord::runtime_event(self.event_sequence, &event)
-                .map_or(true, |record| writer.enqueue(record) == EnqueueResult::Degraded)
+            RunRecord::runtime_event(self.event_sequence, &event).map_or(true, |record| {
+                writer.enqueue(record) == EnqueueResult::Degraded
+            })
         }) {
             self.storage_degraded = true;
         }
@@ -69,7 +74,10 @@ impl LiveRuntime {
                         self.lease_renewal_expected_since = Some(now);
                     }
                     self.lease_renewal_expected = true;
-                    self.last_sent_runtime_lease = Some(SentRuntimeLease { sequence, sent_at: now });
+                    self.last_sent_runtime_lease = Some(SentRuntimeLease {
+                        sequence,
+                        sent_at: now,
+                    });
                 }
                 RuntimeEffect::SendCommand {
                     sequence,
@@ -79,7 +87,9 @@ impl LiveRuntime {
                     let now = Instant::now();
                     if self.last_sent_command.is_some_and(|command| {
                         now.saturating_duration_since(command.sent_at)
-                            >= Duration::from_millis(u64::from(self.controller.acknowledgement_deadline_ms))
+                            >= Duration::from_millis(u64::from(
+                                self.controller.acknowledgement_deadline_ms,
+                            ))
                     }) {
                         self.last_command_ack_miss_at = Some(now);
                     }
@@ -154,7 +164,8 @@ impl LiveRuntime {
 
     pub(crate) fn send_controller_frame(&mut self, frame: &Frame) -> Result<(), String> {
         let mut bytes = [0_u8; 64];
-        let encoded = control_protocol::encode(frame, &mut bytes).map_err(|error| format!("{error:?}"))?;
+        let encoded =
+            control_protocol::encode(frame, &mut bytes).map_err(|error| format!("{error:?}"))?;
         self.actuator.send(frame)?;
         self.event_sequence = self.event_sequence.saturating_add(1);
         self.enqueue_bulk_record(RunRecord::raw_can(

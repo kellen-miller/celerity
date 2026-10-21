@@ -13,7 +13,9 @@ use std::{
 use prost::Message;
 
 use super::storage::{digest_file, io_error, write_manifest};
-use super::{Completion, EnqueueResult, RunChunk, RunContext, RunError, RunManifest, RunRecord, wire};
+use super::{
+    Completion, EnqueueResult, RunChunk, RunContext, RunError, RunManifest, RunRecord, wire,
+};
 
 enum WorkerMessage {
     Record(RunRecord),
@@ -40,8 +42,19 @@ impl RunWriter {
     /// # Errors
     ///
     /// Returns an error when the Run directory or worker cannot be created.
-    pub fn start(root: &Path, run_id: &str, queue_capacity: usize, minimum_free_bytes: u64) -> Result<Self, RunError> {
-        Self::start_with_context(root, run_id, queue_capacity, minimum_free_bytes, RunContext::default())
+    pub fn start(
+        root: &Path,
+        run_id: &str,
+        queue_capacity: usize,
+        minimum_free_bytes: u64,
+    ) -> Result<Self, RunError> {
+        Self::start_with_context(
+            root,
+            run_id,
+            queue_capacity,
+            minimum_free_bytes,
+            RunContext::default(),
+        )
     }
 
     /// Starts a writer with the complete derivation provenance persisted in
@@ -215,7 +228,9 @@ fn write_run(
                 event
                     .encode_length_delimited(&mut encoded)
                     .map_err(|error| RunError(error.to_string()))?;
-                if chunk_bytes > 0 && chunk_bytes.saturating_add(encoded.len()) > CHUNK_ROTATION_BYTES {
+                if chunk_bytes > 0
+                    && chunk_bytes.saturating_add(encoded.len()) > CHUNK_ROTATION_BYTES
+                {
                     flush_chunk(&mut chunk)?;
                     chunk_index += 1;
                     let path = partial_chunk_path(&directory, chunk_index);

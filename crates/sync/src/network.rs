@@ -38,7 +38,8 @@ impl LinuxNetworkPresence {
 
 impl NetworkPresence for LinuxNetworkPresence {
     fn is_home(&self, interface: &str, expected_gateway: &str) -> Result<bool, SyncError> {
-        let operstate = fs::read_to_string(self.sys_class_net.join(interface).join("operstate")).map_err(sync_io)?;
+        let operstate = fs::read_to_string(self.sys_class_net.join(interface).join("operstate"))
+            .map_err(sync_io)?;
         if operstate.trim() != "up" {
             return Ok(false);
         }

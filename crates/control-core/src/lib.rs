@@ -9,24 +9,29 @@ pub(crate) mod powertrain;
 mod run;
 mod scenario;
 
-pub use configuration::{BundleError, ControllerRuntimeConfiguration, StartupMode, TimingModel, ValidatedBundle};
+pub use configuration::{
+    BundleError, ControllerRuntimeConfiguration, StartupMode, TimingModel, ValidatedBundle,
+};
 pub use controller::{ControllerEmulator, ControllerMode, EmulatorProvisioning, EmulatorResponse};
 pub use executor::{
-    CommandSource, ExternalAdapters, FeatureAuthority, Runtime, RuntimeEffect, RuntimeEvent, RuntimeOutcome,
-    RuntimeSession, RuntimeStartError,
+    CommandSource, ExternalAdapters, FeatureAuthority, Runtime, RuntimeEffect, RuntimeEvent,
+    RuntimeOutcome, RuntimeSession, RuntimeStartError,
 };
-pub use experiment::{ExperimentAbort, ExperimentDecision, ExperimentError, ExperimentPlan, RunningExperiment};
+pub use experiment::{
+    ExperimentAbort, ExperimentDecision, ExperimentError, ExperimentPlan, RunningExperiment,
+};
 pub use model::{
-    CandidatePrediction, InferenceBudget, ModelCommandSelection, ModelEligibilityInput, ModelError, ModelIneligibility,
-    ModelSlot, ModelSlots, OptimizerDecision, RuntimeModel, SelectedModel, SlotError, ThermalOptimizer, TractModel,
-    select_model_or_deterministic,
+    CandidatePrediction, InferenceBudget, ModelCommandSelection, ModelEligibilityInput, ModelError,
+    ModelIneligibility, ModelSlot, ModelSlots, OptimizerDecision, RuntimeModel, SelectedModel,
+    SlotError, ThermalOptimizer, TractModel, select_model_or_deterministic,
 };
 pub use powertrain::{
-    DecodedPowertrainFrame, DecodedSignal, PowertrainDecodeError, PowertrainDecoder, PowertrainSource,
+    DecodedPowertrainFrame, DecodedSignal, PowertrainDecodeError, PowertrainDecoder,
+    PowertrainSource,
 };
 pub use run::{
-    Completion, EnqueueResult, RawCanEvidence, RunChunk, RunContext, RunManifest, RunRecord, RunWriter,
-    recover_incomplete_runs, replay_events,
+    Completion, EnqueueResult, RawCanEvidence, RunChunk, RunContext, RunManifest, RunRecord,
+    RunWriter, recover_incomplete_runs, replay_events,
 };
 pub use scenario::{ScenarioError, SimulationScenario};
 

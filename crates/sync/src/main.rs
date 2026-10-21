@@ -17,11 +17,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bundle_path = env::args()
         .nth(1)
         .ok_or_else(|| io::Error::other("usage: celerity-sync <bundle.toml>"))?;
-    let journal_path = env::var_os("CELERITY_SYNC_JOURNAL")
-        .map_or_else(|| PathBuf::from("/var/lib/celerity/sync.sqlite3"), PathBuf::from);
+    let journal_path = env::var_os("CELERITY_SYNC_JOURNAL").map_or_else(
+        || PathBuf::from("/var/lib/celerity/sync.sqlite3"),
+        PathBuf::from,
+    );
     let model_root = env::var_os("CELERITY_MODEL_STAGING_ROOT")
         .map_or_else(|| PathBuf::from("/var/lib/celerity/models"), PathBuf::from);
-    let mut configuration = SyncConfiguration::from_bundle(Path::new(&bundle_path), journal_path, model_root)?;
+    let mut configuration =
+        SyncConfiguration::from_bundle(Path::new(&bundle_path), journal_path, model_root)?;
     let model_root = configuration.model_root.clone();
     if let Some(token_path) = env::var_os("CELERITY_HOME_TOKEN_PATH") {
         configuration.credential_path = PathBuf::from(token_path);
@@ -52,9 +55,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        if let Err(error) =
-            synchronizer.reconcile_once(&network, &home, active.as_deref(), desired.as_deref(), &rejected)
-        {
+        if let Err(error) = synchronizer.reconcile_once(
+            &network,
+            &home,
+            active.as_deref(),
+            desired.as_deref(),
+            &rejected,
+        ) {
             eprintln!("sync reconciliation deferred: {error}");
         }
         for _ in 0..30 {

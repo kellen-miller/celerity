@@ -22,19 +22,28 @@ fn observer_retains_two_misses_then_removes_values_on_third() {
     assert_eq!(current.last_success_age_ms, Some(15));
     assert!(current.snapshot.is_some());
 
-    observer.observe(Err("miss 1".to_owned()), started + Duration::from_millis(30));
+    observer.observe(
+        Err("miss 1".to_owned()),
+        started + Duration::from_millis(30),
+    );
     assert_eq!(
         observer.envelope(started + Duration::from_millis(40)).state,
         PresentationState::Stale
     );
-    observer.observe(Err("miss 2".to_owned()), started + Duration::from_millis(50));
+    observer.observe(
+        Err("miss 2".to_owned()),
+        started + Duration::from_millis(50),
+    );
     assert!(
         observer
             .envelope(started + Duration::from_millis(60))
             .snapshot
             .is_some()
     );
-    observer.observe(Err("miss 3".to_owned()), started + Duration::from_millis(70));
+    observer.observe(
+        Err("miss 3".to_owned()),
+        started + Duration::from_millis(70),
+    );
     let unavailable = observer.envelope(started + Duration::from_millis(80));
     assert_eq!(unavailable.state, PresentationState::Unavailable);
     assert_eq!(unavailable.consecutive_failures, 3);

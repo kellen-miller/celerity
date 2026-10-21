@@ -33,7 +33,8 @@ pub(crate) fn inventory(root: &Path) -> Result<Vec<SpoolRun>, SyncError> {
             continue;
         }
         let manifest = fs::read(&manifest_path).map_err(sync_io)?;
-        let value = RunManifest::decode(manifest.as_slice()).map_err(|error| SyncError(error.to_string()))?;
+        let value = RunManifest::decode(manifest.as_slice())
+            .map_err(|error| SyncError(error.to_string()))?;
         if value.completion != Completion::Complete as i32 {
             continue;
         }
@@ -44,7 +45,9 @@ pub(crate) fn inventory(root: &Path) -> Result<Vec<SpoolRun>, SyncError> {
                 return Err(SyncError("complete Run has no chunk_file".to_owned()));
             }
             if !is_digest(chunk_digest) {
-                return Err(SyncError("complete Run has an invalid chunk digest".to_owned()));
+                return Err(SyncError(
+                    "complete Run has an invalid chunk digest".to_owned(),
+                ));
             }
             let relative_path = Path::new(chunk_file);
             if relative_path.is_absolute()
@@ -112,7 +115,8 @@ pub(crate) fn incomplete_inventory(root: &Path) -> Result<Vec<PathBuf>, SyncErro
             continue;
         }
         let manifest = fs::read(&manifest_path).map_err(sync_io)?;
-        let value = RunManifest::decode(manifest.as_slice()).map_err(|error| SyncError(error.to_string()))?;
+        let value = RunManifest::decode(manifest.as_slice())
+            .map_err(|error| SyncError(error.to_string()))?;
         if value.completion != Completion::Complete as i32 {
             directories.push(directory);
         }

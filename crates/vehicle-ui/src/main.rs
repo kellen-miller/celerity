@@ -36,7 +36,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     Err(error)
                         if !failure_active
                             || last_failure_log.is_none_or(|last_log: Instant| {
-                                observed_at.saturating_duration_since(last_log) >= Duration::from_secs(5)
+                                observed_at.saturating_duration_since(last_log)
+                                    >= Duration::from_secs(5)
                             }) =>
                     {
                         eprintln!("diagnostics read failed: {error}");

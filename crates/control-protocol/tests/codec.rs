@@ -1,6 +1,7 @@
 use control_protocol::{
-    Command, CommandAck, Configuration, ConfigurationAck, DiscoveryProbe, FallbackAck, FallbackRequest, FaultReport,
-    Frame, Heartbeat, NodeAnnounce, RuntimeLease, RuntimeLeaseAck, WireError, decode, encode,
+    Command, CommandAck, Configuration, ConfigurationAck, DiscoveryProbe, FallbackAck,
+    FallbackRequest, FaultReport, Frame, Heartbeat, NodeAnnounce, RuntimeLease, RuntimeLeaseAck,
+    WireError, decode, encode,
 };
 
 fn encoded(frame: &Frame) -> Result<(u16, Vec<u8>), String> {
@@ -207,7 +208,8 @@ fn command_wire_bytes_are_little_endian_and_reserved_zero() {
     assert_eq!(
         bytes,
         [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0x10, 0x27, 0x15, 0
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0x10, 0x27,
+            0x15, 0
         ]
     );
 }
@@ -237,7 +239,10 @@ fn invalid_wire_values_are_rejected() {
     assert_eq!(decode(0x101, &bytes), Err(WireError::ReservedNotZero));
     bytes[23] = 0;
     bytes[20..22].copy_from_slice(&10_001_u16.to_le_bytes());
-    assert_eq!(decode(0x101, &bytes), Err(WireError::SplitOutOfRange(10_001)));
+    assert_eq!(
+        decode(0x101, &bytes),
+        Err(WireError::SplitOutOfRange(10_001))
+    );
     assert_eq!(decode(0x100, &bytes), Err(WireError::UnknownId(0x100)));
     assert_eq!(decode(0x7ff, &[]), Err(WireError::UnknownId(0x7ff)));
 }

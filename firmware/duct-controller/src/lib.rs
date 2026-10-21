@@ -86,9 +86,9 @@ impl ControllerState {
             && self
                 .active_configuration
                 .is_some_and(|configuration| configuration.generation == configuration_generation)
-            && self
-                .runtime_lease
-                .is_none_or(|lease| lease.epoch == epoch && renewal_sequence > lease.renewal_sequence);
+            && self.runtime_lease.is_none_or(|lease| {
+                lease.epoch == epoch && renewal_sequence > lease.renewal_sequence
+            });
         if valid {
             self.runtime_lease = Some(RuntimeLeaseState {
                 epoch,
@@ -121,7 +121,8 @@ impl ControllerState {
                 .last_command_sequence
                 .is_none_or(|sequence| command_sequence > sequence);
         if valid && let Some(configuration) = self.active_configuration {
-            self.command_deadline_ms = Some(now_ms.saturating_add(u64::from(configuration.command_lease_ms)));
+            self.command_deadline_ms =
+                Some(now_ms.saturating_add(u64::from(configuration.command_lease_ms)));
             self.last_command_sequence = Some(command_sequence);
             self.accepted_basis_points = radiator_split_basis_points;
             self.mode = FirmwareMode::RemoteAuthority;

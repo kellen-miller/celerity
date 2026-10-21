@@ -27,14 +27,18 @@ fn sealed_run_has_exact_byte_checksum_and_monotonic_manifest() {
     );
     let manifest = writer.seal().expect("seal run");
     assert_eq!(manifest.completion, Completion::Complete);
-    assert_eq!((manifest.first_sequence, manifest.last_sequence), (Some(1), Some(2)));
+    assert_eq!(
+        (manifest.first_sequence, manifest.last_sequence),
+        (Some(1), Some(2))
+    );
     let chunk = fs::read(root.join("run-1/events.chunk")).expect("sealed chunk");
-    let expected = Sha256::digest(&chunk)
-        .iter()
-        .fold(String::with_capacity(64), |mut output, byte| {
-            write!(output, "{byte:02x}").expect("writing to String cannot fail");
-            output
-        });
+    let expected =
+        Sha256::digest(&chunk)
+            .iter()
+            .fold(String::with_capacity(64), |mut output, byte| {
+                write!(output, "{byte:02x}").expect("writing to String cannot fail");
+                output
+            });
     assert_eq!(manifest.chunk_sha256, expected);
     assert!(!root.join("run-1/events.chunk.partial").exists());
 }
@@ -76,7 +80,10 @@ fn nonmonotonic_sequence_seals_explicitly_incomplete() {
     );
     let manifest = writer.seal().expect("seal incomplete run");
     assert_eq!(manifest.completion, Completion::Incomplete);
-    assert_eq!(manifest.incomplete_reason.as_deref(), Some("nonmonotonic_sequence"));
+    assert_eq!(
+        manifest.incomplete_reason.as_deref(),
+        Some("nonmonotonic_sequence")
+    );
 }
 
 #[test]
@@ -89,7 +96,10 @@ fn impossible_free_space_threshold_degrades_without_blocking() {
     );
     let manifest = writer.seal().expect("seal degraded run");
     assert_eq!(manifest.completion, Completion::Incomplete);
-    assert_eq!(manifest.incomplete_reason.as_deref(), Some("minimum_free_space"));
+    assert_eq!(
+        manifest.incomplete_reason.as_deref(),
+        Some("minimum_free_space")
+    );
 }
 
 #[test]
@@ -100,9 +110,10 @@ fn interrupted_partial_run_is_recovered_without_becoming_complete() {
     fs::write(run.join("events.chunk.partial"), b"exact partial bytes").expect("partial chunk");
     let recovered = recover_incomplete_runs(&root).expect("recover runs");
     assert_eq!(recovered, vec![run.join("manifest.pb")]);
-    let manifest =
-        celerity_proto::celerity::v1::RunManifest::decode(fs::read(&recovered[0]).expect("manifest").as_slice())
-            .expect("protobuf");
+    let manifest = celerity_proto::celerity::v1::RunManifest::decode(
+        fs::read(&recovered[0]).expect("manifest").as_slice(),
+    )
+    .expect("protobuf");
     assert_eq!(
         manifest.completion,
         celerity_proto::celerity::v1::Completion::Incomplete as i32

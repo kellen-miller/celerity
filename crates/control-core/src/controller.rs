@@ -1,8 +1,8 @@
 use num_enum::TryFromPrimitive;
 
 use control_protocol::{
-    CapabilityReport, CommandAck, ConfigurationAck, Frame, Heartbeat, NodeAnnounce, RuntimeLeaseAck, WireError, decode,
-    encode,
+    CapabilityReport, CommandAck, ConfigurationAck, Frame, Heartbeat, NodeAnnounce,
+    RuntimeLeaseAck, WireError, decode, encode,
 };
 
 /// Controller mode codes carried by acknowledgements and state flags.
@@ -98,28 +98,35 @@ impl ControllerEmulator {
     ///
     /// Returns [`WireError`] when the incoming frame or generated response is
     /// outside the fixed protocol contract.
-    pub fn ingest(&mut self, now_ms: u64, can_id: u16, payload: &[u8]) -> Result<Option<EmulatorResponse>, WireError> {
+    pub fn ingest(
+        &mut self,
+        now_ms: u64,
+        can_id: u16,
+        payload: &[u8],
+    ) -> Result<Option<EmulatorResponse>, WireError> {
         self.advance_to(now_ms);
         let frame = decode(can_id, payload)?;
         let discovery = matches!(&frame, Frame::DiscoveryProbe(_));
         let response = match frame {
-            Frame::DiscoveryProbe(message) if message.protocol_major == 1 => Some(Frame::NodeAnnounce {
-                node: self.provisioning.node,
-                message: NodeAnnounce {
-                    protocol_major: 1,
-                    protocol_minor: 0,
-                    lifecycle: if self.configuration.is_some() { 2 } else { 1 },
-                    state_flags: self.mode as u8,
-                    boot_session: self.provisioning.boot_session,
-                    provisioned_identity: self.provisioning.identity,
-                    firmware_generation: self.provisioning.firmware_generation,
-                    capability_generation: self.provisioning.capability_generation,
-                    configuration_generation: self
-                        .configuration
-                        .map_or(0, |configuration| configuration.generation),
-                    announce_sequence: message.probe_sequence,
-                },
-            }),
+            Frame::DiscoveryProbe(message) if message.protocol_major == 1 => {
+                Some(Frame::NodeAnnounce {
+                    node: self.provisioning.node,
+                    message: NodeAnnounce {
+                        protocol_major: 1,
+                        protocol_minor: 0,
+                        lifecycle: if self.configuration.is_some() { 2 } else { 1 },
+                        state_flags: self.mode as u8,
+                        boot_session: self.provisioning.boot_session,
+                        provisioned_identity: self.provisioning.identity,
+                        firmware_generation: self.provisioning.firmware_generation,
+                        capability_generation: self.provisioning.capability_generation,
+                        configuration_generation: self
+                            .configuration
+                            .map_or(0, |configuration| configuration.generation),
+                        announce_sequence: message.probe_sequence,
+                    },
+                })
+            }
             Frame::Configuration { node, message } if node == self.provisioning.node => {
                 let accepted = message.boot_session == self.provisioning.boot_session
                     && self.mode == ControllerMode::LocalFallback
@@ -132,7 +139,8 @@ impl ControllerEmulator {
                         heartbeat_period_ms: message.heartbeat_period_ms,
                         fallback_basis_points: message.fallback_basis_points,
                     });
-                    self.next_heartbeat_ms = Some(now_ms.saturating_add(u64::from(message.heartbeat_period_ms)));
+                    self.next_heartbeat_ms =
+                        Some(now_ms.saturating_add(u64::from(message.heartbeat_period_ms)));
                     self.accepted_basis_points = message.fallback_basis_points;
                 }
 
@@ -151,7 +159,8 @@ impl ControllerEmulator {
                     message.boot_session == self.provisioning.boot_session
                         && message.configuration_generation == configuration.generation
                         && self.runtime_lease.is_none_or(|lease| {
-                            message.epoch == lease.epoch && message.renewal_sequence > lease.renewal_sequence
+                            message.epoch == lease.epoch
+                                && message.renewal_sequence > lease.renewal_sequence
                         })
                 });
                 if accepted {
@@ -186,7 +195,8 @@ impl ControllerEmulator {
                             .is_none_or(|sequence| message.command_sequence > sequence)
                 });
                 if accepted && let Some(configuration) = self.configuration {
-                    self.command_deadline_ms = Some(now_ms.saturating_add(u64::from(configuration.command_lease_ms)));
+                    self.command_deadline_ms =
+                        Some(now_ms.saturating_add(u64::from(configuration.command_lease_ms)));
                     self.last_command_sequence = Some(message.command_sequence);
                     self.accepted_basis_points = message.radiator_split_basis_points;
                     self.mode = ControllerMode::RemoteAuthority;
@@ -264,7 +274,8 @@ impl ControllerEmulator {
         }
 
         self.heartbeat_sequence = self.heartbeat_sequence.wrapping_add(1);
-        self.next_heartbeat_ms = Some(now_ms.saturating_add(u64::from(configuration.heartbeat_period_ms)));
+        self.next_heartbeat_ms =
+            Some(now_ms.saturating_add(u64::from(configuration.heartbeat_period_ms)));
         encode_response(&Frame::Heartbeat {
             node: self.provisioning.node,
             message: Heartbeat {

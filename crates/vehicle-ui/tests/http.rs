@@ -28,11 +28,15 @@ fn status_route_is_get_only_host_guarded_and_hardened() {
 
     let status = request(address, "GET", "/v1/status", "localhost:8080").expect("status request");
     assert!(status.starts_with("HTTP/1.1 200"), "{status}");
-    assert!(status.contains("Content-Type: application/x-protobuf"), "{status}");
+    assert!(
+        status.contains("Content-Type: application/x-protobuf"),
+        "{status}"
+    );
     assert!(status.contains("Cache-Control: no-store"), "{status}");
     assert!(!status.to_ascii_lowercase().contains("access-control"));
 
-    let forbidden = request(address, "GET", "/v1/status", "example.test").expect("forbidden request");
+    let forbidden =
+        request(address, "GET", "/v1/status", "example.test").expect("forbidden request");
     assert!(forbidden.starts_with("HTTP/1.1 403"), "{forbidden}");
     let missing = request(address, "GET", "/missing", "[::1]:4567").expect("missing route request");
     assert!(missing.starts_with("HTTP/1.1 404"), "{missing}");
@@ -43,7 +47,10 @@ fn status_route_is_get_only_host_guarded_and_hardened() {
     let html = request(address, "GET", "/", "localhost").expect("HTML request");
     assert!(html.starts_with("HTTP/1.1 200"), "{html}");
     assert!(html.contains("X-Content-Type-Options: nosniff"), "{html}");
-    assert!(html.contains("Content-Security-Policy: default-src 'none'"), "{html}");
+    assert!(
+        html.contains("Content-Security-Policy: default-src 'none'"),
+        "{html}"
+    );
 
     stopping.store(true, Ordering::Relaxed);
     worker.join().expect("HTTP thread").expect("HTTP result");
@@ -53,8 +60,8 @@ fn status_route_is_get_only_host_guarded_and_hardened() {
 fn status_response_does_not_wait_for_diagnostics_io() {
     let temporary = tempfile::tempdir().expect("temporary directory");
     let diagnostics_socket = temporary.path().join("silent.sock");
-    let diagnostics_listener =
-        std::os::unix::net::UnixListener::bind(&diagnostics_socket).expect("silent diagnostics listener");
+    let diagnostics_listener = std::os::unix::net::UnixListener::bind(&diagnostics_socket)
+        .expect("silent diagnostics listener");
     let diagnostics_server = thread::spawn(move || {
         let (_stream, _) = diagnostics_listener.accept().expect("diagnostics accept");
         thread::sleep(Duration::from_millis(400));
@@ -88,7 +95,12 @@ fn status_response_does_not_wait_for_diagnostics_io() {
     worker.join().expect("HTTP thread").expect("HTTP result");
 }
 
-fn request(address: std::net::SocketAddr, method: &str, path: &str, host: &str) -> std::io::Result<String> {
+fn request(
+    address: std::net::SocketAddr,
+    method: &str,
+    path: &str,
+    host: &str,
+) -> std::io::Result<String> {
     let mut stream = TcpStream::connect(address)?;
     write!(
         stream,

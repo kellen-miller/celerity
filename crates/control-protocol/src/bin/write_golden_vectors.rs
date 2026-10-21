@@ -1,8 +1,9 @@
 use std::{env, fmt::Write as _, fs, path::PathBuf};
 
 use control_protocol::{
-    CapabilityReport, Command, CommandAck, Configuration, ConfigurationAck, DiscoveryProbe, FallbackAck,
-    FallbackRequest, FaultReport, Frame, Heartbeat, NodeAnnounce, RuntimeLease, RuntimeLeaseAck, encode,
+    CapabilityReport, Command, CommandAck, Configuration, ConfigurationAck, DiscoveryProbe,
+    FallbackAck, FallbackRequest, FaultReport, Frame, Heartbeat, NodeAnnounce, RuntimeLease,
+    RuntimeLeaseAck, encode,
 };
 use serde_json::json;
 
@@ -224,7 +225,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut vectors = Vec::with_capacity(fixtures.len());
     for (name, frame) in fixtures {
         let mut payload = [0_u8; 64];
-        let encoded = encode(&frame, &mut payload).map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+        let encoded = encode(&frame, &mut payload)
+            .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
         let mut payload_hex = String::with_capacity(encoded.len * 2);
         for byte in &payload[..encoded.len] {
             write!(payload_hex, "{byte:02x}")?;

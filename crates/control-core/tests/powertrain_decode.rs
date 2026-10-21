@@ -3,11 +3,15 @@ use std::{fs, path::PathBuf};
 use control_core::{PowertrainDecoder, PowertrainSource, StartupMode, ValidatedBundle};
 
 fn decoder(cantcu: &str, name: &str) -> Result<PowertrainDecoder, control_core::BundleError> {
-    let source =
-        fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/simulation.toml"))
-            .map_err(|error| control_core::BundleError::Read(error.to_string()))?
-            .replace("mode = \"disabled\"", cantcu);
-    let path = std::env::temp_dir().join(format!("celerity-powertrain-{name}-{}.toml", std::process::id()));
+    let source = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/simulation.toml"),
+    )
+    .map_err(|error| control_core::BundleError::Read(error.to_string()))?
+    .replace("mode = \"disabled\"", cantcu);
+    let path = std::env::temp_dir().join(format!(
+        "celerity-powertrain-{name}-{}.toml",
+        std::process::id()
+    ));
     fs::write(&path, source).map_err(|error| control_core::BundleError::Read(error.to_string()))?;
     ValidatedBundle::load(&path, StartupMode::Simulation).map(|bundle| bundle.powertrain_decoder())
 }
@@ -28,7 +32,8 @@ fn haltech_thermal_frames_are_big_endian_and_keep_raw_evidence() {
 
 #[test]
 fn haltech_sensor_groups_keep_channel_numbers_and_scaling() {
-    let decoder = decoder("mode = \"disabled\"", "haltech-groups").expect("valid powertrain bundle");
+    let decoder =
+        decoder("mode = \"disabled\"", "haltech-groups").expect("valid powertrain bundle");
     let raw = [0x0a, 0xab, 0x0a, 0xb5, 0x0a, 0xbf, 0x0a, 0xc9];
     let cases: [(u16, &[&str], &[f64]); 6] = [
         (

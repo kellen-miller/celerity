@@ -331,7 +331,9 @@ impl ModelSlots {
         if !manifest_path.exists() || !onnx_path.exists() || !bundle_digest_path.exists() {
             return Ok(None);
         }
-        let Ok(manifest) = ModelBundleManifest::decode(fs::read(manifest_path).map_err(slot_io)?.as_slice()) else {
+        let Ok(manifest) =
+            ModelBundleManifest::decode(fs::read(manifest_path).map_err(slot_io)?.as_slice())
+        else {
             return Ok(None);
         };
         let Some(compatibility) = manifest.compatibility.as_ref() else {
@@ -341,7 +343,8 @@ impl ModelSlots {
         if manifest.schema_version != 1
             || bundle_digest.trim() != wanted_digest
             || compatibility.model_abi != expected_abi
-            || (!compatibility.input_shape.is_empty() && compatibility.input_shape != [1, input_length as u64])
+            || (!compatibility.input_shape.is_empty()
+                && compatibility.input_shape != [1, input_length as u64])
         {
             return Ok(None);
         }

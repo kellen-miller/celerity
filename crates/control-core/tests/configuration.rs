@@ -1,9 +1,13 @@
 use std::{fs, path::PathBuf};
 
-use control_core::{BundleError, PowertrainDecodeError, PowertrainSource, StartupMode, ValidatedBundle};
+use control_core::{
+    BundleError, PowertrainDecodeError, PowertrainSource, StartupMode, ValidatedBundle,
+};
 
 fn fixture() -> std::io::Result<String> {
-    fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/simulation.toml"))
+    fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/simulation.toml"),
+    )
 }
 
 fn write_bundle(contents: &str, name: &str) -> std::io::Result<PathBuf> {
@@ -18,7 +22,8 @@ fn write_bundle(contents: &str, name: &str) -> std::io::Result<PathBuf> {
 fn one_loader_accepts_complete_matching_bundle() {
     let fixture = fixture().expect("simulation fixture");
     let path = write_bundle(&fixture, "valid.toml").expect("temporary bundle");
-    let bundle = ValidatedBundle::load(&path, StartupMode::Simulation).expect("valid simulation bundle");
+    let bundle =
+        ValidatedBundle::load(&path, StartupMode::Simulation).expect("valid simulation bundle");
     assert_eq!(bundle.generation(), 1);
     assert_eq!(bundle.mode(), StartupMode::Simulation);
     assert_eq!(bundle.controller_count(), 1);
@@ -27,10 +32,12 @@ fn one_loader_accepts_complete_matching_bundle() {
 #[test]
 fn timing_windows_are_explicit_and_cross_validated() {
     let fixture = fixture().expect("simulation fixture");
-    let too_short_for_sensor_period = fixture.replace("input_stale_after_ms = 250", "input_stale_after_ms = 200");
+    let too_short_for_sensor_period =
+        fixture.replace("input_stale_after_ms = 250", "input_stale_after_ms = 200");
     assert_eq!(
         ValidatedBundle::load(
-            &write_bundle(&too_short_for_sensor_period, "timing-sensor.toml").expect("temporary bundle"),
+            &write_bundle(&too_short_for_sensor_period, "timing-sensor.toml")
+                .expect("temporary bundle"),
             StartupMode::Simulation,
         ),
         Err(BundleError::InvalidRuntimeTiming)
@@ -42,7 +49,8 @@ fn timing_windows_are_explicit_and_cross_validated() {
     );
     assert_eq!(
         ValidatedBundle::load(
-            &write_bundle(&model_window_too_short, "timing-model-sensor.toml").expect("temporary bundle"),
+            &write_bundle(&model_window_too_short, "timing-model-sensor.toml")
+                .expect("temporary bundle"),
             StartupMode::Simulation,
         ),
         Err(BundleError::InvalidRuntimeTiming)
@@ -51,7 +59,8 @@ fn timing_windows_are_explicit_and_cross_validated() {
     let cycle_exceeds_ack_deadline = fixture.replace("cycle_ms = 20", "cycle_ms = 25");
     assert_eq!(
         ValidatedBundle::load(
-            &write_bundle(&cycle_exceeds_ack_deadline, "timing-cycle.toml").expect("temporary bundle"),
+            &write_bundle(&cycle_exceeds_ack_deadline, "timing-cycle.toml")
+                .expect("temporary bundle"),
             StartupMode::Simulation,
         ),
         Err(BundleError::InvalidRuntimeTiming)

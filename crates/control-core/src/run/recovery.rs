@@ -128,17 +128,22 @@ pub fn replay_events(run_directory: &Path) -> Result<Vec<RuntimeEvent>, RunError
         }
         let mut input = bytes.as_slice();
         while !input.is_empty() {
-            let stored =
-                wire::RunEvent::decode_length_delimited(&mut input).map_err(|error| RunError(error.to_string()))?;
+            let stored = wire::RunEvent::decode_length_delimited(&mut input)
+                .map_err(|error| RunError(error.to_string()))?;
             if last_sequence.is_some_and(|last| stored.sequence <= last) {
                 return Err(RunError("nonmonotonic replay sequence".to_owned()));
             }
             last_sequence = Some(stored.sequence);
             if stored.source == "runtime_event" {
                 let Some(wire::run_event::Payload::LifecycleEvent(payload)) = stored.payload else {
-                    return Err(RunError("runtime event used the wrong Run payload".to_owned()));
+                    return Err(RunError(
+                        "runtime event used the wrong Run payload".to_owned(),
+                    ));
                 };
-                events.push(serde_json::from_str(&payload.encoded).map_err(|error| RunError(error.to_string()))?);
+                events.push(
+                    serde_json::from_str(&payload.encoded)
+                        .map_err(|error| RunError(error.to_string()))?,
+                );
             }
         }
     }

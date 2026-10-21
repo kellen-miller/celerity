@@ -27,16 +27,16 @@ impl SimulationScenario {
     /// Returns a typed error for filesystem, syntax, empty, or nonmonotonic
     /// logical-time input.
     pub fn load(path: &Path) -> Result<Self, ScenarioError> {
-        let source = fs::read_to_string(path).map_err(|error| ScenarioError::Read(error.to_string()))?;
-        let scenario: Self = toml::from_str(&source).map_err(|error| ScenarioError::Parse(error.to_string()))?;
+        let source =
+            fs::read_to_string(path).map_err(|error| ScenarioError::Read(error.to_string()))?;
+        let scenario: Self =
+            toml::from_str(&source).map_err(|error| ScenarioError::Parse(error.to_string()))?;
         if scenario.name.is_empty() || scenario.events.is_empty() {
             return Err(ScenarioError::Empty);
         }
-        if scenario
-            .events
-            .windows(2)
-            .any(|events| events[0].monotonic_ms_for_evidence() > events[1].monotonic_ms_for_evidence())
-        {
+        if scenario.events.windows(2).any(|events| {
+            events[0].monotonic_ms_for_evidence() > events[1].monotonic_ms_for_evidence()
+        }) {
             return Err(ScenarioError::NonmonotonicTime);
         }
         Ok(scenario)

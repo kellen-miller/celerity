@@ -27,7 +27,10 @@ impl Synchronizer {
     /// Returns an error when the journal cannot be opened.
     pub fn new(configuration: SyncConfiguration) -> Result<Self, SyncError> {
         let journal = TransferJournal::open(&configuration.journal_path)?;
-        Ok(Self { configuration, journal })
+        Ok(Self {
+            configuration,
+            journal,
+        })
     }
 
     /// Performs one bounded inventory, transfer, retention, and model pass.
@@ -76,7 +79,9 @@ impl Synchronizer {
         }
         self.apply_retention(&runs)?;
         let model_staged = if let Some(digest) = response.desired_model_digest {
-            if active_model_digest == Some(digest.as_str()) || staged_model_digest == Some(digest.as_str()) {
+            if active_model_digest == Some(digest.as_str())
+                || staged_model_digest == Some(digest.as_str())
+            {
                 false
             } else {
                 self.stage_model(home, &digest)?
@@ -84,19 +89,26 @@ impl Synchronizer {
         } else {
             false
         };
-        Ok(ReconcileOutcome::Synchronized { uploaded, model_staged })
+        Ok(ReconcileOutcome::Synchronized {
+            uploaded,
+            model_staged,
+        })
     }
 
     fn upload(home: &impl HomeApi, run: &SpoolRun) -> Result<(), SyncError> {
         for chunk in &run.chunks {
             if digest_file(&chunk.path)? != chunk.digest {
-                return Err(SyncError("Run chunk digest changed before upload".to_owned()));
+                return Err(SyncError(
+                    "Run chunk digest changed before upload".to_owned(),
+                ));
             }
             home.put_chunk(&run.digest, &chunk.digest, &chunk.path)?;
         }
         let acknowledgement = home.complete(&run.digest, &run.manifest)?;
         if acknowledgement.run_digest != run.digest {
-            return Err(SyncError("home acknowledged a different Run digest".to_owned()));
+            return Err(SyncError(
+                "home acknowledged a different Run digest".to_owned(),
+            ));
         }
         Ok(())
     }
@@ -133,7 +145,8 @@ impl Synchronizer {
         };
         let Some(inactive) = ["slot-a", "slot-b"].into_iter().find(|slot| {
             Some(*slot) != active_slot
-                && protected_known_good.is_none_or(|digest| slot_digest(slot).as_deref() != Some(digest))
+                && protected_known_good
+                    .is_none_or(|digest| slot_digest(slot).as_deref() != Some(digest))
         }) else {
             return Ok(false);
         };
@@ -145,14 +158,18 @@ impl Synchronizer {
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes.as_slice()))
             .map_err(|error| SyncError(format!("invalid model bundle: {error}")))?;
         if archive.len() != 2 {
-            return Err(SyncError("model bundle must contain exactly two entries".to_owned()));
+            return Err(SyncError(
+                "model bundle must contain exactly two entries".to_owned(),
+            ));
         }
         let manifest_bytes = read_zip_entry(&mut archive, "manifest.pb")?;
         let onnx_bytes = read_zip_entry(&mut archive, "model.onnx")?;
-        let manifest =
-            ModelBundleManifest::decode(manifest_bytes.as_slice()).map_err(|error| SyncError(error.to_string()))?;
+        let manifest = ModelBundleManifest::decode(manifest_bytes.as_slice())
+            .map_err(|error| SyncError(error.to_string()))?;
         let Some(compatibility) = manifest.compatibility.as_ref() else {
-            return Err(SyncError("model bundle has no compatibility metadata".to_owned()));
+            return Err(SyncError(
+                "model bundle has no compatibility metadata".to_owned(),
+            ));
         };
         let expected_input = self
             .configuration
@@ -161,7 +178,8 @@ impl Synchronizer {
             .saturating_add(1);
         let valid = manifest.schema_version == 1
             && digest(&onnx_bytes) == manifest.onnx_sha256
-            && manifest.signal_order.as_slice() == self.configuration.model_input_signals.as_slice()
+            && manifest.signal_order.as_slice()
+                == self.configuration.model_input_signals.as_slice()
             && manifest.units.len() == manifest.signal_order.len()
             && manifest.sample_period_ms > 0
             && manifest.history_length == self.configuration.model_history_length as u64
@@ -179,14 +197,14 @@ impl Synchronizer {
             && compatibility.input_shape.as_slice() == [1, expected_input as u64]
             && manifest.input_ranges.len() == manifest.signal_order.len()
             && manifest.normalization.len() == manifest.signal_order.len()
-            && manifest
-                .input_ranges
-                .iter()
-                .all(|range| range.minimum.is_finite() && range.maximum.is_finite() && range.minimum <= range.maximum)
-            && manifest
-                .normalization
-                .iter()
-                .all(|value| value.mean.is_finite() && value.scale.is_finite() && value.scale > 0.0)
+            && manifest.input_ranges.iter().all(|range| {
+                range.minimum.is_finite()
+                    && range.maximum.is_finite()
+                    && range.minimum <= range.maximum
+            })
+            && manifest.normalization.iter().all(|value| {
+                value.mean.is_finite() && value.scale.is_finite() && value.scale > 0.0
+            })
             && manifest.calibration_error.is_finite()
             && manifest.calibration_error >= 0.0
             && manifest.calibration_error <= self.configuration.model_maximum_calibration_error;
@@ -199,7 +217,10 @@ impl Synchronizer {
         fs::create_dir_all(&slot).map_err(sync_io)?;
         atomic_write(&slot.join("model.onnx"), &onnx_bytes)?;
         atomic_write(&slot.join("manifest.pb"), &manifest_bytes)?;
-        atomic_write(&slot.join("bundle-digest"), format!("{expected_digest}\n").as_bytes())?;
+        atomic_write(
+            &slot.join("bundle-digest"),
+            format!("{expected_digest}\n").as_bytes(),
+        )?;
         atomic_write(
             &self.configuration.model_root.join("desired-digest"),
             format!("{expected_digest}\n").as_bytes(),

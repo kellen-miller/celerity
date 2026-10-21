@@ -5,8 +5,8 @@ use serde_json::Value;
 #[test]
 fn g431_fdcan_message_ram_sections_fit_without_overlap() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fdcan-message-ram.json");
-    let document: Value =
-        serde_json::from_slice(&fs::read(path).expect("budget must exist")).expect("budget must be valid JSON");
+    let document: Value = serde_json::from_slice(&fs::read(path).expect("budget must exist"))
+        .expect("budget must be valid JSON");
     let limit = document["g431_allocation_words"].as_u64().expect("limit");
     assert_eq!(limit, 256);
 

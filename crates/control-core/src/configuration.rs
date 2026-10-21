@@ -257,19 +257,22 @@ impl ValidatedBundle {
     }
 
     fn read(path: &Path) -> Result<Self, BundleError> {
-        let source = fs::read_to_string(path).map_err(|error| BundleError::Read(error.to_string()))?;
-        let mut bundle: Self = toml::from_str(&source).map_err(|error| BundleError::Parse(error.to_string()))?;
+        let source =
+            fs::read_to_string(path).map_err(|error| BundleError::Read(error.to_string()))?;
+        let mut bundle: Self =
+            toml::from_str(&source).map_err(|error| BundleError::Parse(error.to_string()))?;
         bundle.configuration_sha256 = digest(&source);
         bundle.loaded_experiment_plan = load_experiment(&bundle, path)?;
         bundle.powertrain_decoder =
-            PowertrainDecoder::from_reception(bundle.powertrain.haltech, bundle.powertrain.cantcu).map_err(
-                |error| match error {
+            PowertrainDecoder::from_reception(bundle.powertrain.haltech, bundle.powertrain.cantcu)
+                .map_err(|error| match error {
                     PowertrainDecodeError::InvalidNexusBase
                     | PowertrainDecodeError::NexusIdCollision
-                    | PowertrainDecodeError::InvalidNexusPeriod => BundleError::InvalidHaltechConfiguration(error),
+                    | PowertrainDecodeError::InvalidNexusPeriod => {
+                        BundleError::InvalidHaltechConfiguration(error)
+                    }
                     _ => BundleError::InvalidCantcuConfiguration(error),
-                },
-            )?;
+                })?;
         Ok(bundle)
     }
 
@@ -369,7 +372,8 @@ impl ValidatedBundle {
             heartbeat_period_ms: controller.heartbeat_period_ms,
             acknowledgement_deadline_ms: controller.acknowledgement_deadline_ms,
             normal_slew_basis_points_per_second: controller.normal_slew_basis_points_per_second,
-            protection_slew_basis_points_per_second: controller.protection_slew_basis_points_per_second,
+            protection_slew_basis_points_per_second: controller
+                .protection_slew_basis_points_per_second,
             digest_prefix: controller.digest_prefix,
         }
     }

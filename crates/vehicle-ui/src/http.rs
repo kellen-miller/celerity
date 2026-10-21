@@ -51,7 +51,10 @@ pub fn run_http(
         }
         if request.method() != &Method::Get {
             request
-                .respond(text_response(405, "method not allowed\n")?.with_header(header("Allow", "GET")?))
+                .respond(
+                    text_response(405, "method not allowed\n")?
+                        .with_header(header("Allow", "GET")?),
+                )
                 .map_err(|error| error.to_string())?;
             continue;
         }
@@ -110,5 +113,6 @@ fn text_response(status: u16, body: &str) -> Result<Response<std::io::Cursor<Vec
 }
 
 fn header(name: &'static str, value: &'static str) -> Result<Header, String> {
-    Header::from_bytes(name.as_bytes(), value.as_bytes()).map_err(|()| format!("invalid static HTTP header: {name}"))
+    Header::from_bytes(name.as_bytes(), value.as_bytes())
+        .map_err(|()| format!("invalid static HTTP header: {name}"))
 }

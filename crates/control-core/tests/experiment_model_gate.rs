@@ -1,13 +1,15 @@
 use std::path::PathBuf;
 
 use control_core::{
-    CandidatePrediction, ExperimentAbort, ExperimentDecision, ExperimentPlan, InferenceBudget, ModelCommandSelection,
-    ModelEligibilityInput, ModelIneligibility, select_model_or_deterministic,
+    CandidatePrediction, ExperimentAbort, ExperimentDecision, ExperimentPlan, InferenceBudget,
+    ModelCommandSelection, ModelEligibilityInput, ModelIneligibility,
+    select_model_or_deterministic,
 };
 
 #[test]
 fn experiment_is_bounded_and_aborts_without_authority() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/experiments/duct-sweep.toml");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/experiments/duct-sweep.toml");
     let mut experiment = ExperimentPlan::load(&path).expect("plan").start(100);
     assert_eq!(
         experiment.advance(100, true, 90.0, true, None),

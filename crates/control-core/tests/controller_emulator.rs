@@ -1,5 +1,7 @@
 use control_core::{ControllerEmulator, ControllerMode, EmulatorProvisioning};
-use control_protocol::{Command, Configuration, DiscoveryProbe, Frame, RuntimeLease, decode, encode};
+use control_protocol::{
+    Command, Configuration, DiscoveryProbe, Frame, RuntimeLease, decode, encode,
+};
 
 fn ingest(emulator: &mut ControllerEmulator, now_ms: u64, frame: &Frame) -> Result<Frame, String> {
     let mut payload = [0_u8; 64];

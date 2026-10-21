@@ -92,7 +92,8 @@ fn invalid_known_good_is_rejected_and_optional_startup_continues() {
     slots
         .stage_inactive(ModelSlot::A, &bytes, &model_digest, "thermal-v1")
         .expect("stage known-good");
-    fs::write(root.join("known-good-digest"), format!("{model_digest}\n")).expect("known-good marker");
+    fs::write(root.join("known-good-digest"), format!("{model_digest}\n"))
+        .expect("known-good marker");
     fs::write(root.join("slot-b/model.onnx"), b"corrupt").expect("corrupt graph");
 
     assert_eq!(slots.select_configured_startup("thermal-v1", 3), Ok(None));
@@ -111,13 +112,15 @@ fn malformed_desired_manifest_is_rejected_and_known_good_recovers() {
     slots
         .stage_inactive(ModelSlot::A, &bytes, &good_digest, "thermal-v1")
         .expect("stage known-good in B");
-    fs::write(root.join("known-good-digest"), format!("{good_digest}\n")).expect("known-good marker");
+    fs::write(root.join("known-good-digest"), format!("{good_digest}\n"))
+        .expect("known-good marker");
 
     let bad_digest = "b".repeat(64);
     let bad_slot = root.join("slot-a");
     fs::write(bad_slot.join("model.onnx"), &bytes).expect("bad desired graph");
     fs::write(bad_slot.join("manifest.pb"), b"not-protobuf").expect("bad desired manifest");
-    fs::write(bad_slot.join("bundle-digest"), format!("{bad_digest}\n")).expect("bad desired bundle marker");
+    fs::write(bad_slot.join("bundle-digest"), format!("{bad_digest}\n"))
+        .expect("bad desired bundle marker");
     fs::write(root.join("desired-digest"), format!("{bad_digest}\n")).expect("desired marker");
 
     let selected = slots

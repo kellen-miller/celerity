@@ -10,7 +10,9 @@ use std::{
 
 use control_core::{ControllerEmulator, EmulatorProvisioning};
 use control_protocol::{Frame, decode, encode};
-use socketcan::{CanFdFrame, CanFdSocket, CanFrame, CanSocket, EmbeddedFrame, Frame as SocketCanFrame, Socket};
+use socketcan::{
+    CanFdFrame, CanFdSocket, CanFrame, CanSocket, EmbeddedFrame, Frame as SocketCanFrame, Socket,
+};
 use vehicle_diagnostics::DiagnosticsStore;
 
 use super::LiveTestResult;
@@ -28,8 +30,11 @@ impl LiveWorkers {
         observed_commands: Arc<Mutex<Vec<u16>>>,
     ) -> LiveTestResult<Self> {
         let stopping = Arc::new(AtomicBool::new(false));
-        let diagnostics =
-            vehicle_diagnostics::serve_diagnostics(diagnostics_socket, Arc::clone(&stopping), diagnostics_store)?;
+        let diagnostics = vehicle_diagnostics::serve_diagnostics(
+            diagnostics_socket,
+            Arc::clone(&stopping),
+            diagnostics_store,
+        )?;
         let mut workers = Self {
             stopping: Arc::clone(&stopping),
             controller: None,
@@ -88,7 +93,10 @@ fn spawn_controller(
         .spawn(move || run_controller(stopping, observed_commands))
 }
 
-fn run_controller(stopping: Arc<AtomicBool>, observed_commands: Arc<Mutex<Vec<u16>>>) -> LiveTestResult<()> {
+fn run_controller(
+    stopping: Arc<AtomicBool>,
+    observed_commands: Arc<Mutex<Vec<u16>>>,
+) -> LiveTestResult<()> {
     let socket = CanFdSocket::open("vcan-controller")?;
     socket.set_read_timeout(Duration::from_millis(100))?;
     let mut emulator = ControllerEmulator::new(EmulatorProvisioning {
@@ -103,13 +111,19 @@ fn run_controller(stopping: Arc<AtomicBool>, observed_commands: Arc<Mutex<Vec<u1
     while !stopping.load(Ordering::Relaxed) {
         let frame = match socket.read_frame() {
             Ok(frame) => frame,
-            Err(error) if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
+            {
                 continue;
             }
             Err(error) => return Err(error.into()),
         };
         let can_id = u16::try_from(frame.raw_id())?;
-        let decoded = decode(can_id, frame.data()).map_err(|error| io::Error::other(format!("{error:?}")))?;
+        let decoded =
+            decode(can_id, frame.data()).map_err(|error| io::Error::other(format!("{error:?}")))?;
         if let Frame::Command { message, .. } = &decoded {
             observed_commands
                 .lock()
@@ -137,16 +151,26 @@ fn run_controller(stopping: Arc<AtomicBool>, observed_commands: Arc<Mutex<Vec<u1
 }
 
 fn write_fd(socket: &CanFdSocket, can_id: u16, payload: &[u8]) -> LiveTestResult<()> {
-    let id = socketcan::StandardId::new(can_id).ok_or_else(|| io::Error::other("invalid standard CAN id"))?;
-    let frame = CanFdFrame::new(id, payload).ok_or_else(|| io::Error::other("invalid CAN FD frame"))?;
+    let id = socketcan::StandardId::new(can_id)
+        .ok_or_else(|| io::Error::other("invalid standard CAN id"))?;
+    let frame =
+        CanFdFrame::new(id, payload).ok_or_else(|| io::Error::other("invalid CAN FD frame"))?;
     socket.write_frame(&frame)?;
 
     Ok(())
 }
 
-pub(super) fn send_powertrain_temperature(coolant_c: i16, iat_c: i16, nexus: bool) -> LiveTestResult<()> {
+pub(super) fn send_powertrain_temperature(
+    coolant_c: i16,
+    iat_c: i16,
+    nexus: bool,
+) -> LiveTestResult<()> {
     let (id, coolant, iat) = if nexus {
-        (0x600, (coolant_c * 10).to_be_bytes(), (iat_c * 10).to_be_bytes())
+        (
+            0x600,
+            (coolant_c * 10).to_be_bytes(),
+            (iat_c * 10).to_be_bytes(),
+        )
     } else {
         let coolant = u16::try_from(i32::from(coolant_c) * 10 + 2_731)?.to_be_bytes();
         let iat = u16::try_from(i32::from(iat_c) * 10 + 2_731)?.to_be_bytes();
@@ -157,8 +181,10 @@ pub(super) fn send_powertrain_temperature(coolant_c: i16, iat_c: i16, nexus: boo
 
 pub(super) fn send_powertrain_frame(can_id: u16, payload: &[u8]) -> LiveTestResult<()> {
     let socket = CanSocket::open("vcan-powertrain")?;
-    let id = socketcan::StandardId::new(can_id).ok_or_else(|| io::Error::other("invalid standard CAN id"))?;
-    let frame = CanFrame::new(id, payload).ok_or_else(|| io::Error::other("invalid Classical CAN frame"))?;
+    let id = socketcan::StandardId::new(can_id)
+        .ok_or_else(|| io::Error::other("invalid standard CAN id"))?;
+    let frame = CanFrame::new(id, payload)
+        .ok_or_else(|| io::Error::other("invalid Classical CAN frame"))?;
     socket.write_frame(&frame)?;
 
     Ok(())

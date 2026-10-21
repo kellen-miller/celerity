@@ -1,14 +1,18 @@
 use std::{fs, path::PathBuf};
 
-use control_core::{BundleError, PowertrainDecodeError, PowertrainSource, StartupMode, ValidatedBundle};
+use control_core::{
+    BundleError, PowertrainDecodeError, PowertrainSource, StartupMode, ValidatedBundle,
+};
 
 fn bundle(haltech: &str, cantcu: &str, name: &str) -> Result<ValidatedBundle, BundleError> {
-    let source =
-        fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/simulation.toml"))
-            .map_err(|error| BundleError::Read(error.to_string()))?
-            .replace("mode = \"broadcast-v2\"", haltech)
-            .replace("mode = \"disabled\"", cantcu);
-    let path = std::env::temp_dir().join(format!("celerity-nexus-{name}-{}.toml", std::process::id()));
+    let source = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/simulation.toml"),
+    )
+    .map_err(|error| BundleError::Read(error.to_string()))?
+    .replace("mode = \"broadcast-v2\"", haltech)
+    .replace("mode = \"disabled\"", cantcu);
+    let path =
+        std::env::temp_dir().join(format!("celerity-nexus-{name}-{}.toml", std::process::id()));
     fs::write(&path, source).map_err(|error| BundleError::Read(error.to_string()))?;
     ValidatedBundle::load(&path, StartupMode::Simulation)
 }
@@ -76,9 +80,13 @@ fn commissioned_profile_decodes_independent_wire_vectors() {
 
 #[test]
 fn nexus_selection_keeps_factory_broadcast_opaque_and_cantcu_independent() {
-    let decoder = bundle(NEXUS, "mode = \"default\"\nbase_id = 1280", "source-ownership")
-        .expect("nonoverlapping streams")
-        .powertrain_decoder();
+    let decoder = bundle(
+        NEXUS,
+        "mode = \"default\"\nbase_id = 1280",
+        "source-ownership",
+    )
+    .expect("nonoverlapping streams")
+    .powertrain_decoder();
     for id in [0x360, 0x3e0, 0x5ff, 0x604] {
         let observation = decoder.decode(id, &[1, 2, 3]).expect("opaque evidence");
         assert_eq!(observation.source, PowertrainSource::Unknown);
@@ -90,9 +98,13 @@ fn nexus_selection_keeps_factory_broadcast_opaque_and_cantcu_independent() {
         decoder.decode(0x500, &[0; 8]).expect("CANTCU frame").source,
         PowertrainSource::CantcuDefault,
     );
-    let broadcast = bundle("mode = \"broadcast-v2\"", "mode = \"disabled\"", "broadcast")
-        .expect("broadcast profile")
-        .powertrain_decoder();
+    let broadcast = bundle(
+        "mode = \"broadcast-v2\"",
+        "mode = \"disabled\"",
+        "broadcast",
+    )
+    .expect("broadcast profile")
+    .powertrain_decoder();
     assert_eq!(
         broadcast
             .decode(0x600, &[0; 8])
@@ -109,7 +121,10 @@ fn malformed_nexus_frames_cannot_produce_partial_signal_updates() {
         .powertrain_decoder();
     for id in 0x600..=0x603 {
         for payload in [&[0; 7][..], &[0; 9][..]] {
-            assert_eq!(decoder.decode(id, payload), Err(PowertrainDecodeError::WrongLength));
+            assert_eq!(
+                decoder.decode(id, payload),
+                Err(PowertrainDecodeError::WrongLength)
+            );
         }
     }
 
@@ -132,10 +147,26 @@ fn malformed_nexus_frames_cannot_produce_partial_signal_updates() {
 #[test]
 fn nexus_ids_must_fit_and_avoid_both_haltech_and_cantcu() {
     for (base, cantcu, error) in [
-        (2045, "mode = \"disabled\"", PowertrainDecodeError::InvalidNexusBase),
-        (65_535, "mode = \"disabled\"", PowertrainDecodeError::InvalidNexusBase),
-        (861, "mode = \"disabled\"", PowertrainDecodeError::NexusIdCollision),
-        (989, "mode = \"disabled\"", PowertrainDecodeError::NexusIdCollision),
+        (
+            2045,
+            "mode = \"disabled\"",
+            PowertrainDecodeError::InvalidNexusBase,
+        ),
+        (
+            65_535,
+            "mode = \"disabled\"",
+            PowertrainDecodeError::InvalidNexusBase,
+        ),
+        (
+            861,
+            "mode = \"disabled\"",
+            PowertrainDecodeError::NexusIdCollision,
+        ),
+        (
+            989,
+            "mode = \"disabled\"",
+            PowertrainDecodeError::NexusIdCollision,
+        ),
         (
             1277,
             "mode = \"default\"\nbase_id = 1280",
@@ -157,8 +188,12 @@ fn nexus_ids_must_fit_and_avoid_both_haltech_and_cantcu() {
         );
     }
 
-    let boundary = bundle(&NEXUS.replace("1536", "2044"), "mode = \"disabled\"", "boundary")
-        .expect("last four standard identifiers fit");
+    let boundary = bundle(
+        &NEXUS.replace("1536", "2044"),
+        "mode = \"disabled\"",
+        "boundary",
+    )
+    .expect("last four standard identifiers fit");
     assert_eq!(
         boundary
             .powertrain_decoder()
@@ -183,7 +218,11 @@ fn nexus_timing_uses_the_commissioned_period() {
     }
 
     assert_eq!(
-        bundle(&NEXUS.replace("100", "0"), "mode = \"disabled\"", "zero-period"),
+        bundle(
+            &NEXUS.replace("100", "0"),
+            "mode = \"disabled\"",
+            "zero-period"
+        ),
         Err(BundleError::InvalidHaltechConfiguration(
             PowertrainDecodeError::InvalidNexusPeriod
         )),
@@ -196,25 +235,34 @@ fn nexus_timing_uses_the_commissioned_period() {
         "mode = \"nexus-gcan-v1\"\nbase_id = 1536\nmaximum_period_ms = 100\nunknown = true",
     ] {
         assert!(matches!(
-            bundle(invalid, "mode = \"disabled\"", &format!("invalid-{}", invalid.len())),
+            bundle(
+                invalid,
+                "mode = \"disabled\"",
+                &format!("invalid-{}", invalid.len())
+            ),
             Err(BundleError::Parse(_))
         ));
     }
 
-    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/nexus-gcan-simulation.toml");
+    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../config/examples/nexus-gcan-simulation.toml");
     ValidatedBundle::load(&example, StartupMode::Simulation).expect("documented Nexus example");
 }
 
 #[test]
 fn faster_nexus_profile_validates_each_freshness_window() {
     let source = fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/nexus-gcan-simulation.toml"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../config/examples/nexus-gcan-simulation.toml"),
     )
     .expect("Nexus example")
     .replace("maximum_period_ms = 100", "maximum_period_ms = 50");
     for (input, model, accepted) in [(100, 100, true), (50, 100, false), (100, 50, false)] {
         let configured = source
-            .replace("input_stale_after_ms = 250", &format!("input_stale_after_ms = {input}"))
+            .replace(
+                "input_stale_after_ms = 250",
+                &format!("input_stale_after_ms = {input}"),
+            )
             .replace(
                 "model_signals_stale_after_ms = 250",
                 &format!("model_signals_stale_after_ms = {model}"),

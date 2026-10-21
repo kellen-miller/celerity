@@ -1,15 +1,16 @@
 use std::{fs, path::PathBuf};
 
 use vehicle_diagnostics::{
-    AcceptedRadiatorSplitCommand, CommandSource, DiagnosticStatus, DiagnosticUnknownReason, DiagnosticsSnapshot,
-    FeatureAuthority, GlobalAuthority, ObservedTemperature, RunStorageHealth,
+    AcceptedRadiatorSplitCommand, CommandSource, DiagnosticStatus, DiagnosticUnknownReason,
+    DiagnosticsSnapshot, FeatureAuthority, GlobalAuthority, ObservedTemperature, RunStorageHealth,
 };
 use vehicle_ui::{PresentationState, StatusEnvelope};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let output = std::env::args_os()
-        .nth(1)
-        .map_or_else(|| PathBuf::from("crates/vehicle-ui/web/fixtures/status"), PathBuf::from);
+    let output = std::env::args_os().nth(1).map_or_else(
+        || PathBuf::from("crates/vehicle-ui/web/fixtures/status"),
+        PathBuf::from,
+    );
     fs::create_dir_all(&output)?;
 
     let current_snapshot = DiagnosticsSnapshot {
@@ -38,12 +39,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     write(
         &output,
         "current.json",
-        &envelope(PresentationState::Current, 0, Some(125), Some(current_snapshot.clone())),
+        &envelope(
+            PresentationState::Current,
+            0,
+            Some(125),
+            Some(current_snapshot.clone()),
+        ),
     )?;
     write(
         &output,
         "stale.json",
-        &envelope(PresentationState::Stale, 2, Some(1_400), Some(current_snapshot.clone())),
+        &envelope(
+            PresentationState::Stale,
+            2,
+            Some(1_400),
+            Some(current_snapshot.clone()),
+        ),
     )?;
     let mut producer_stale = current_snapshot;
     producer_stale.runtime_update_age_ms = 500;
@@ -77,7 +88,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 controller_runtime_lease_health: DiagnosticStatus::Unknown(
                     DiagnosticUnknownReason::NotExpectedInFallback,
                 ),
-                controller_command_ack_health: DiagnosticStatus::Unknown(DiagnosticUnknownReason::NoOutstandingCommand),
+                controller_command_ack_health: DiagnosticStatus::Unknown(
+                    DiagnosticUnknownReason::NoOutstandingCommand,
+                ),
                 run_storage_health: RunStorageHealth::Unknown,
             }),
         ),
@@ -100,7 +113,11 @@ const fn envelope(
     }
 }
 
-fn write(output: &std::path::Path, name: &str, envelope: &StatusEnvelope) -> Result<(), Box<dyn std::error::Error>> {
+fn write(
+    output: &std::path::Path,
+    name: &str,
+    envelope: &StatusEnvelope,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut bytes = serde_json::to_vec_pretty(envelope)?;
     bytes.push(b'\n');
     fs::write(output.join(name), bytes)?;

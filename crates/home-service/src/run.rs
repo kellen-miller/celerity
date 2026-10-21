@@ -51,8 +51,14 @@ impl<'a> Cursor<'a> {
     }
 
     fn take(&mut self, length: usize, error: &str) -> HomeResult<&'a [u8]> {
-        let end = self.offset.checked_add(length).ok_or_else(|| error.to_owned())?;
-        let value = self.data.get(self.offset..end).ok_or_else(|| error.to_owned())?;
+        let end = self
+            .offset
+            .checked_add(length)
+            .ok_or_else(|| error.to_owned())?;
+        let value = self
+            .data
+            .get(self.offset..end)
+            .ok_or_else(|| error.to_owned())?;
         self.offset = end;
         Ok(value)
     }

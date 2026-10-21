@@ -26,8 +26,10 @@ sensor mappings and timing. The powertrain connection remains receive-only.
   Svelte panel, and `celerity-ui` binary.
 - `crates/sync`: authority-free Run/model reconciliation with SQLite.
 - `firmware/duct-controller`: STM32G431 Embassy image and host conformance.
-- `services/home`: FastAPI, SQLite/filesystem archive, managed jobs, models, and
-  bounded webhook delivery.
+- `crates/home-service`: Rust home HTTP API, SQLite/filesystem archive, durable
+  job supervision, model staging and bounded webhook delivery.
+- `services/home`: Python ML data preparation, PyTorch training, ONNX export and
+  evaluation, plus deterministic model fixtures.
 - `contracts/celerity/v1/celerity.proto`: the one cross-language IDL. Rust,
   Python, and TypeScript bindings are committed and checked for regeneration.
 - `contracts/controller-can-v1.md` and `config/schema-v1.md`: transport and
@@ -67,7 +69,8 @@ Locally, `check-rust-targets --portable` builds firmware and links ARM64 when it
 cross-linker is available.
 
 `check-e2e` runs the ignored cross-language acceptance test with the same workspace
-features as the normal Rust tests. Run `check-python` for the full home test suite;
+features as the normal Rust tests. Cargo covers the Rust home service;
+`check-python` covers numerical training and ONNX tooling;
 install UI dependencies with `npm ci` before running `check-ui` locally.
 
 Linux CI creates separate `vcan-powertrain` and `vcan-controller` interfaces

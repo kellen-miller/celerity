@@ -1,4 +1,6 @@
-use celerity_proto::celerity::v1::{ControlDecision, RunEvent, SignalObservation, run_event::Payload};
+use celerity_proto::celerity::v1::{
+    ControlDecision, RunEvent, SignalObservation, run_event::Payload,
+};
 use home_service::run::{RunBounds, validate_records};
 use prost::Message;
 
@@ -37,7 +39,10 @@ fn assert_invalid(data: &[u8], expected: &str) {
         panic!("expected invalid Run: {expected}");
     };
     let error = error.to_string();
-    assert!(error.contains(expected), "expected {expected:?}, got {error:?}");
+    assert!(
+        error.contains(expected),
+        "expected {expected:?}, got {error:?}"
+    );
 }
 
 #[test]
@@ -87,7 +92,10 @@ fn rejects_duplicate_payloads_before_oneof_normalization() {
 fn rejects_missing_and_empty_control_payloads() {
     let mut record = event(1, 1);
     record.payload = None;
-    assert_invalid(&record.encode_length_delimited_to_vec(), "exactly one typed payload");
+    assert_invalid(
+        &record.encode_length_delimited_to_vec(),
+        "exactly one typed payload",
+    );
     record.payload = Some(Payload::ControlDecision(ControlDecision::default()));
     assert_invalid(
         &record.encode_length_delimited_to_vec(),
@@ -112,7 +120,10 @@ fn rejects_nonfinite_missing_or_unnamed_signals() {
             value,
             ..SignalObservation::default()
         }));
-        assert_invalid(&record.encode_length_delimited_to_vec(), "invalid signal observation");
+        assert_invalid(
+            &record.encode_length_delimited_to_vec(),
+            "invalid signal observation",
+        );
     }
 
     let mut record = event(1, 1);
@@ -120,7 +131,10 @@ fn rejects_nonfinite_missing_or_unnamed_signals() {
         value: 90.0,
         ..SignalObservation::default()
     }));
-    assert_invalid(&record.encode_length_delimited_to_vec(), "invalid signal observation");
+    assert_invalid(
+        &record.encode_length_delimited_to_vec(),
+        "invalid signal observation",
+    );
     record.payload = Some(Payload::SignalObservation(SignalObservation {
         signal: "coolant".to_owned(),
         value: -12.5,
@@ -149,7 +163,10 @@ fn rejects_sequence_time_source_and_schema_errors() {
     assert_invalid(&record.encode_length_delimited_to_vec(), "source is absent");
     record.source = "test".to_owned();
     record.schema_major = 2;
-    assert_invalid(&record.encode_length_delimited_to_vec(), "not schema major 1");
+    assert_invalid(
+        &record.encode_length_delimited_to_vec(),
+        "not schema major 1",
+    );
 }
 
 struct InvalidFrame<'a> {
@@ -214,5 +231,8 @@ fn accepts_explicit_zero_monotonic_and_signal_values() {
     signal.extend(0_f64.to_le_bytes());
     raw.extend([0xaa, 1]);
     raw.extend(frame(&signal));
-    assert_eq!(validate_records(&frame(&raw)).unwrap().first_monotonic_ns, 0);
+    assert_eq!(
+        validate_records(&frame(&raw)).unwrap().first_monotonic_ns,
+        0
+    );
 }

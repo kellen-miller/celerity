@@ -261,6 +261,24 @@ pub fn recover(config: &HomeConfig) -> HomeResult<usize> {
             continue;
         }
 
+        // Python inherits this lock across exec. Keep admission occupied until
+        // numerical work exits, even if its Rust supervisor was killed.
+        let training_lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(
+                config
+                    .storage_root
+                    .join("jobs")
+                    .join(format!("{}.training.lock", job.id)),
+            )?;
+        match training_lock.try_lock() {
+            Ok(()) => (),
+            Err(std::fs::TryLockError::WouldBlock) => continue,
+            Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+        }
+
         let summary = "managed training worker exited before recording a terminal state";
         let changed = transaction.execute("UPDATE jobs SET state='failed', terminal_summary=? WHERE id=? AND state='running' AND pid IS ? AND pid_start_ticks IS ?", params![summary, job.id, job.pid, job.identity])?;
         if changed != 0 {
@@ -340,15 +358,73 @@ pub(crate) fn claim(storage_root: &Path, job_id: &str) -> HomeResult<Option<Work
 /// # Errors
 /// Returns training/validation failures after persisting a fenced failed state.
 /// Duplicate launches return successfully without training.
-pub fn run_worker(storage_root: &Path, job_id: &str, python: &Path) -> HomeResult<()> {
+pub fn run_worker(
+    storage_root: &Path,
+    job_id: &str,
+    python: &Path,
+    worker_binary: &Path,
+) -> HomeResult<()> {
     let Some(owner) = claim(storage_root, job_id)? else {
         return Ok(());
     };
-    if let Err(error) = training::execute(storage_root, python, &owner) {
+    if let Err(error) = training::execute(storage_root, python, worker_binary, &owner) {
         eprintln!("training job {job_id} failed: {error}");
         owner.fail(&storage_root.join("home.sqlite3"), &error.to_string())?;
         return Err(error);
     }
 
     Ok(())
+}
+
+/// Replace this process with Python while retaining the training admission lock.
+///
+/// # Errors
+/// Returns lock, ownership, unsupported-platform or executable launch failures.
+pub fn run_trainer(
+    storage_root: &Path,
+    job_id: &str,
+    python: &Path,
+    pid: u32,
+    identity: String,
+) -> HomeResult<()> {
+    #[cfg(unix)]
+    {
+        use nix::fcntl::{FcntlArg, FdFlag, fcntl};
+        use std::os::unix::process::CommandExt;
+
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(
+                storage_root
+                    .join("jobs")
+                    .join(format!("{job_id}.training.lock")),
+            )?;
+        lock.try_lock()?;
+        let owner = WorkerOwnership {
+            job_id: job_id.into(),
+            pid,
+            identity,
+        };
+        let connection = storage::connect(&storage_root.join("home.sqlite3"))?;
+        if !owner.is_current(&connection)?
+            || process_identity(pid).as_ref() != Some(&owner.identity)
+        {
+            return Err("training supervisor was superseded or exited".into());
+        }
+
+        drop(connection);
+        // Clear CLOEXEC only for the admission lock. Python owns the same open
+        // file description until exit, including supervisor SIGKILL windows.
+        fcntl(&lock, FcntlArg::F_SETFD(FdFlag::empty()))?;
+        Err(Command::new(python)
+            .args(["-m", "celerity_home.worker", "--request"])
+            .arg(storage_root.join("jobs").join(job_id).join("request.json"))
+            .exec()
+            .into())
+    }
+
+    #[cfg(not(unix))]
+    Err("home training requires Unix process ownership".into())
 }

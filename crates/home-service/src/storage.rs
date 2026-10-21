@@ -72,7 +72,10 @@ pub fn connect(database: &Path) -> HomeResult<Connection> {
 /// # Errors
 /// Returns an error for invalid legacy data or filesystem/SQLite failures.
 pub fn migrate(database: &Path) -> HomeResult<()> {
-    if let Some(parent) = database.parent().filter(|path| !path.as_os_str().is_empty()) {
+    if let Some(parent) = database
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent)?;
     }
 

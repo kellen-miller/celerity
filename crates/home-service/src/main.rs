@@ -31,8 +31,7 @@ fn worker_arguments(arguments: &[String]) -> HomeResult<WorkerArguments> {
     })
 }
 
-#[tokio::main]
-async fn main() -> HomeResult<()> {
+fn main() -> HomeResult<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments
         .first()
@@ -43,10 +42,28 @@ async fn main() -> HomeResult<()> {
             &arguments.storage_root,
             &arguments.job_id,
             &arguments.python,
+            &std::env::current_exe()?,
         );
     }
 
-    let bind = match arguments.as_slice() {
+    if let [command, root, job_id, python, pid, identity] = arguments.as_slice()
+        && command == "trainer"
+    {
+        return jobs::run_trainer(
+            std::path::Path::new(root),
+            job_id,
+            std::path::Path::new(python),
+            pid.parse()?,
+            identity.clone(),
+        );
+    }
+
+    serve(&arguments)
+}
+
+#[tokio::main]
+async fn serve(arguments: &[String]) -> HomeResult<()> {
+    let bind = match arguments {
         [] => "0.0.0.0:8080",
         [flag, value] if flag == "--bind" => value,
         _ => return Err("usage: celerity-home [--bind IP:PORT]".into()),
@@ -77,7 +94,10 @@ async fn main() -> HomeResult<()> {
             Ok(client) => client,
             Err(error) => {
                 eprintln!("webhook client initialization failed: {error}");
-                let _ = delivery_finished.send(());
+                if delivery_finished.send(()).is_err() {
+                    eprintln!("webhook shutdown receiver closed");
+                }
+
                 return;
             }
         };
@@ -95,7 +115,9 @@ async fn main() -> HomeResult<()> {
             }
         }
 
-        let _ = delivery_finished.send(());
+        if delivery_finished.send(()).is_err() {
+            eprintln!("webhook shutdown receiver closed");
+        }
     });
     let listener = tokio::net::TcpListener::bind(bind).await?;
     let result = axum::serve(listener, home.router())

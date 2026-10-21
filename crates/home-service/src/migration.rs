@@ -1,6 +1,8 @@
 //! Conversion of the pre-protobuf Home database.
 
-use celerity_proto::celerity::v1::{Completion, RunChunk, RunManifest, WebhookEvent, WebhookEventType};
+use celerity_proto::celerity::v1::{
+    Completion, RunChunk, RunManifest, WebhookEvent, WebhookEventType,
+};
 use prost::Message;
 use rusqlite::{Transaction, params, types::Value as SqlValue};
 use serde_json::{Map, Value};
@@ -12,19 +14,27 @@ pub(crate) fn migrate(transaction: &Transaction<'_>) -> HomeResult<()> {
     let notification_columns = columns(transaction, "PRAGMA table_info(notifications)")?;
     let legacy_runs = run_columns.iter().any(|column| column == "manifest_json")
         && !run_columns.iter().any(|column| column == "manifest_pb");
-    let legacy_notifications = notification_columns.iter().any(|column| column == "payload_json")
-        && !notification_columns.iter().any(|column| column == "payload_pb");
+    let legacy_notifications = notification_columns
+        .iter()
+        .any(|column| column == "payload_json")
+        && !notification_columns
+            .iter()
+            .any(|column| column == "payload_pb");
     if legacy_runs {
         transaction.execute("ALTER TABLE runs RENAME TO runs_json_legacy", [])?;
     }
 
     if legacy_notifications {
-        transaction.execute("ALTER TABLE notifications RENAME TO notifications_json_legacy", [])?;
+        transaction.execute(
+            "ALTER TABLE notifications RENAME TO notifications_json_legacy",
+            [],
+        )?;
     }
 
     transaction.execute_batch(SCHEMA)?;
     if legacy_runs {
-        let mut statement = transaction.prepare("SELECT digest, manifest_json, completed_at FROM runs_json_legacy")?;
+        let mut statement = transaction
+            .prepare("SELECT digest, manifest_json, completed_at FROM runs_json_legacy")?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
             let manifest = run_manifest(row.get(1)?)?;
@@ -72,7 +82,9 @@ pub(crate) fn migrate(transaction: &Transaction<'_>) -> HomeResult<()> {
 
 fn columns(transaction: &Transaction<'_>, query: &str) -> HomeResult<Vec<String>> {
     let mut statement = transaction.prepare(query)?;
-    Ok(statement.query_map([], |row| row.get(1))?.collect::<Result<_, _>>()?)
+    Ok(statement
+        .query_map([], |row| row.get(1))?
+        .collect::<Result<_, _>>()?)
 }
 
 fn json_object(value: SqlValue, label: &str) -> HomeResult<Map<String, Value>> {
@@ -139,11 +151,14 @@ fn run_manifest(value: SqlValue) -> HomeResult<Vec<u8>> {
         chunk_file: optional_string(&legacy, "chunk_file")?.unwrap_or_default(),
         chunk_sha256: optional_string(&legacy, "chunk_sha256")?.unwrap_or_default(),
         dropped_record_count: optional_integer(&legacy, "dropped_record_count")?.unwrap_or(0),
-        configuration_generation: optional_integer(&legacy, "configuration_generation")?.unwrap_or(0),
+        configuration_generation: optional_integer(&legacy, "configuration_generation")?
+            .unwrap_or(0),
         configuration_sha256: optional_string(&legacy, "configuration_sha256")?.unwrap_or_default(),
         model_bundle_digest: optional_string(&legacy, "model_bundle_digest")?,
         protocol_major: u32::try_from(optional_integer(&legacy, "protocol_major")?.unwrap_or(0))?,
-        firmware_generation: u32::try_from(optional_integer(&legacy, "firmware_generation")?.unwrap_or(0))?,
+        firmware_generation: u32::try_from(
+            optional_integer(&legacy, "firmware_generation")?.unwrap_or(0),
+        )?,
         decoder_generation: optional_integer(&legacy, "decoder_generation")?.unwrap_or(0),
         model_abi: optional_string(&legacy, "model_abi")?.unwrap_or_default(),
         model_input_signals: string_array(&legacy, "model_input_signals")?,
@@ -161,7 +176,9 @@ fn run_manifest(value: SqlValue) -> HomeResult<Vec<u8>> {
         None | Some(Value::Null) => {}
         Some(Value::Array(values)) => {
             for value in values {
-                let value = value.as_u64().ok_or("legacy command_lattice contains a non-integer")?;
+                let value = value
+                    .as_u64()
+                    .ok_or("legacy command_lattice contains a non-integer")?;
                 manifest.command_lattice.push(u32::try_from(value)?);
             }
         }
@@ -172,7 +189,9 @@ fn run_manifest(value: SqlValue) -> HomeResult<Vec<u8>> {
         None | Some(Value::Null) => {}
         Some(Value::Array(chunks)) => {
             for chunk in chunks {
-                let chunk = chunk.as_object().ok_or("legacy Run manifest chunk is invalid")?;
+                let chunk = chunk
+                    .as_object()
+                    .ok_or("legacy Run manifest chunk is invalid")?;
                 manifest.chunks.push(RunChunk {
                     file: chunk
                         .get("file")
@@ -197,7 +216,9 @@ fn webhook_event(value: SqlValue, row_event_id: &str) -> HomeResult<Vec<u8>> {
     let legacy = json_object(value, "webhook event")?;
     let event_id = match legacy.get("event_id") {
         None => row_event_id,
-        Some(value) => value.as_str().ok_or("legacy webhook event id does not match its row")?,
+        Some(value) => value
+            .as_str()
+            .ok_or("legacy webhook event id does not match its row")?,
     };
     if event_id != row_event_id {
         return Err("legacy webhook event id does not match its row".into());
@@ -212,7 +233,9 @@ fn webhook_event(value: SqlValue, row_event_id: &str) -> HomeResult<Vec<u8>> {
     };
     let schema_version = match legacy.get("schema_version") {
         None => 1,
-        Some(value) => value.as_u64().ok_or("legacy webhook event schema version is invalid")?,
+        Some(value) => value
+            .as_u64()
+            .ok_or("legacy webhook event schema version is invalid")?,
     };
     let event = WebhookEvent {
         schema_version: u32::try_from(schema_version)?,

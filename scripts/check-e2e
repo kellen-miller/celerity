@@ -3,6 +3,9 @@ set -euo pipefail
 
 # Install before the acceptance test starts its bounded server-readiness wait.
 uv sync --project services/home --locked
+cargo build --locked --workspace --all-features --bin celerity-home
+build_root=$(cd "${CARGO_TARGET_DIR:-target}" && pwd)
+export CELERITY_HOME_BINARY="$build_root/debug/celerity-home"
 
 # Keep workspace feature unification identical to the preceding workspace tests.
 # model_slots and the home application are covered by their full test suites.

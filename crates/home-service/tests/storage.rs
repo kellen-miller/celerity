@@ -1,4 +1,6 @@
-use celerity_proto::celerity::v1::{Completion, RunChunk, RunManifest, WebhookEvent, WebhookEventType};
+use celerity_proto::celerity::v1::{
+    Completion, RunChunk, RunManifest, WebhookEvent, WebhookEventType,
+};
 use home_service::{
     HomeResult,
     storage::{connect, migrate},
@@ -189,11 +191,16 @@ fn invalid_notification_rolls_back_renames_copies_and_schema() -> HomeResult<()>
     )?;
     assert!(migrate(&database).is_err());
     assert_eq!(
-        connection.query_row::<String, _, _>("SELECT manifest_json FROM runs", [], |row| row.get(0),)?,
+        connection
+            .query_row::<String, _, _>("SELECT manifest_json FROM runs", [], |row| row.get(0),)?,
         original
     );
     assert_eq!(
-        connection.query_row::<String, _, _>("SELECT payload_json FROM notifications", [], |row| row.get(0),)?,
+        connection.query_row::<String, _, _>(
+            "SELECT payload_json FROM notifications",
+            [],
+            |row| row.get(0),
+        )?,
         "not JSON"
     );
     assert_eq!(connection.query_row::<i64, _, _>(
@@ -229,7 +236,9 @@ fn rejects_invalid_legacy_manifest_fields_without_data_loss() -> HomeResult<()> 
         connection.execute("INSERT INTO runs VALUES ('digest', ?, 'date')", [&original])?;
         assert!(migrate(&database).is_err(), "accepted invalid {field}");
         assert_eq!(
-            connection.query_row::<String, _, _>("SELECT manifest_json FROM runs", [], |row| row.get(0),)?,
+            connection
+                .query_row::<String, _, _>("SELECT manifest_json FROM runs", [], |row| row
+                    .get(0),)?,
             original
         );
     }
@@ -255,7 +264,8 @@ fn migrates_event_types_defaults_and_optional_fields() -> HomeResult<()> {
             [serde_json::to_vec(&legacy)?],
         )?;
         migrate(&database)?;
-        let payload: Vec<u8> = connection.query_row("SELECT payload_pb FROM notifications", [], |row| row.get(0))?;
+        let payload: Vec<u8> =
+            connection.query_row("SELECT payload_pb FROM notifications", [], |row| row.get(0))?;
         let decoded = WebhookEvent::decode(payload.as_slice())?;
         assert_eq!(decoded.schema_version, 1);
         assert_eq!(decoded.event_id, "event");
@@ -283,7 +293,8 @@ fn invalid_event_fields_roll_back_the_original_payload() -> HomeResult<()> {
         let database = directory.path().join("home.sqlite3");
         let connection = Connection::open(&database)?;
         connection.execute_batch(LEGACY_SCHEMA)?;
-        let mut legacy = json!({"event_type": "rollback", "occurred_at": "date", "summary": "summary"});
+        let mut legacy =
+            json!({"event_type": "rollback", "occurred_at": "date", "summary": "summary"});
         legacy[field] = value;
         let original = serde_json::to_string(&legacy)?;
         connection.execute(
@@ -292,7 +303,11 @@ fn invalid_event_fields_roll_back_the_original_payload() -> HomeResult<()> {
         )?;
         assert!(migrate(&database).is_err(), "accepted invalid {field}");
         assert_eq!(
-            connection.query_row::<String, _, _>("SELECT payload_json FROM notifications", [], |row| row.get(0),)?,
+            connection.query_row::<String, _, _>(
+                "SELECT payload_json FROM notifications",
+                [],
+                |row| row.get(0),
+            )?,
             original
         );
     }

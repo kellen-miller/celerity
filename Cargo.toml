@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/home-service",
     "crates/celerity-proto",
     "crates/control-core",
     "crates/control-protocol",

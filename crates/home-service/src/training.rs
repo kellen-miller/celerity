@@ -181,6 +181,7 @@ fn snapshot(storage_root: &Path, owner: &WorkerOwnership) -> HomeResult<Training
 pub(crate) fn execute(
     storage_root: &Path,
     python: &Path,
+    worker_binary: &Path,
     owner: &WorkerOwnership,
 ) -> HomeResult<()> {
     // The snapshot precedes Python execution. Completion compares the same
@@ -204,11 +205,13 @@ pub(crate) fn execute(
     serde_json::to_writer(&mut file, &snapshot.request)?;
     file.sync_all()?;
     drop(file);
-    let status = Command::new(python)
-        .arg("-m")
-        .arg("celerity_home.worker")
-        .arg("--request")
-        .arg(&request_path)
+    let status = Command::new(worker_binary)
+        .arg("trainer")
+        .arg(storage_root)
+        .arg(&owner.job_id)
+        .arg(python)
+        .arg(owner.pid.to_string())
+        .arg(&owner.identity)
         .status()?;
     if !status.success() {
         return Err(format!("Python training adapter exited with {status}").into());

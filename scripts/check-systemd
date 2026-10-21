@@ -11,8 +11,6 @@ if ! command -v systemctl >/dev/null || ! systemctl show-environment >/dev/null;
 fi
 sudo -n true
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-
 for interface in vcan-powertrain vcan-controller; do
   ip link show "$interface" >/dev/null
 done
@@ -27,21 +25,13 @@ ctl_binary=/usr/local/bin/celerityctl
 sync_binary=/usr/local/bin/celerity-sync
 ui_binary=/usr/local/bin/celerity-ui
 build_root=${CARGO_TARGET_DIR:-target}
+status_check_binary="$build_root/release/examples/systemd_check"
 check_root=$(mktemp -d)
 diagnostics_group_created=false
 ui_user_created=false
 nonmember_user_created=false
 state_root_created=false
 port_holder_pid=
-
-assert_status_response() {
-  local response_path=$1
-  local expected_state=$2
-  local expected_snapshot=$3
-
-  python3 "$repo_root/services/home/src/celerity_home/status_protobuf_check.py" \
-    "$response_path" "$expected_state" "$expected_snapshot"
-}
 
 for path in \
   "$unit_root/celerityd.service" \
@@ -116,7 +106,7 @@ if id -nG celerity-no-diagnostics | tr ' ' '\n' | grep -Fx celerity-diagnostics;
   exit 1
 fi
 
-cargo build --locked --release --all-features \
+cargo build --locked --release --all-features --bins --examples \
   -p vehicle-runtime -p vehicle-diagnostics -p vehicle-ui -p sync
 sudo install -m 0755 "$build_root/release/celerityd" "$runtime_binary"
 sudo install -m 0755 "$build_root/release/celerityctl" "$ctl_binary"
@@ -325,7 +315,7 @@ echo "PASS: nonmember cannot access diagnostics"
 sudo -u celerity-ui -g celerity-diagnostics "$ctl_binary" status \
   --socket /run/celerity/diagnostics.sock \
   | tee "$check_root/member-status" >/dev/null
-python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["schema_version"] == 2' \
+"$status_check_binary" diagnostics \
   "$check_root/member-status"
 
 sudo systemctl start celerity-ui.service
@@ -333,13 +323,13 @@ for _ in {1..50}; do
   if curl --max-time 1 -fsS -H 'Host: localhost:8080' \
     http://127.0.0.1:8080/v1/status >"$check_root/status.pb" \
     2>"$check_root/status-error" \
-    && assert_status_response "$check_root/status.pb" current present \
+    && "$status_check_binary" protobuf "$check_root/status.pb" current present \
       2>>"$check_root/status-error"; then
     break
   fi
   sleep 0.2
 done
-if ! assert_status_response "$check_root/status.pb" current present; then
+if ! "$status_check_binary" protobuf "$check_root/status.pb" current present; then
   cat "$check_root/status-error" >&2
   exit 1
 fi
@@ -396,20 +386,20 @@ for _ in {1..30}; do
   if curl --max-time 1 -fsS -H 'Host: localhost:8080' \
     http://127.0.0.1:8080/v1/status >"$check_root/unavailable.pb" \
     2>"$check_root/unavailable-error" \
-    && assert_status_response "$check_root/unavailable.pb" unavailable absent \
+    && "$status_check_binary" protobuf "$check_root/unavailable.pb" unavailable absent \
       2>>"$check_root/unavailable-error"; then
     break
   fi
   sleep 0.2
 done
-if ! assert_status_response "$check_root/unavailable.pb" unavailable absent; then
+if ! "$status_check_binary" protobuf "$check_root/unavailable.pb" unavailable absent; then
   cat "$check_root/unavailable-error" >&2
   exit 1
 fi
 echo "PASS: viewer reports unavailable status when runtime stops"
 
 sudo systemctl stop celerity-ui.service
-python3 -m http.server 8080 --bind 127.0.0.1 \
+"$status_check_binary" hold-port 127.0.0.1:8080 \
   >"$check_root/port-holder.log" 2>&1 &
 port_holder_pid=$!
 port_holder_ready=false
@@ -474,7 +464,7 @@ sudo systemctl is-active --quiet celerityd.service
   "660 root root" ]]
 sudo "$ctl_binary" status --socket /run/celerity/diagnostics.sock \
   | tee "$check_root/no-viewer-provisioning-status" >/dev/null
-python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["schema_version"] == 2' \
+"$status_check_binary" diagnostics \
   "$check_root/no-viewer-provisioning-status"
 echo "PASS: runtime works without viewer provisioning (directory=750 socket=660 root:root)"
 sudo systemctl stop celerityd.service

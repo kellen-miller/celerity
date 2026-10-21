@@ -1,4 +1,4 @@
-"""Managed subprocess for one durable home job."""
+"""Numerical training adapter; Rust owns job, model and notification state."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import zipfile
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,18 +15,13 @@ import onnx
 from onnx.reference import ReferenceEvaluator
 
 from celerity.v1.celerity_pb2 import (
-    WEBHOOK_EVENT_TYPE_CANDIDATE_REJECTION,
-    WEBHOOK_EVENT_TYPE_TRAINING_FAILURE,
     ModelBundleManifest,
     ModelCompatibility,
     ModelInputRange,
     ModelNormalization,
     RunManifest,
 )
-from celerity_home.database import connect as _connect
-from celerity_home.notifications import webhook_event as _webhook_event
 from celerity_home.training import (
-    MAXIMUM_PARITY_ERROR,
     NoEligibleTrainingData,
     Recipe,
     derive_run_index,
@@ -34,42 +30,50 @@ from celerity_home.training import (
 )
 
 
-def classify_evaluation(
-    maximum_parity_error: float,
-    already_staged: bool,
-    improves_baseline: bool = True,
-    calibration_error: float = 0.0,
-    maximum_calibration_error: float = float("inf"),
-) -> str:
-    """Classify a bounded recipe result before changing desired model state."""
-    if (
-        not 0 <= maximum_parity_error <= MAXIMUM_PARITY_ERROR
-        or not 0 <= calibration_error <= maximum_calibration_error
-    ):
-        return "rejected"
-    if already_staged or not improves_baseline:
-        return "no_change"
-    return "completed"
+@dataclass(frozen=True)
+class TrainingRequest:
+    schema_version: int
+    storage_root: Path
+    run_digests: list[str]
+    manifests_hex: list[str]
+    baseline_path: str | None
 
 
-def run(storage_root: Path, job_id: str) -> None:
-    """Train and package one immutable, self-describing model bundle."""
-    database = storage_root / "home.sqlite3"
-    connection = _connect(database)
-    job = connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
-    if job is None:
-        raise RuntimeError(f"unknown job {job_id}")
-    output = storage_root / "jobs" / job_id
-    output.mkdir(parents=True, exist_ok=True)
-    run_digests = json.loads(job["input_digests_json"])
-    manifests = [
-        RunManifest.FromString(
-            connection.execute("SELECT manifest_pb FROM runs WHERE digest=?", (digest,)).fetchone()[
-                "manifest_pb"
-            ]
-        )
-        for digest in run_digests
-    ]
+@dataclass(frozen=True)
+class TrainingResult:
+    schema_version: int
+    outcome: str
+    summary: str
+    bundle_digest: str | None = None
+    maximum_parity_error: float | None = None
+    held_out_mse: float | None = None
+    baseline_mse: float | None = None
+
+
+def write_result(output: Path, result: TrainingResult) -> None:
+    temporary = output / "result.json.staging"
+    temporary.write_text(json.dumps(asdict(result), allow_nan=False, sort_keys=True))
+    temporary.replace(output / "result.json")
+
+
+def run(request_path: Path) -> None:
+    """Train/evaluate immutable inputs and atomically publish a candidate result."""
+    payload = json.loads(request_path.read_text())
+    request = TrainingRequest(
+        schema_version=payload["schema_version"],
+        storage_root=Path(payload["storage_root"]),
+        run_digests=payload["run_digests"],
+        manifests_hex=payload["manifests_hex"],
+        baseline_path=payload.get("baseline_path"),
+    )
+    if request.schema_version != 1:
+        raise ValueError("unsupported training request schema_version")
+    run_digests = request.run_digests
+    manifests = [RunManifest.FromString(bytes.fromhex(value)) for value in request.manifests_hex]
+    if not manifests or len(manifests) != len(run_digests):
+        raise ValueError("training request requires one manifest per Run")
+    storage_root = request.storage_root
+    output = request_path.parent
     contract: dict[str, Any] = {
         "model_abi": manifests[0].model_abi,
         "model_input_signals": list(manifests[0].model_input_signals),
@@ -101,12 +105,7 @@ def run(storage_root: Path, job_id: str) -> None:
             load_training_examples(storage_root, run_digests, manifests, recipe)
         )
     except NoEligibleTrainingData as error:
-        with connection:
-            connection.execute(
-                "UPDATE jobs SET state='no_change', terminal_summary=? WHERE id=?",
-                (str(error), job_id),
-            )
-        connection.close()
+        write_result(output, TrainingResult(1, "no_change", str(error)))
         return
     signal_means = np.asarray(
         [float(np.mean(values)) for values in zip(*observed_values, strict=True)],
@@ -165,7 +164,7 @@ def run(storage_root: Path, job_id: str) -> None:
             archive.writestr(entry, data)
     bundle_bytes = bundle_path.read_bytes()
     digest = hashlib.sha256(bundle_bytes).hexdigest()
-    model_path = bundle_path.replace(output / f"{digest}.zip")
+    bundle_path.replace(output / f"{digest}.zip")
     (output / "evaluation.json").write_text(
         json.dumps(
             {**evaluation, "derivation_digest": derivation_digest, "input_runs": run_digests},
@@ -173,18 +172,9 @@ def run(storage_root: Path, job_id: str) -> None:
             sort_keys=True,
         )
     )
-    existing = connection.execute("SELECT state FROM models WHERE digest=?", (digest,)).fetchone()
-    desired = connection.execute(
-        "SELECT value FROM settings WHERE key='desired_model_digest'"
-    ).fetchone()
     baseline_mse = None
-    if desired is not None:
-        baseline = connection.execute(
-            "SELECT path FROM models WHERE digest=? AND state='staged'", (desired["value"],)
-        ).fetchone()
-        if baseline is None:
-            raise RuntimeError("desired baseline model is absent or not staged")
-        with zipfile.ZipFile(baseline["path"]) as archive:
+    if request.baseline_path is not None:
+        with zipfile.ZipFile(request.baseline_path) as archive:
             baseline_manifest = ModelBundleManifest.FromString(archive.read("manifest.pb"))
             baseline_model_bytes = archive.read("model.onnx")
         baseline_contract_matches = (
@@ -209,86 +199,25 @@ def run(storage_root: Path, job_id: str) -> None:
         baseline_mse = float(np.mean((prediction - held_targets) ** 2))
         if not np.isfinite(baseline_mse):
             raise RuntimeError("desired baseline evaluation is not finite")
-    candidate_mse = float(evaluation["held_out_mse"])
-    calibration_error = candidate_mse**0.5
-    materially_improves = baseline_mse is None or candidate_mse < baseline_mse - max(
-        1e-9, abs(baseline_mse) * 1e-6
+    write_result(
+        output,
+        TrainingResult(
+            schema_version=1,
+            outcome="candidate",
+            summary="candidate evaluated",
+            bundle_digest=digest,
+            maximum_parity_error=float(evaluation["maximum_parity_error"]),
+            held_out_mse=float(evaluation["held_out_mse"]),
+            baseline_mse=baseline_mse,
+        ),
     )
-    state = classify_evaluation(
-        float(evaluation["maximum_parity_error"]),
-        existing is not None,
-        materially_improves,
-        calibration_error,
-        float(contract["maximum_calibration_error"]),
-    )
-    with connection:
-        if state == "completed":
-            connection.execute(
-                "INSERT INTO models(digest, path, state) VALUES (?, ?, 'staged')",
-                (digest, str(model_path)),
-            )
-            connection.execute(
-                "INSERT INTO settings(key, value) VALUES ('desired_model_digest', ?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (digest,),
-            )
-        elif state == "rejected":
-            connection.execute(
-                "INSERT OR REPLACE INTO models(digest, path, state) VALUES (?, ?, 'rejected')",
-                (digest, str(model_path)),
-            )
-        connection.execute(
-            "UPDATE jobs SET state=?, artifact_digest=?, terminal_summary=? WHERE id=?",
-            (state, digest, f"model {state}", job_id),
-        )
-        if state == "rejected":
-            payload = _webhook_event(
-                str(job_id),
-                WEBHOOK_EVENT_TYPE_CANDIDATE_REJECTION,
-                f"recipe {job['recipe']} rejected",
-                job_id=job_id,
-                artifact_digest=digest,
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO notifications(event_id, job_id, payload_pb, state) "
-                "VALUES (?, ?, ?, 'pending')",
-                (str(job_id), job_id, payload),
-            )
-    connection.close()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--storage-root", type=Path, required=True)
-    parser.add_argument("--job-id", required=True)
+    parser.add_argument("--request", type=Path, required=True)
     arguments = parser.parse_args()
-    try:
-        run(arguments.storage_root, arguments.job_id)
-    except Exception as error:
-        database = arguments.storage_root / "home.sqlite3"
-        connection = _connect(database)
-        payload = _webhook_event(
-            str(arguments.job_id),
-            WEBHOOK_EVENT_TYPE_TRAINING_FAILURE,
-            str(error),
-            job_id=arguments.job_id,
-        )
-        with connection:
-            connection.execute(
-                "UPDATE jobs SET state='failed', terminal_summary=? WHERE id=?",
-                (str(error), arguments.job_id),
-            )
-            connection.execute(
-                "INSERT OR REPLACE INTO notifications"
-                "(event_id, job_id, payload_pb, state) VALUES (?, ?, ?, 'pending')",
-                (
-                    str(arguments.job_id),
-                    arguments.job_id,
-                    payload,
-                ),
-            )
-        connection.close()
-        raise
+    run(arguments.request)
 
 
 if __name__ == "__main__":

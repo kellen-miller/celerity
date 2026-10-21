@@ -191,7 +191,10 @@ async fn put_chunk(
             }
         }
         Err(error) => {
-            let _ = std::fs::remove_file(&temporary);
+            if let Err(cleanup) = std::fs::remove_file(&temporary) {
+                eprintln!("chunk staging cleanup failed: {cleanup}");
+            }
+
             return Err(error.into());
         }
     }

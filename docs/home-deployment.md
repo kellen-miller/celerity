@@ -52,7 +52,7 @@ The image starts the Rust service directly. It retains a Python environment for
 training, selected with `CELERITY_HOME_PYTHON`; the default outside the image is
 `python3`. Existing storage, token-file and webhook environment variables and
 storage format remain the same. Home and vehicle sync use the generated
-`celerity.v1.Home` gRPC service over HTTP/2; deploy both updated binaries together.
+`celerity.v1.Home` gRPC service over HTTP/2.
 An edge proxy must forward gRPC and use HTTP/2 to the chart's cleartext upstream.
 The Service advertises `kubernetes.io/h2c`; native Kubernetes gRPC probes check
 the public standard health service. Empty service name checks liveness;
@@ -65,10 +65,8 @@ For local development after `uv sync --project services/home --locked`, set
 `CELERITY_HOME_PYTHON` to the absolute path of
 `services/home/.venv/bin/python` and run `cargo run -p home-service --bin celerity-home`.
 
-Existing protobuf databases and legacy JSON databases upgrade in one atomic
-transaction. Take the usual PVC backup before replacing an installed service;
-this change does not deploy it. The API can restart while a claimed Rust worker
-continues. A numerical child inherits an admission lock across exec. If its
+Home initializes the current schema atomically and retains data across restarts.
+The API can restart while a claimed Rust worker continues. A numerical child inherits an admission lock across exec. If its
 supervisor dies, recovery keeps admission occupied until numerical work exits,
 then records one failed job. A delayed child checks ownership before training;
 numerical children cannot publish model/database changes. Candidates are not promoted when the

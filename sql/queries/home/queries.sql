@@ -1,9 +1,6 @@
 -- name: Ping :one
 SELECT 1 AS ready;
 
--- name: HasColumn :one
-SELECT count(*) AS count FROM pragma_table_info(CAST(sqlc.arg(table_name) AS TEXT)) WHERE name=CAST(sqlc.arg(column_name) AS TEXT);
-
 -- name: GetJob :one
 SELECT * FROM jobs WHERE id=sqlc.arg(job_id);
 
@@ -55,9 +52,6 @@ SELECT manifest_pb FROM runs WHERE digest=sqlc.arg(digest);
 -- name: InsertRun :exec
 INSERT OR IGNORE INTO runs(digest, manifest_pb) VALUES (sqlc.arg(digest), sqlc.arg(manifest));
 
--- name: InsertMigratedRun :exec
-INSERT INTO runs(digest, manifest_pb, completed_at) VALUES (sqlc.arg(digest), sqlc.arg(manifest), sqlc.arg(completed_at));
-
 -- name: InsertChunk :exec
 INSERT OR IGNORE INTO chunks(run_digest, digest, path) VALUES (sqlc.arg(run_digest), sqlc.arg(digest), sqlc.arg(path));
 
@@ -102,6 +96,3 @@ UPDATE notifications SET state='delivered', attempts=attempts+1, last_error=NULL
 
 -- name: MarkNotificationFailed :exec
 UPDATE notifications SET state='failed', attempts=attempts+1, last_error=sqlc.narg(error) WHERE event_id=sqlc.arg(event_id) AND state!='delivered' AND attempts < 5;
-
--- name: InsertMigratedNotification :exec
-INSERT INTO notifications(event_id, job_id, payload_pb, state, attempts, last_error) VALUES (sqlc.arg(event_id), sqlc.narg(job_id), sqlc.arg(payload), sqlc.arg(state), sqlc.arg(attempts), sqlc.narg(last_error));

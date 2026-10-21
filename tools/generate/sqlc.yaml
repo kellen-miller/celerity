@@ -15,20 +15,6 @@ sql:
           db_crate: rusqlite
           output: mod.rs
   - engine: sqlite
-    schema: sql/migrations/home/legacy-schema.sql
-    queries: sql/queries/home/legacy-queries.sql
-    codegen:
-      - plugin: rust
-        out: gen/rust/sql/src/home
-        options:
-          db_crate: rusqlite
-          output: legacy.rs
-          overrides:
-            - column: .runs_json_legacy.manifest_json
-              rs_type: rusqlite::types::Value
-            - column: .notifications_json_legacy.payload_json
-              rs_type: rusqlite::types::Value
-  - engine: sqlite
     schema: sql/migrations/sync/schema.sql
     queries: sql/queries/sync/queries.sql
     codegen:

@@ -60,7 +60,7 @@ the regeneration in a temporary tree and fails if any checked-in binding is
 missing or stale.
 
 Contracts follow the local monorepo layout: `proto/` owns protobuf sources;
-`sql/migrations/<owner>/` owns SQLite schemas and upgrade statements, and
+`sql/migrations/<owner>/` owns the initial SQLite schemas, and
 `sql/queries/<owner>/` owns sqlc queries. `tools/generate/` owns generators and
 pinned configuration. Generated packages live under `gen/rust/`, `gen/python/`,
 and `gen/typescript/`; Rust SQL modules retain the `home` and `sync` owners.

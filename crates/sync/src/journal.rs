@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use super::inventory::SpoolRun;
 use super::{SyncError, current_unix_seconds, sync_io, sync_sql};
 use celerity_sql::sync::{
-    GetRunAcknowledged, GetRunAttempt, GetRunRetry, HasRunBackoff, ObserveRun, RecordRunAttempt,
+    GetRunAcknowledged, GetRunAttempt, GetRunRetry, ObserveRun, RecordRunAttempt,
 };
 
 pub struct TransferJournal {
@@ -13,11 +13,11 @@ pub struct TransferJournal {
 }
 
 impl TransferJournal {
-    /// Opens and migrates the sync-owned `SQLite` transfer journal.
+    /// Opens and initializes the sync-owned `SQLite` transfer journal.
     ///
     /// # Errors
     ///
-    /// Returns an error when the database cannot be opened or migrated.
+    /// Returns an error when the database cannot be opened or initialized.
     pub fn open(path: &Path) -> Result<Self, SyncError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(sync_io)?;
@@ -27,19 +27,6 @@ impl TransferJournal {
         connection
             .execute_batch(include_str!("../../../sql/migrations/sync/schema.sql"))
             .map_err(sync_sql)?;
-        let has_backoff = HasRunBackoff
-            .query_one(&connection)
-            .map_err(sync_sql)?
-            .matching_columns
-            > 0;
-        if !has_backoff {
-            connection
-                .execute_batch(include_str!(
-                    "../../../sql/migrations/sync/add-run-backoff.sql"
-                ))
-                .map_err(sync_sql)?;
-        }
-
         Ok(Self { connection })
     }
 
@@ -115,33 +102,6 @@ impl TransferJournal {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn legacy_journal_retains_transfers_and_upgrades_once() {
-        let temporary = tempfile::tempdir().unwrap();
-        let path = temporary.path().join("sync.sqlite3");
-        let connection = Connection::open(&path).unwrap();
-        connection
-            .execute_batch(include_str!("../../../sql/tests/sync/legacy-schema.sql"))
-            .unwrap();
-        ObserveRun::builder()
-            .run_digest("legacy-run")
-            .run_path("/spool/original")
-            .build()
-            .execute(&connection)
-            .unwrap();
-        drop(connection);
-
-        let journal = TransferJournal::open(&path).unwrap();
-        assert!(journal.retry_allowed("legacy-run"));
-        assert!(!journal.acknowledged("legacy-run"));
-        journal.record_attempt("legacy-run", &Ok(())).unwrap();
-        drop(journal);
-
-        let journal = TransferJournal::open(&path).unwrap();
-        assert!(journal.acknowledged("legacy-run"));
-        assert!(journal.retry_allowed("legacy-run"));
-    }
 
     #[test]
     fn retry_backoff_and_acknowledgement_survive_reobservation() {

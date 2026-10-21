@@ -10,7 +10,7 @@ type GenerationResult<T> = Result<T, Box<dyn std::error::Error>>;
 
 const SQLC_VERSION: &str = "v1.31.1";
 const GENERATOR_VERSION: &str = "//! sqlc-gen-rust version: v0.1.12";
-const OUTPUTS: [&str; 3] = ["home/mod.rs", "home/legacy.rs", "sync/mod.rs"];
+const OUTPUTS: [&str; 2] = ["home/mod.rs", "sync/mod.rs"];
 
 fn main() -> ExitCode {
     match generate() {

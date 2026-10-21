@@ -1,8 +1,3 @@
--- name: HasRunBackoff :one
-SELECT count(*) AS matching_columns
-FROM pragma_table_info('run_transfer')
-WHERE name = 'next_attempt_at';
-
 -- name: ObserveRun :exec
 INSERT INTO run_transfer(run_digest, run_path)
 VALUES (sqlc.arg(run_digest), sqlc.arg(run_path))

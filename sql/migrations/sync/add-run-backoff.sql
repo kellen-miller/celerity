@@ -1,1 +1,0 @@
-ALTER TABLE run_transfer ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0;

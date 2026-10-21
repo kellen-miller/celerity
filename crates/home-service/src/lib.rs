@@ -7,7 +7,6 @@ mod artifact;
 mod rpc;
 pub use rpc::HomeAuthentication;
 pub mod jobs;
-mod migration;
 pub mod notifications;
 mod reconcile;
 pub mod run;
@@ -37,7 +36,7 @@ impl HomeService {
     /// Initialize storage without starting background work.
     ///
     /// # Errors
-    /// Returns invalid configuration, filesystem or migration failures.
+    /// Returns invalid configuration, filesystem or schema initialization failures.
     pub fn open(mut config: HomeConfig) -> HomeResult<Self> {
         config.vehicle_token = config.vehicle_token.trim().to_owned();
         if config.vehicle_token.is_empty() {
@@ -53,7 +52,7 @@ impl HomeService {
         }
 
         std::fs::create_dir_all(&config.storage_root)?;
-        storage::migrate(&config.storage_root.join("home.sqlite3"))?;
+        storage::initialize(&config.storage_root.join("home.sqlite3"))?;
         Ok(Self { config })
     }
 

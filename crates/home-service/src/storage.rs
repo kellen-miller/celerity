@@ -1,10 +1,10 @@
-//! SQLite connections and atomic Home schema migration.
+//! SQLite connections and atomic Home schema initialization.
 
 use std::{path::Path, time::Duration};
 
 use rusqlite::{Connection, TransactionBehavior};
 
-use crate::{HomeResult, migration};
+use crate::HomeResult;
 
 pub(crate) const SCHEMA: &str = include_str!("../../../sql/migrations/home/schema.sql");
 
@@ -19,11 +19,11 @@ pub fn connect(database: &Path) -> HomeResult<Connection> {
     Ok(connection)
 }
 
-/// Create the schema and convert legacy JSON tables atomically.
+/// Initialize the current schema atomically; retain data across restarts.
 ///
 /// # Errors
-/// Returns an error for invalid legacy data or filesystem/SQLite failures.
-pub fn migrate(database: &Path) -> HomeResult<()> {
+/// Returns filesystem or SQLite initialization failures.
+pub fn initialize(database: &Path) -> HomeResult<()> {
     if let Some(parent) = database
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -34,7 +34,7 @@ pub fn migrate(database: &Path) -> HomeResult<()> {
     let mut connection = connect(database)?;
     connection.pragma_update(None, "journal_mode", "WAL")?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    migration::migrate(&transaction)?;
+    transaction.execute_batch(SCHEMA)?;
     transaction.commit()?;
     Ok(())
 }

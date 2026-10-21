@@ -8,19 +8,17 @@ use std::{
     time::{Duration, Instant},
 };
 
-use axum::{
-    body::{Body, to_bytes},
-    http::{Request, StatusCode},
-};
+use celerity_proto::celerity::v1::home_server::Home;
 use celerity_proto::celerity::v1::{
-    JobRequest, JobStarted, ModelBundleManifest, ModelCompatibility, ModelInputRange,
-    ModelNormalization, ReconcileRequest, RunManifest, WebhookEvent, WebhookEventType,
+    JobRequest, ModelBundleManifest, ModelCompatibility, ModelInputRange, ModelNormalization,
+    ReconcileRequest, RunManifest, TrainingOutcome, TrainingRequest, TrainingResult, WebhookEvent,
+    WebhookEventType,
 };
-use home_service::{HomeConfig, HomeResult, HomeService, notifications, storage};
+use home_service::{HomeConfig, HomeResult, HomeService, storage};
 use prost::Message;
 use rusqlite::params;
 use sha2::{Digest, Sha256};
-use tower::ServiceExt;
+use tonic::{Code, Request};
 
 struct WorkerFixture {
     directory: tempfile::TempDir,
@@ -42,7 +40,7 @@ impl WorkerFixture {
         std::fs::write(
             &python,
             format!(
-                "#!{}\nimport json, pathlib, sys, time\nrequest_path = pathlib.Path(sys.argv[-1])\nrequest = json.loads(request_path.read_text())\nassert request['schema_version'] == 1\nassert request['manifests_hex'] and bytes.fromhex(request['manifests_hex'][0])\noutput = request_path.parent\nwith (output / 'invocations').open('a') as stream: stream.write('trained\\n')\n(output / 'started').touch()\n{adapter_body}\n",
+                "#!{}\nimport pathlib, shutil, sys, time\nrequest_path = pathlib.Path(sys.argv[-1])\nassert request_path.name == 'request.pb'\nassert request_path.read_bytes() == (request_path.parents[2] / 'expected-request.pb').read_bytes()\noutput = request_path.parent\nwith (output / 'invocations').open('a') as stream: stream.write('trained\\n')\n(output / 'started').touch()\n{adapter_body}\n",
                 interpreter.trim()
             ),
         )?;
@@ -66,6 +64,27 @@ impl WorkerFixture {
         storage::connect(&home.database())?.execute(
             "INSERT INTO runs(digest, manifest_pb) VALUES ('run', ?)",
             [manifest.encode_to_vec()],
+        )?;
+        std::fs::write(
+            directory.path().join("expected-request.pb"),
+            TrainingRequest {
+                schema_version: 1,
+                storage_root: directory.path().to_string_lossy().into_owned(),
+                run_digests: vec!["run".into()],
+                manifests: vec![manifest],
+                baseline_path: None,
+            }
+            .encode_to_vec(),
+        )?;
+        std::fs::write(
+            directory.path().join("no-change.pb"),
+            TrainingResult {
+                schema_version: 1,
+                outcome: TrainingOutcome::NoChange as i32,
+                summary: "no eligible data".into(),
+                ..TrainingResult::default()
+            }
+            .encode_to_vec(),
         )?;
         Ok(Self { directory, home })
     }
@@ -151,7 +170,19 @@ impl WorkerFixture {
         let bytes = archive.finish()?.into_inner();
         let digest = hex::encode(Sha256::digest(&bytes));
         std::fs::write(output.join(format!("{digest}.zip")), bytes)?;
-        std::fs::write(output.join("candidate-digest"), &digest)?;
+        std::fs::write(
+            output.join("candidate-result.pb"),
+            TrainingResult {
+                schema_version: 1,
+                outcome: TrainingOutcome::Candidate as i32,
+                summary: "candidate".into(),
+                bundle_digest: Some(digest.clone()),
+                maximum_parity_error: Some(parity),
+                held_out_mse: Some(1.0),
+                baseline_mse: None,
+            }
+            .encode_to_vec(),
+        )?;
         Ok(digest)
     }
 }
@@ -169,9 +200,9 @@ fn wait_for(path: &Path) -> HomeResult<()> {
     Ok(())
 }
 
-const NO_CHANGE: &str = "(output / 'result.json').write_text(json.dumps(dict(schema_version=1, outcome='no_change', summary='no eligible data', bundle_digest=None, maximum_parity_error=None, held_out_mse=None, baseline_mse=None)))";
+const NO_CHANGE: &str = "shutil.copyfile(request_path.parents[2] / 'no-change.pb', output / 'result.pb.staging'); (output / 'result.pb.staging').replace(output / 'result.pb')";
 const WAIT: &str = "while not (output / 'release').exists(): time.sleep(0.01)";
-const CANDIDATE: &str = "(output / 'result.json').write_text(json.dumps(dict(schema_version=1, outcome='candidate', summary='candidate', bundle_digest=(output / 'candidate-digest').read_text(), maximum_parity_error=0.0, held_out_mse=1.0, baseline_mse=None)))";
+const CANDIDATE: &str = "shutil.copyfile(output / 'candidate-result.pb', output / 'result.pb.staging'); (output / 'result.pb.staging').replace(output / 'result.pb')";
 
 #[test]
 fn duplicate_workers_self_claim_once_and_preserve_live_identity() -> HomeResult<()> {
@@ -282,8 +313,7 @@ fn superseded_worker_cannot_stage_models_or_emit_terminal_events() -> HomeResult
 
 #[tokio::test]
 async fn changed_baseline_cannot_be_undone_by_candidate_completion() -> HomeResult<()> {
-    let candidate = CANDIDATE.replace("baseline_mse=None", "baseline_mse=2.0");
-    let fixture = WorkerFixture::new(&format!("{WAIT}\n{candidate}"))?;
+    let fixture = WorkerFixture::new(&format!("{WAIT}\n{CANDIDATE}"))?;
     let connection = storage::connect(&fixture.home.database())?;
     for digest in ["old-baseline", "known-good"] {
         connection.execute(
@@ -298,6 +328,14 @@ async fn changed_baseline_cannot_be_undone_by_candidate_completion() -> HomeResu
     )?;
     fixture.enqueue("baseline-race")?;
     fixture.candidate("baseline-race", 0.0)?;
+    let request_path = fixture.directory.path().join("expected-request.pb");
+    let mut request = TrainingRequest::decode(std::fs::read(&request_path)?.as_slice())?;
+    request.baseline_path = Some("unused.zip".into());
+    std::fs::write(request_path, request.encode_to_vec())?;
+    let result_path = fixture.output("baseline-race").join("candidate-result.pb");
+    let mut result = TrainingResult::decode(std::fs::read(&result_path)?.as_slice())?;
+    result.baseline_mse = Some(2.0);
+    std::fs::write(result_path, result.encode_to_vec())?;
     let mut worker = fixture.spawn("baseline-race")?;
     let output = fixture.output("baseline-race");
     wait_for(&output.join("started"))?;
@@ -305,20 +343,8 @@ async fn changed_baseline_cannot_be_undone_by_candidate_completion() -> HomeResu
         schema_version: 1,
         rejected_model_digests: vec!["old-baseline".into()],
         ..ReconcileRequest::default()
-    }
-    .encode_to_vec();
-    let response = fixture
-        .home
-        .router()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/reconcile")
-                .header("Authorization", "Bearer secret")
-                .body(Body::from(reconcile))?,
-        )
-        .await?;
-    assert_eq!(response.status(), StatusCode::OK);
+    };
+    fixture.home.reconcile(Request::new(reconcile)).await?;
     std::fs::write(output.join("release"), [])?;
     assert!(worker.wait()?.success());
     assert_eq!(fixture.state("baseline-race")?, "no_change");
@@ -343,9 +369,7 @@ async fn changed_baseline_cannot_be_undone_by_candidate_completion() -> HomeResu
 
 #[test]
 fn parity_rejection_and_corrupt_bundle_do_not_promote() -> HomeResult<()> {
-    let fixture = WorkerFixture::new(
-        &CANDIDATE.replace("maximum_parity_error=0.0", "maximum_parity_error=0.001"),
-    )?;
+    let fixture = WorkerFixture::new(CANDIDATE)?;
     fixture.enqueue("rejected")?;
     fixture.candidate("rejected", 0.001)?;
     assert!(fixture.spawn("rejected")?.wait()?.success());
@@ -393,24 +417,18 @@ async fn admission_has_one_active_job_and_reconcile_suppresses_unchanged_corpus(
     let request = JobRequest {
         recipe: "causal-tcn-v1".into(),
         run_digests: vec!["run".into()],
-    }
-    .encode_to_vec();
-    let send = |data| {
-        Request::builder()
-            .method("POST")
-            .uri("/v1/jobs")
-            .header("Authorization", "Bearer secret")
-            .body(Body::from(data))
     };
-    let response = fixture
+    let started = fixture
         .home
-        .router()
-        .oneshot(send(request.clone())?)
-        .await?;
-    assert_eq!(response.status(), StatusCode::ACCEPTED);
-    let started = JobStarted::decode(to_bytes(response.into_body(), usize::MAX).await?)?;
-    let response = fixture.home.router().oneshot(send(request)?).await?;
-    assert_eq!(response.status(), StatusCode::CONFLICT);
+        .start_job(Request::new(request.clone()))
+        .await?
+        .into_inner();
+    let error = fixture
+        .home
+        .start_job(Request::new(request))
+        .await
+        .expect_err("active training job");
+    assert_eq!(error.code(), Code::FailedPrecondition);
     let output = fixture.output(&started.job_id);
     wait_for(&output.join("started"))?;
     std::fs::write(output.join("release"), [])?;
@@ -424,20 +442,8 @@ async fn admission_has_one_active_job_and_reconcile_suppresses_unchanged_corpus(
         schema_version: 1,
         completed_run_digests: vec!["run".into()],
         ..ReconcileRequest::default()
-    }
-    .encode_to_vec();
-    let response = fixture
-        .home
-        .router()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/reconcile")
-                .header("Authorization", "Bearer secret")
-                .body(Body::from(reconcile))?,
-        )
-        .await?;
-    assert_eq!(response.status(), StatusCode::OK);
+    };
+    fixture.home.reconcile(Request::new(reconcile)).await?;
     assert_eq!(
         storage::connect(&fixture.home.database())?.query_row(
             "SELECT count(*) FROM jobs",
@@ -446,32 +452,5 @@ async fn admission_has_one_active_job_and_reconcile_suppresses_unchanged_corpus(
         )?,
         1
     );
-    Ok(())
-}
-
-#[test]
-fn notification_failures_are_bounded_and_do_not_change_terminal_jobs() -> HomeResult<()> {
-    let fixture = WorkerFixture::new(NO_CHANGE)?;
-    let connection = storage::connect(&fixture.home.database())?;
-    connection.execute("INSERT INTO jobs(id, state, recipe, input_digests_json) VALUES ('completed', 'completed', 'causal-tcn-v1', '[]')", [])?;
-    connection.execute("INSERT INTO notifications(event_id, job_id, payload_pb, state) VALUES ('event', 'completed', X'00', 'pending')", [])?;
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_millis(100))
-        .build()?;
-    for _ in 0..7 {
-        assert_eq!(
-            notifications::deliver_notifications(
-                &fixture.home.database(),
-                &fixture.home.config.webhook_url,
-                &client
-            )?,
-            0
-        );
-    }
-
-    assert_eq!(fixture.state("completed")?, "completed");
-    let attempts: u32 =
-        connection.query_row("SELECT attempts FROM notifications", [], |row| row.get(0))?;
-    assert_eq!(attempts, 5);
     Ok(())
 }

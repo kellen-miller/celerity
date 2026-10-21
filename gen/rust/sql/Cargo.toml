@@ -1,0 +1,15 @@
+[package]
+name = "celerity-sql"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.ci]
+generated = true
+
+[dependencies]
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+
+[lints.rust]
+unsafe_code = "forbid"

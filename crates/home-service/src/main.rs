@@ -71,7 +71,7 @@ async fn serve(arguments: &[String]) -> HomeResult<()> {
     let token_path = PathBuf::from(std::env::var("CELERITY_HOME_TOKEN_PATH")?);
     let home = HomeService::open(HomeConfig {
         storage_root: PathBuf::from(std::env::var("CELERITY_HOME_STORAGE_ROOT")?),
-        vehicle_token: std::fs::read_to_string(token_path)?.trim().to_owned(),
+        vehicle_token: std::fs::read_to_string(token_path)?,
         webhook_url: std::env::var("CELERITY_HOME_WEBHOOK_URL")?,
         python: std::env::var_os("CELERITY_HOME_PYTHON")
             .map_or_else(|| PathBuf::from("python3"), PathBuf::from),
@@ -120,9 +120,71 @@ async fn serve(arguments: &[String]) -> HomeResult<()> {
         }
     });
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    let result = axum::serve(listener, home.router())
-        .with_graceful_shutdown(shutdown())
+    let (health, health_service) = tonic_health::server::health_reporter();
+    health
+        .set_service_status("", tonic_health::ServingStatus::Serving)
         .await;
+    let home_ready = home.clone();
+    let readiness_health = health.clone();
+    let readiness = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            let status = match home_ready.check_ready() {
+                Ok(()) => tonic_health::ServingStatus::Serving,
+                Err(error) => {
+                    eprintln!("Home readiness check failed: {error}");
+                    tonic_health::ServingStatus::NotServing
+                }
+            };
+            readiness_health
+                .set_service_status("celerity.v1.Home", status)
+                .await;
+        }
+    });
+    let (stop_server, stopped) = tokio::sync::oneshot::channel::<()>();
+    let mut server = Box::pin(
+        tonic::transport::Server::builder()
+            .add_service(health_service)
+            .add_service(home.grpc_server())
+            .serve_with_incoming_shutdown(
+                tokio_stream::wrappers::TcpListenerStream::new(listener),
+                async {
+                    let _shutdown_result = stopped.await;
+                },
+            ),
+    );
+    let result = tokio::select! {
+        result = &mut server => Some(result),
+        () = shutdown() => None,
+    };
+    readiness.abort();
+    if let Err(error) = readiness.await
+        && !error.is_cancelled()
+    {
+        eprintln!("Home readiness task failed: {error}");
+    }
+
+    let result = if let Some(result) = result {
+        result
+    } else {
+        // Join readiness first so it cannot overwrite the shutdown state.
+        for service in ["celerity.v1.Home", ""] {
+            health
+                .set_service_status(service, tonic_health::ServingStatus::NotServing)
+                .await;
+        }
+
+        drop(stop_server);
+        tokio::time::timeout(Duration::from_secs(5), &mut server)
+            .await
+            .unwrap_or_else(|_| {
+                eprintln!("Home gRPC drain timed out; closing active streams");
+                Ok(())
+            })
+    };
+    // Health Watch and other long-lived streams cannot postpone delivery cleanup.
+    drop(server);
     drop(stop_delivery);
     // A slow endpoint must not hold shutdown through a full delivery batch.
     // Undelivered rows remain retryable on startup; training owns its process.

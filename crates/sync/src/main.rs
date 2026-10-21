@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     use signal_hook::consts::{SIGINT, SIGTERM};
-    use sync::{LinuxNetworkPresence, ReqwestHomeApi, SyncConfiguration, Synchronizer};
+    use sync::{GrpcHomeApi, LinuxNetworkPresence, SyncConfiguration, Synchronizer};
 
     let bundle_path = env::args()
         .nth(1)
@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(token_path) = env::var_os("CELERITY_HOME_TOKEN_PATH") {
         configuration.credential_path = PathBuf::from(token_path);
     }
-    let home = ReqwestHomeApi::new(&configuration.home_api_url, &configuration.credential_path)?;
+    let home = GrpcHomeApi::new(&configuration.home_api_url, &configuration.credential_path)?;
     let network = LinuxNetworkPresence::host();
     let mut synchronizer = Synchronizer::new(configuration)?;
     let stopping = Arc::new(AtomicBool::new(false));

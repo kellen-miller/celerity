@@ -30,10 +30,14 @@ jobs:
                 ".github/workflows/**",
                 "scripts/**",
                 "contracts/**",
-                "crates/proto-codegen/**",
-                "crates/celerity-proto/src/generated/**",
-                "services/home/src/celerity/**",
-                "crates/vehicle-ui/web/src/generated/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
                 "crates/vehicle-ui/web/package*.json",
                 "Cargo.toml",
                 "Cargo.lock",
@@ -51,6 +55,10 @@ jobs:
                 "firmware/**",
                 "config/**",
                 "contracts/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
                 "fixtures/**",
                 "testdata/**"
               ],
@@ -59,6 +67,10 @@ jobs:
                 "scripts/**",
                 "services/home/**",
                 "contracts/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
                 "fixtures/**",
                 "testdata/**",
                 ".python-version",
@@ -76,6 +88,10 @@ jobs:
                 "firmware/**",
                 "config/**",
                 "contracts/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
                 "fixtures/**",
                 "testdata/**",
                 "services/home/**",
@@ -94,6 +110,10 @@ jobs:
                 "firmware/**",
                 "config/**",
                 "contracts/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
                 "fixtures/**",
                 "testdata/**"
               ],
@@ -108,6 +128,10 @@ jobs:
                 "firmware/**",
                 "config/**",
                 "contracts/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
                 "fixtures/**",
                 "testdata/**",
                 "services/home/**",
@@ -127,6 +151,10 @@ jobs:
                 "firmware/**",
                 "config/**",
                 "contracts/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
                 "fixtures/**",
                 "testdata/**",
                 "deploy/systemd/**",
@@ -191,6 +219,11 @@ jobs:
 
       - name: Check committed protobuf bindings
         run: ./scripts/check-protos
+      - uses: sqlc-dev/setup-sqlc@bac53b7fb28c039a6c7f5736fd1e89744021bdd6 # v5
+        with:
+          sqlc-version: '1.31.1'
+      - name: Check committed SQL bindings
+        run: ./scripts/check-sql
 
   rust:
     needs: changes
@@ -230,13 +263,13 @@ jobs:
           sudo ip link set up vcan-powertrain
           sudo ip link set up vcan-controller
       - name: Check Rust workspace
-        uses: kellen-miller/ci/.github/actions/rust-check@2af77688327c2fc0f164e91f77e8784ef25e14c6
+        uses: kellen-miller/ci/.github/actions/rust-check@b8999e61df957b667afedc68f2814361a199c53f
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
         with:
           setup-toolchain: 'false'
           checks: fmt clippy
       - name: Test and build Rust workspace
-        uses: kellen-miller/ci/.github/actions/rust-check@2af77688327c2fc0f164e91f77e8784ef25e14c6
+        uses: kellen-miller/ci/.github/actions/rust-check@b8999e61df957b667afedc68f2814361a199c53f
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
         with:
           setup-toolchain: 'false'

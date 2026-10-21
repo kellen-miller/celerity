@@ -1,28 +1,24 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
-use axum::{body::Bytes, extract::State, http::StatusCode, response::Response};
 use celerity_proto::celerity::v1::{
     ReconcileRequest, ReconcileResponse, RunManifest, WebhookEventType,
 };
 use prost::Message;
-use rusqlite::{OptionalExtension, TransactionBehavior, params};
+use rusqlite::TransactionBehavior;
+
+use celerity_sql::home as sql;
 
 use crate::{
-    HomeService,
-    http::{ApiError, ApiResult, protobuf},
-    jobs, notifications, storage,
+    HomeService, jobs, notifications,
+    rpc::{ApiError, ApiResult},
+    storage,
     training::ModelContract,
 };
 
-pub(crate) async fn reconcile(
-    State(home): State<Arc<HomeService>>,
-    data: Bytes,
-) -> ApiResult<Response> {
-    let request = ReconcileRequest::decode(data.as_ref())
-        .map_err(|_| ApiError::invalid("invalid reconcile request"))?;
+pub(crate) fn reconcile(
+    home: &HomeService,
+    request: ReconcileRequest,
+) -> ApiResult<ReconcileResponse> {
     if request.schema_version != 1 {
         return Err(ApiError::invalid("unsupported schema_version"));
     }
@@ -30,16 +26,17 @@ pub(crate) async fn reconcile(
     home.recover_jobs().map_err(ApiError::internal)?;
     let mut connection = storage::connect(&home.database()).map_err(ApiError::internal)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let manifests: BTreeMap<String, Vec<u8>> = transaction
-        .prepare("SELECT digest, manifest_pb FROM runs")?
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-        .collect::<Result<_, _>>()?;
+    let manifests: BTreeMap<String, Vec<u8>> = sql::ListRuns
+        .query_many(&transaction)?
+        .into_iter()
+        .map(|row| (row.digest, row.manifest_pb))
+        .collect();
     let rejected: BTreeSet<_> = request.rejected_model_digests.into_iter().collect();
     for digest in &rejected {
-        let changed = transaction.execute(
-            "UPDATE models SET state='rejected' WHERE digest=? AND state!='rejected'",
-            [digest],
-        )?;
+        let changed = sql::RejectModel::builder()
+            .digest(digest)
+            .build()
+            .execute(&transaction)?;
         if changed == 0 {
             continue;
         }
@@ -52,24 +49,27 @@ pub(crate) async fn reconcile(
             None,
             Some(digest),
         );
-        transaction.execute("INSERT OR IGNORE INTO notifications(event_id, job_id, payload_pb, state) VALUES (?, NULL, ?, 'pending')", params![event_id, payload])?;
+        sql::InsertNotification::builder()
+            .event_id(&event_id)
+            .job_id(None)
+            .payload(&payload)
+            .build()
+            .execute(&transaction)?;
     }
 
-    let mut desired: Option<String> = transaction
-        .query_row(
-            "SELECT value FROM settings WHERE key='desired_model_digest'",
-            [],
-            |row| row.get(0),
-        )
-        .optional()?;
+    let mut desired = sql::GetDesiredModel
+        .query_opt(&transaction)?
+        .map(|row| row.value);
     if let Some(demoted) = desired.as_ref().filter(|digest| rejected.contains(*digest)) {
         let previous = demoted.clone();
-        desired = transaction.query_row("SELECT digest FROM models WHERE state='staged' ORDER BY created_at DESC, digest DESC LIMIT 1", [], |row| row.get(0)).optional()?;
+        desired = sql::LatestStagedModel
+            .query_opt(&transaction)?
+            .map(|row| row.digest);
         if let Some(digest) = &desired {
-            transaction.execute(
-                "UPDATE settings SET value=? WHERE key='desired_model_digest'",
-                [digest],
-            )?;
+            sql::UpdateDesiredModel::builder()
+                .digest(digest)
+                .build()
+                .execute(&transaction)?;
             let event_id = format!("rollback:{previous}:{digest}");
             let payload = notifications::webhook_event(
                 &event_id,
@@ -78,9 +78,14 @@ pub(crate) async fn reconcile(
                 None,
                 Some(digest),
             );
-            transaction.execute("INSERT OR IGNORE INTO notifications(event_id, job_id, payload_pb, state) VALUES (?, NULL, ?, 'pending')", params![event_id, payload])?;
+            sql::InsertNotification::builder()
+                .event_id(&event_id)
+                .job_id(None)
+                .payload(&payload)
+                .build()
+                .execute(&transaction)?;
         } else {
-            transaction.execute("DELETE FROM settings WHERE key='desired_model_digest'", [])?;
+            sql::DeleteDesiredModel.execute(&transaction)?;
         }
     }
 
@@ -114,21 +119,10 @@ pub(crate) async fn reconcile(
                 .filter(|(_, manifest)| ModelContract::from(*manifest) == contract)
                 .map(|(digest, _)| (*digest).clone())
                 .collect();
-            let active = transaction
-                .query_row(
-                    "SELECT 1 FROM jobs WHERE state IN ('queued', 'running') LIMIT 1",
-                    [],
-                    |_| Ok(()),
-                )
-                .optional()?
-                .is_some();
-            let latest: Option<String> = transaction
-                .query_row(
-                    "SELECT input_digests_json FROM jobs ORDER BY created_at DESC, id DESC LIMIT 1",
-                    [],
-                    |row| row.get(0),
-                )
-                .optional()?;
+            let active = sql::HasActiveJob.query_opt(&transaction)?.is_some();
+            let latest = sql::GetLatestJobInputs
+                .query_opt(&transaction)?
+                .map(|row| row.input_digests_json);
             let latest_inputs: Vec<String> =
                 latest.map_or_else(|| Ok(Vec::new()), |json| serde_json::from_str(&json))?;
             if !active && latest_inputs != corpus {
@@ -157,5 +151,5 @@ pub(crate) async fn reconcile(
             .collect(),
         desired_model_digest: desired,
     };
-    Ok(protobuf(&response, StatusCode::OK))
+    Ok(response)
 }

@@ -11,8 +11,8 @@ spec:
     app.kubernetes.io/name: celerity-home
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
-    - name: http
+    - name: grpc
       port: 80
-      targetPort: http
+      targetPort: grpc
       protocol: TCP
-      appProtocol: http
+      appProtocol: kubernetes.io/h2c

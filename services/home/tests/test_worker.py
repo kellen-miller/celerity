@@ -7,17 +7,21 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-
 from celerity.v1.celerity_pb2 import (
     COMPLETION_COMPLETE,
+    TRAINING_OUTCOME_CANDIDATE,
+    TRAINING_OUTCOME_NO_CHANGE,
     ControlDecision,
     ModelBundleManifest,
     RunEvent,
     RunManifest,
     SignalObservation,
+    TrainingRequest,
+    TrainingResult,
 )
+
 from celerity_home.training import MAXIMUM_PARITY_ERROR, Recipe, load_training_examples
-from celerity_home.worker import run
+from celerity_home.worker import run, write_result
 
 
 @dataclass(frozen=True)
@@ -102,18 +106,16 @@ def training_corpus(tmp_path: Path) -> TrainingCorpus:
 def write_request(corpus: TrainingCorpus, name: str, baseline_path: Path | None = None) -> Path:
     directory = corpus.root / "jobs" / name
     directory.mkdir(parents=True)
-    request = directory / "request.json"
-    request.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "storage_root": str(corpus.root),
-                "run_digests": corpus.digests,
-                "manifests_hex": [value.SerializeToString().hex() for value in corpus.manifests],
-                "baseline_path": None if baseline_path is None else str(baseline_path),
-            }
-        )
+    request = directory / "request.pb"
+    message = TrainingRequest(
+        schema_version=1,
+        storage_root=str(corpus.root),
+        run_digests=corpus.digests,
+        manifests=corpus.manifests,
     )
+    if baseline_path is not None:
+        message.baseline_path = str(baseline_path)
+    request.write_bytes(message.SerializeToString())
     return request
 
 
@@ -121,15 +123,18 @@ def test_training_adapter_publishes_candidate_without_database_access(
     training_corpus: TrainingCorpus,
 ) -> None:
     request = write_request(training_corpus, "candidate")
+    original = request.read_bytes()
     run(request)
-    result = json.loads((request.parent / "result.json").read_text())
-    assert result["schema_version"] == 1
-    assert result["outcome"] == "candidate"
-    assert result["maximum_parity_error"] <= MAXIMUM_PARITY_ERROR
-    assert result["held_out_mse"] >= 0
-    assert result["baseline_mse"] is None
-    archive_path = request.parent / f"{result['bundle_digest']}.zip"
-    assert hashlib.sha256(archive_path.read_bytes()).hexdigest() == result["bundle_digest"]
+    assert request.read_bytes() == original
+    assert not (request.parent / "result.pb.staging").exists()
+    result = TrainingResult.FromString((request.parent / "result.pb").read_bytes())
+    assert result.schema_version == 1
+    assert result.outcome == TRAINING_OUTCOME_CANDIDATE
+    assert result.maximum_parity_error <= MAXIMUM_PARITY_ERROR
+    assert result.held_out_mse >= 0
+    assert not result.HasField("baseline_mse")
+    archive_path = request.parent / f"{result.bundle_digest}.zip"
+    assert hashlib.sha256(archive_path.read_bytes()).hexdigest() == result.bundle_digest
     with zipfile.ZipFile(archive_path) as archive:
         manifest = ModelBundleManifest.FromString(archive.read("manifest.pb"))
         assert hashlib.sha256(archive.read("model.onnx")).hexdigest() == manifest.onnx_sha256
@@ -138,10 +143,9 @@ def test_training_adapter_publishes_candidate_without_database_access(
 
     repeated = write_request(training_corpus, "baseline", archive_path)
     run(repeated)
-    evaluated = json.loads((repeated.parent / "result.json").read_text())
-    assert evaluated["baseline_mse"] == pytest.approx(
-        evaluated["held_out_mse"], abs=MAXIMUM_PARITY_ERROR
-    )
+    evaluated = TrainingResult.FromString((repeated.parent / "result.pb").read_bytes())
+    assert evaluated.HasField("baseline_mse")
+    assert evaluated.baseline_mse == pytest.approx(evaluated.held_out_mse, abs=MAXIMUM_PARITY_ERROR)
     assert not (training_corpus.root / "home.sqlite3").exists()
 
 
@@ -153,10 +157,10 @@ def test_training_adapter_reports_ineligible_corpus_without_artifact(
     )
     request = write_request(single, "single")
     run(request)
-    result = json.loads((request.parent / "result.json").read_text())
-    assert result["outcome"] == "no_change"
-    assert result["bundle_digest"] is None
-    assert "two whole Runs" in result["summary"]
+    result = TrainingResult.FromString((request.parent / "result.pb").read_bytes())
+    assert result.outcome == TRAINING_OUTCOME_NO_CHANGE
+    assert not result.HasField("bundle_digest")
+    assert "two whole Runs" in result.summary
     assert not list(request.parent.glob("*.zip"))
     assert not (single.root / "home.sqlite3").exists()
 
@@ -167,7 +171,7 @@ def test_training_adapter_rejects_corrupt_baseline(training_corpus: TrainingCorp
     request = write_request(training_corpus, "corrupt", baseline)
     with pytest.raises(zipfile.BadZipFile):
         run(request)
-    assert not (request.parent / "result.json").exists()
+    assert not (request.parent / "result.pb").exists()
     assert not (training_corpus.root / "home.sqlite3").exists()
 
 
@@ -177,3 +181,31 @@ def test_training_uses_only_acknowledged_control_decisions(training_corpus: Trai
     )
     commands = {round(float(value), 1) for value in [*train_inputs[:, -1], *held_inputs[:, -1]]}
     assert commands == {0.1, 0.5, 0.9}
+
+
+@pytest.mark.parametrize("outcome", [0, 99])
+def test_result_rejects_unspecified_and_unknown_outcomes(tmp_path: Path, outcome: int) -> None:
+    result = TrainingResult(schema_version=1)
+    result.outcome = outcome
+    with pytest.raises(ValueError, match="unspecified or unknown"):
+        write_result(tmp_path, result)
+    assert not (tmp_path / "result.pb").exists()
+    assert not (tmp_path / "result.pb.staging").exists()
+
+
+def test_result_preserves_present_zero_baseline(tmp_path: Path) -> None:
+    result = TrainingResult(schema_version=1, outcome=TRAINING_OUTCOME_CANDIDATE, baseline_mse=0.0)
+    write_result(tmp_path, result)
+    decoded = TrainingResult.FromString((tmp_path / "result.pb").read_bytes())
+    assert decoded.HasField("baseline_mse")
+    assert decoded.baseline_mse == 0.0
+    assert not decoded.HasField("held_out_mse")
+
+
+@pytest.mark.parametrize("metric", ["maximum_parity_error", "held_out_mse", "baseline_mse"])
+def test_result_rejects_nonfinite_metrics(tmp_path: Path, metric: str) -> None:
+    result = TrainingResult(schema_version=1, outcome=TRAINING_OUTCOME_CANDIDATE)
+    setattr(result, metric, float("nan"))
+    with pytest.raises(ValueError, match="not finite"):
+        write_result(tmp_path, result)
+    assert not (tmp_path / "result.pb").exists()

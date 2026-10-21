@@ -1,0 +1,39 @@
+version: "2"
+plugins:
+  - name: rust
+    wasm:
+      url: https://github.com/tunamaguro/sqlc-gen-rust/releases/download/v0.1.12/sqlc-gen-rust.wasm
+      sha256: f434350fd09a485a3c9e94df4808c2d58f7f817937ed2e0654e9180eb96aa9ff
+sql:
+  - engine: sqlite
+    schema: sql/migrations/home/schema.sql
+    queries: sql/queries/home/queries.sql
+    codegen:
+      - plugin: rust
+        out: gen/rust/sql/src/home
+        options:
+          db_crate: rusqlite
+          output: mod.rs
+  - engine: sqlite
+    schema: sql/migrations/home/legacy-schema.sql
+    queries: sql/queries/home/legacy-queries.sql
+    codegen:
+      - plugin: rust
+        out: gen/rust/sql/src/home
+        options:
+          db_crate: rusqlite
+          output: legacy.rs
+          overrides:
+            - column: .runs_json_legacy.manifest_json
+              rs_type: rusqlite::types::Value
+            - column: .notifications_json_legacy.payload_json
+              rs_type: rusqlite::types::Value
+  - engine: sqlite
+    schema: sql/migrations/sync/schema.sql
+    queries: sql/queries/sync/queries.sql
+    codegen:
+      - plugin: rust
+        out: gen/rust/sql/src/sync
+        options:
+          db_crate: rusqlite
+          output: mod.rs

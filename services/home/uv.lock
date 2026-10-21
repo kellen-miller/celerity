@@ -74,10 +74,10 @@ name = "celerity-home"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "celerity-proto" },
     { name = "numpy" },
     { name = "onnx" },
     { name = "onnxscript" },
-    { name = "protobuf" },
     { name = "pyarrow" },
     { name = "torch", version = "2.13.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
     { name = "torch", version = "2.14.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
@@ -93,10 +93,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "celerity-proto", directory = "../../gen/python" },
     { name = "numpy", specifier = ">=2.3,<3" },
     { name = "onnx", specifier = ">=1.18,<2" },
     { name = "onnxscript", specifier = ">=0.5,<1" },
-    { name = "protobuf", specifier = ">=7.36.2,<8" },
     { name = "pyarrow", specifier = ">=25,<26" },
     { name = "torch", marker = "sys_platform != 'linux'", specifier = ">=2.8,<3" },
     { name = "torch", marker = "sys_platform == 'linux'", specifier = ">=2.8,<3", index = "https://download.pytorch.org/whl/cpu" },
@@ -109,6 +109,17 @@ dev = [
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "ruff", specifier = ">=0.16.10,<0.17" },
 ]
+
+[[package]]
+name = "celerity-proto"
+version = "0.1.0"
+source = { directory = "../../gen/python" }
+dependencies = [
+    { name = "protobuf" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "protobuf", specifier = ">=7.36.2,<8" }]
 
 [[package]]
 name = "colorama"

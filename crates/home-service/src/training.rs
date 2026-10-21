@@ -1,12 +1,12 @@
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::{io::Write, path::Path, process::Command};
 
-use celerity_proto::celerity::v1::{RunManifest, WebhookEventType};
+use celerity_proto::celerity::v1::{
+    RunManifest, TrainingOutcome, TrainingRequest, TrainingResult, WebhookEventType,
+};
 use prost::Message;
-use rusqlite::{OptionalExtension, TransactionBehavior, params};
-use serde::{Deserialize, Serialize};
+use rusqlite::TransactionBehavior;
+
+use celerity_sql::home as sql;
 
 use crate::{HomeResult, artifact::Candidate, jobs::WorkerOwnership, notifications, storage};
 
@@ -50,33 +50,6 @@ impl ModelContract {
     }
 }
 
-#[derive(Serialize)]
-struct TrainingRequest {
-    schema_version: u32,
-    storage_root: PathBuf,
-    run_digests: Vec<String>,
-    manifests_hex: Vec<String>,
-    baseline_path: Option<PathBuf>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum TrainingOutcome {
-    Candidate,
-    NoChange,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct TrainingResult {
-    schema_version: u32,
-    outcome: TrainingOutcome,
-    summary: String,
-    pub(crate) bundle_digest: Option<String>,
-    pub(crate) maximum_parity_error: Option<f64>,
-    pub(crate) held_out_mse: Option<f64>,
-    baseline_mse: Option<f64>,
-}
-
 struct TrainingSnapshot {
     request: TrainingRequest,
     baseline_digest: Option<String>,
@@ -117,22 +90,20 @@ fn snapshot(storage_root: &Path, owner: &WorkerOwnership) -> HomeResult<Training
         return Err("worker ownership was superseded".into());
     }
 
-    let inputs: String = transaction.query_row(
-        "SELECT input_digests_json FROM jobs WHERE id=?",
-        [&owner.job_id],
-        |row| row.get(0),
-    )?;
+    let inputs = sql::GetJobInputs::builder()
+        .job_id(&owner.job_id)
+        .build()
+        .query_one(&transaction)?
+        .input_digests_json;
     let run_digests: Vec<String> = serde_json::from_str(&inputs)?;
     let mut manifests = Vec::new();
-    let mut manifests_hex = Vec::new();
     for digest in &run_digests {
-        let bytes: Vec<u8> = transaction.query_row(
-            "SELECT manifest_pb FROM runs WHERE digest=?",
-            [digest],
-            |row| row.get(0),
-        )?;
+        let bytes = sql::GetRun::builder()
+            .digest(digest)
+            .build()
+            .query_one(&transaction)?
+            .manifest_pb;
         manifests.push(RunManifest::decode(bytes.as_slice())?);
-        manifests_hex.push(hex::encode(bytes));
     }
 
     let contract = ModelContract::from(manifests.first().ok_or("job requires at least one Run")?);
@@ -144,23 +115,17 @@ fn snapshot(storage_root: &Path, owner: &WorkerOwnership) -> HomeResult<Training
         return Err("Run model contracts are absent or incompatible".into());
     }
 
-    let baseline_digest: Option<String> = transaction
-        .query_row(
-            "SELECT value FROM settings WHERE key='desired_model_digest'",
-            [],
-            |row| row.get(0),
-        )
-        .optional()?;
+    let baseline_digest = sql::GetDesiredModel
+        .query_opt(&transaction)?
+        .map(|row| row.value);
     let baseline_path = if let Some(digest) = &baseline_digest {
-        let path: String = transaction
-            .query_row(
-                "SELECT path FROM models WHERE digest=? AND state='staged'",
-                [digest],
-                |row| row.get(0),
-            )
-            .optional()?
+        let path = sql::GetStagedModel::builder()
+            .digest(digest)
+            .build()
+            .query_opt(&transaction)?
+            .map(|row| row.path)
             .ok_or("desired baseline model is absent or not staged")?;
-        Some(PathBuf::from(path))
+        Some(path)
     } else {
         None
     };
@@ -168,9 +133,12 @@ fn snapshot(storage_root: &Path, owner: &WorkerOwnership) -> HomeResult<Training
     Ok(TrainingSnapshot {
         request: TrainingRequest {
             schema_version: 1,
-            storage_root: storage_root.to_path_buf(),
+            storage_root: storage_root
+                .to_str()
+                .ok_or("training storage root is not UTF-8")?
+                .into(),
             run_digests,
-            manifests_hex,
+            manifests,
             baseline_path,
         },
         baseline_digest,
@@ -197,12 +165,12 @@ pub(crate) fn execute(
 
     let output = storage_root.join("jobs").join(&owner.job_id);
     std::fs::create_dir_all(&output)?;
-    let request_path = output.join("request.json");
+    let request_path = output.join("request.pb");
     let mut file = std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
         .open(&request_path)?;
-    serde_json::to_writer(&mut file, &snapshot.request)?;
+    file.write_all(&snapshot.request.encode_to_vec())?;
     file.sync_all()?;
     drop(file);
     let status = Command::new(worker_binary)
@@ -217,13 +185,18 @@ pub(crate) fn execute(
         return Err(format!("Python training adapter exited with {status}").into());
     }
 
-    let result: TrainingResult =
-        serde_json::from_slice(&std::fs::read(output.join("result.json"))?)?;
+    let result = TrainingResult::decode(std::fs::read(output.join("result.pb"))?.as_slice())?;
     if result.schema_version != 1 {
         return Err("unsupported training result schema_version".into());
     }
 
-    let candidate = match result.outcome {
+    let candidate = match TrainingOutcome::try_from(result.outcome)
+        .map_err(|_| "unknown training result outcome")?
+    {
+        TrainingOutcome::Unspecified => {
+            return Err("training result outcome is unspecified".into());
+        }
+
         TrainingOutcome::NoChange => {
             if result.bundle_digest.is_some() {
                 return Err("no_change result unexpectedly includes an artifact".into());
@@ -250,26 +223,19 @@ pub(crate) fn execute(
         return Ok(());
     }
 
-    let desired: Option<String> = transaction
-        .query_row(
-            "SELECT value FROM settings WHERE key='desired_model_digest'",
-            [],
-            |row| row.get(0),
-        )
-        .optional()?;
+    let desired = sql::GetDesiredModel
+        .query_opt(&transaction)?
+        .map(|row| row.value);
     let mut state = "no_change";
     let mut summary = result.summary;
     let mut artifact_digest = None;
     if desired != snapshot.baseline_digest {
         summary = "baseline changed during training".into();
     } else if let Some(candidate) = candidate {
-        let existing = transaction
-            .query_row(
-                "SELECT 1 FROM models WHERE digest=?",
-                [&candidate.digest],
-                |_| Ok(()),
-            )
-            .optional()?
+        let existing = sql::HasModel::builder()
+            .digest(&candidate.digest)
+            .build()
+            .query_opt(&transaction)?
             .is_some();
         state = classify_evaluation(
             result
@@ -281,16 +247,21 @@ pub(crate) fn execute(
             existing,
         );
         if state == "completed" {
-            transaction.execute(
-                "INSERT INTO models(digest, path, state) VALUES (?, ?, 'staged')",
-                params![candidate.digest, candidate.path.to_string_lossy()],
-            )?;
-            transaction.execute("INSERT INTO settings(key, value) VALUES ('desired_model_digest', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [&candidate.digest])?;
+            sql::InsertStagedModel::builder()
+                .digest(&candidate.digest)
+                .path(&candidate.path.to_string_lossy())
+                .build()
+                .execute(&transaction)?;
+            sql::SetDesiredModel::builder()
+                .digest(&candidate.digest)
+                .build()
+                .execute(&transaction)?;
         } else if state == "rejected" {
-            transaction.execute(
-                "INSERT OR REPLACE INTO models(digest, path, state) VALUES (?, ?, 'rejected')",
-                params![candidate.digest, candidate.path.to_string_lossy()],
-            )?;
+            sql::InsertRejectedModel::builder()
+                .digest(&candidate.digest)
+                .path(&candidate.path.to_string_lossy())
+                .build()
+                .execute(&transaction)?;
             let payload = notifications::webhook_event(
                 &owner.job_id,
                 WebhookEventType::CandidateRejection,
@@ -298,7 +269,12 @@ pub(crate) fn execute(
                 Some(&owner.job_id),
                 Some(&candidate.digest),
             );
-            transaction.execute("INSERT OR IGNORE INTO notifications(event_id, job_id, payload_pb, state) VALUES (?, ?, ?, 'pending')", params![owner.job_id, owner.job_id, payload])?;
+            sql::InsertNotification::builder()
+                .event_id(&owner.job_id)
+                .job_id(Some(&owner.job_id))
+                .payload(&payload)
+                .build()
+                .execute(&transaction)?;
         }
 
         artifact_digest = Some(candidate.digest);
@@ -307,7 +283,15 @@ pub(crate) fn execute(
 
     // The transaction's ownership check fences every model/settings/outbox write;
     // the update repeats it so terminal state remains an explicit ownership gate.
-    transaction.execute("UPDATE jobs SET state=?, artifact_digest=?, terminal_summary=? WHERE id=? AND state='running' AND pid=? AND pid_start_ticks=?", params![state, artifact_digest, summary, owner.job_id, owner.pid, owner.identity])?;
+    sql::CompleteOwnedJob::builder()
+        .state(state)
+        .artifact_digest(artifact_digest.as_deref())
+        .summary(Some(&summary))
+        .job_id(&owner.job_id)
+        .pid(Some(i64::from(owner.pid)))
+        .identity(Some(&owner.identity))
+        .build()
+        .execute(&transaction)?;
     transaction.commit()?;
     Ok(())
 }

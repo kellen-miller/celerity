@@ -26,11 +26,11 @@ sensor mappings and timing. The powertrain connection remains receive-only.
   Svelte panel, and `celerity-ui` binary.
 - `crates/sync`: authority-free Run/model reconciliation with SQLite.
 - `firmware/duct-controller`: STM32G431 Embassy image and host conformance.
-- `crates/home-service`: Rust home HTTP API, SQLite/filesystem archive, durable
+- `crates/home-service`: tonic gRPC API, SQLite/filesystem archive, durable
   job supervision, model staging and bounded webhook delivery.
 - `services/home`: Python ML data preparation, PyTorch training, ONNX export and
   evaluation, plus deterministic model fixtures.
-- `contracts/celerity/v1/celerity.proto`: the one cross-language IDL. Rust,
+- `proto/celerity/v1/celerity.proto`: the one cross-language IDL. Rust,
   Python, and TypeScript bindings are committed and checked for regeneration.
 - `contracts/controller-can-v1.md` and `config/schema-v1.md`: transport and
   startup-configuration adapters that retain their exact external formats.
@@ -42,6 +42,7 @@ Install the checked-in Rust toolchain, `uv`, and Node/npm. Run `npm ci` in
 
 ```sh
 ./scripts/check-protos
+./scripts/check-sql
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --workspace --all-features --all-targets
@@ -52,10 +53,23 @@ cargo build --locked --workspace --all-targets --all-features
 ./scripts/check-ui
 ```
 
-When `contracts/celerity/v1/celerity.proto` changes, regenerate the committed
+When `proto/celerity/v1/celerity.proto` changes, regenerate the committed
 Rust, Python, and TypeScript bindings with `./scripts/generate-protos`. CI runs
 the regeneration in a temporary tree and fails if any checked-in binding is
 missing or stale.
+
+Contracts follow the local monorepo layout: `proto/` owns protobuf sources;
+`sql/migrations/<owner>/` owns SQLite schemas and upgrade statements, and
+`sql/queries/<owner>/` owns sqlc queries. `tools/generate/` owns generators and
+pinned configuration. Generated packages live under `gen/rust/`, `gen/python/`,
+and `gen/typescript/`; Rust SQL modules retain the `home` and `sync` owners.
+Use sqlc 1.31.1 and `./scripts/generate-sql` after changing SQL;
+`./scripts/check-sql` verifies committed Rust bindings. The Rust generation command
+pins the sqlc Rust plugin and normalizes its Rust output. Generated packages
+declare `package.metadata.ci.generated`; CI formats, builds and tests them while
+applying handwritten-code Clippy rules to the service packages. Home RPCs and
+Rust/Python training IPC use generated protobuf contracts; numerical evaluation
+JSON remains a local report.
 
 CI runs the workspace Cargo checks through the shared `rust-check` action after
 preparing the toolchain and platform dependencies. Formatting and Clippy use

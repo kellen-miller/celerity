@@ -4,14 +4,11 @@ use std::{path::Path, time::Duration};
 
 use celerity_proto::celerity::v1::{WebhookEvent, WebhookEventType};
 use prost::Message;
-use rusqlite::{TransactionBehavior, params};
+use rusqlite::TransactionBehavior;
 
-use crate::{HomeResult, http::PROTOBUF, storage};
+use celerity_sql::home as sql;
 
-struct Notification {
-    event_id: String,
-    payload: Vec<u8>,
-}
+use crate::{HomeResult, storage};
 
 /// Build the persisted wire event shared by jobs and reconciliation.
 #[must_use]
@@ -49,15 +46,15 @@ pub fn deliver_notifications(
     }
 
     let connection = storage::connect(database)?;
-    let notifications = connection.prepare("SELECT event_id, payload_pb FROM notifications WHERE state IN ('pending', 'failed') AND attempts < 5 ORDER BY event_id LIMIT 64")?.query_map([], |row| Ok(Notification { event_id: row.get(0)?, payload: row.get(1)? }))?.collect::<Result<Vec<_>, _>>()?;
+    let notifications = sql::ListPendingNotifications.query_many(&connection)?;
     drop(connection);
     let mut delivered = 0;
     for notification in notifications {
         let response = client
             .post(webhook_url)
             .timeout(Duration::from_secs(5))
-            .header(reqwest::header::CONTENT_TYPE, PROTOBUF)
-            .body(notification.payload)
+            .header(reqwest::header::CONTENT_TYPE, "application/x-protobuf")
+            .body(notification.payload_pb)
             .send()
             .map_err(|error| error.to_string())
             .and_then(|response| {
@@ -71,10 +68,17 @@ pub fn deliver_notifications(
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         match response {
             Ok(()) => {
-                delivered += transaction.execute("UPDATE notifications SET state='delivered', attempts=attempts+1, last_error=NULL WHERE event_id=? AND state!='delivered' AND attempts < 5", [notification.event_id])?;
+                delivered += sql::MarkNotificationDelivered::builder()
+                    .event_id(&notification.event_id)
+                    .build()
+                    .execute(&transaction)?;
             }
             Err(error) => {
-                transaction.execute("UPDATE notifications SET state='failed', attempts=attempts+1, last_error=? WHERE event_id=? AND state!='delivered' AND attempts < 5", params![error, notification.event_id])?;
+                sql::MarkNotificationFailed::builder()
+                    .event_id(&notification.event_id)
+                    .error(Some(&error))
+                    .build()
+                    .execute(&transaction)?;
             }
         }
 

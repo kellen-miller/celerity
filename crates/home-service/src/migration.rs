@@ -3,88 +3,103 @@
 use celerity_proto::celerity::v1::{
     Completion, RunChunk, RunManifest, WebhookEvent, WebhookEventType,
 };
+use celerity_sql::{home as sql, legacy};
 use prost::Message;
-use rusqlite::{Transaction, params, types::Value as SqlValue};
+use rusqlite::{Transaction, types::Value as SqlValue};
 use serde_json::{Map, Value};
 
 use crate::{HomeResult, storage::SCHEMA};
 
 pub(crate) fn migrate(transaction: &Transaction<'_>) -> HomeResult<()> {
-    let run_columns = columns(transaction, "PRAGMA table_info(runs)")?;
-    let notification_columns = columns(transaction, "PRAGMA table_info(notifications)")?;
-    let legacy_runs = run_columns.iter().any(|column| column == "manifest_json")
-        && !run_columns.iter().any(|column| column == "manifest_pb");
-    let legacy_notifications = notification_columns
-        .iter()
-        .any(|column| column == "payload_json")
-        && !notification_columns
-            .iter()
-            .any(|column| column == "payload_pb");
+    let legacy_runs = sql::HasColumn::builder()
+        .table_name("runs")
+        .column_name("manifest_json")
+        .build()
+        .query_one(transaction)?
+        .count
+        > 0
+        && sql::HasColumn::builder()
+            .table_name("runs")
+            .column_name("manifest_pb")
+            .build()
+            .query_one(transaction)?
+            .count
+            == 0;
+    let legacy_notifications = sql::HasColumn::builder()
+        .table_name("notifications")
+        .column_name("payload_json")
+        .build()
+        .query_one(transaction)?
+        .count
+        > 0
+        && sql::HasColumn::builder()
+            .table_name("notifications")
+            .column_name("payload_pb")
+            .build()
+            .query_one(transaction)?
+            .count
+            == 0;
     if legacy_runs {
-        transaction.execute("ALTER TABLE runs RENAME TO runs_json_legacy", [])?;
+        transaction.execute_batch(include_str!("../../../sql/migrations/home/rename-runs.sql"))?;
     }
 
     if legacy_notifications {
-        transaction.execute(
-            "ALTER TABLE notifications RENAME TO notifications_json_legacy",
-            [],
-        )?;
+        transaction.execute_batch(include_str!(
+            "../../../sql/migrations/home/rename-notifications.sql"
+        ))?;
     }
 
     transaction.execute_batch(SCHEMA)?;
     if legacy_runs {
-        let mut statement = transaction
-            .prepare("SELECT digest, manifest_json, completed_at FROM runs_json_legacy")?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            let manifest = run_manifest(row.get(1)?)?;
-            transaction.execute(
-                "INSERT INTO runs(digest, manifest_pb, completed_at) VALUES (?, ?, ?)",
-                params![row.get::<_, String>(0)?, manifest, row.get::<_, String>(2)?],
-            )?;
+        let mut statement = legacy::ListLegacyRuns.prepare(transaction)?;
+        let rows = statement.query_map(
+            legacy::ListLegacyRuns.as_params(),
+            legacy::ListLegacyRunsRow::from_row,
+        )?;
+        for row in rows {
+            let row = row?;
+            let manifest = run_manifest(row.manifest_json)?;
+            sql::InsertMigratedRun::builder()
+                .digest(&row.digest)
+                .manifest(&manifest)
+                .completed_at(&row.completed_at)
+                .build()
+                .execute(transaction)?;
         }
 
-        drop(rows);
         drop(statement);
-        transaction.execute("DROP TABLE runs_json_legacy", [])?;
+        transaction.execute_batch(include_str!(
+            "../../../sql/migrations/home/drop-legacy-runs.sql"
+        ))?;
     }
 
     if legacy_notifications {
-        let mut statement = transaction.prepare(
-            "SELECT event_id, job_id, payload_json, state, attempts, last_error
-             FROM notifications_json_legacy",
+        let mut statement = legacy::ListLegacyNotifications.prepare(transaction)?;
+        let rows = statement.query_map(
+            legacy::ListLegacyNotifications.as_params(),
+            legacy::ListLegacyNotificationsRow::from_row,
         )?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            let event_id: String = row.get(0)?;
-            let payload = webhook_event(row.get(2)?, &event_id)?;
-            transaction.execute(
-                "INSERT INTO notifications(event_id, job_id, payload_pb, state, attempts, last_error)
-                 VALUES (?, ?, ?, ?, ?, ?)",
-                params![
-                    event_id,
-                    row.get::<_, Option<String>>(1)?,
-                    payload,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, i64>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                ],
-            )?;
+        for row in rows {
+            let row = row?;
+            let payload = webhook_event(row.payload_json, &row.event_id)?;
+            sql::InsertMigratedNotification::builder()
+                .event_id(&row.event_id)
+                .job_id(row.job_id.as_deref())
+                .payload(&payload)
+                .state(&row.state)
+                .attempts(row.attempts)
+                .last_error(row.last_error.as_deref())
+                .build()
+                .execute(transaction)?;
         }
 
-        drop(rows);
         drop(statement);
-        transaction.execute("DROP TABLE notifications_json_legacy", [])?;
+        transaction.execute_batch(include_str!(
+            "../../../sql/migrations/home/drop-legacy-notifications.sql"
+        ))?;
     }
 
     Ok(())
-}
-
-fn columns(transaction: &Transaction<'_>, query: &str) -> HomeResult<Vec<String>> {
-    let mut statement = transaction.prepare(query)?;
-    Ok(statement
-        .query_map([], |row| row.get(1))?
-        .collect::<Result<_, _>>()?)
 }
 
 fn json_object(value: SqlValue, label: &str) -> HomeResult<Map<String, Value>> {

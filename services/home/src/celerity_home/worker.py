@@ -5,22 +5,25 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import zipfile
-from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
 import onnx
-from onnx.reference import ReferenceEvaluator
-
 from celerity.v1.celerity_pb2 import (
+    TRAINING_OUTCOME_CANDIDATE,
+    TRAINING_OUTCOME_NO_CHANGE,
     ModelBundleManifest,
     ModelCompatibility,
     ModelInputRange,
     ModelNormalization,
-    RunManifest,
+    TrainingRequest,
+    TrainingResult,
 )
+from onnx.reference import ReferenceEvaluator
+
 from celerity_home.training import (
     NoEligibleTrainingData,
     Recipe,
@@ -30,49 +33,27 @@ from celerity_home.training import (
 )
 
 
-@dataclass(frozen=True)
-class TrainingRequest:
-    schema_version: int
-    storage_root: Path
-    run_digests: list[str]
-    manifests_hex: list[str]
-    baseline_path: str | None
-
-
-@dataclass(frozen=True)
-class TrainingResult:
-    schema_version: int
-    outcome: str
-    summary: str
-    bundle_digest: str | None = None
-    maximum_parity_error: float | None = None
-    held_out_mse: float | None = None
-    baseline_mse: float | None = None
-
-
 def write_result(output: Path, result: TrainingResult) -> None:
-    temporary = output / "result.json.staging"
-    temporary.write_text(json.dumps(asdict(result), allow_nan=False, sort_keys=True))
-    temporary.replace(output / "result.json")
+    if result.outcome not in (TRAINING_OUTCOME_CANDIDATE, TRAINING_OUTCOME_NO_CHANGE):
+        raise ValueError("training result outcome is unspecified or unknown")
+    for metric in ("maximum_parity_error", "held_out_mse", "baseline_mse"):
+        if result.HasField(metric) and not math.isfinite(getattr(result, metric)):
+            raise ValueError(f"training result {metric} is not finite")
+    temporary = output / "result.pb.staging"
+    temporary.write_bytes(result.SerializeToString())
+    temporary.replace(output / "result.pb")
 
 
 def run(request_path: Path) -> None:
     """Train/evaluate immutable inputs and atomically publish a candidate result."""
-    payload = json.loads(request_path.read_text())
-    request = TrainingRequest(
-        schema_version=payload["schema_version"],
-        storage_root=Path(payload["storage_root"]),
-        run_digests=payload["run_digests"],
-        manifests_hex=payload["manifests_hex"],
-        baseline_path=payload.get("baseline_path"),
-    )
+    request = TrainingRequest.FromString(request_path.read_bytes())
     if request.schema_version != 1:
         raise ValueError("unsupported training request schema_version")
-    run_digests = request.run_digests
-    manifests = [RunManifest.FromString(bytes.fromhex(value)) for value in request.manifests_hex]
+    run_digests = list(request.run_digests)
+    manifests = list(request.manifests)
     if not manifests or len(manifests) != len(run_digests):
         raise ValueError("training request requires one manifest per Run")
-    storage_root = request.storage_root
+    storage_root = Path(request.storage_root)
     output = request_path.parent
     contract: dict[str, Any] = {
         "model_abi": manifests[0].model_abi,
@@ -105,7 +86,12 @@ def run(request_path: Path) -> None:
             load_training_examples(storage_root, run_digests, manifests, recipe)
         )
     except NoEligibleTrainingData as error:
-        write_result(output, TrainingResult(1, "no_change", str(error)))
+        write_result(
+            output,
+            TrainingResult(
+                schema_version=1, outcome=TRAINING_OUTCOME_NO_CHANGE, summary=str(error)
+            ),
+        )
         return
     signal_means = np.asarray(
         [float(np.mean(values)) for values in zip(*observed_values, strict=True)],
@@ -173,7 +159,7 @@ def run(request_path: Path) -> None:
         )
     )
     baseline_mse = None
-    if request.baseline_path is not None:
+    if request.HasField("baseline_path"):
         with zipfile.ZipFile(request.baseline_path) as archive:
             baseline_manifest = ModelBundleManifest.FromString(archive.read("manifest.pb"))
             baseline_model_bytes = archive.read("model.onnx")
@@ -203,7 +189,7 @@ def run(request_path: Path) -> None:
         output,
         TrainingResult(
             schema_version=1,
-            outcome="candidate",
+            outcome=TRAINING_OUTCOME_CANDIDATE,
             summary="candidate evaluated",
             bundle_digest=digest,
             maximum_parity_error=float(evaluation["maximum_parity_error"]),

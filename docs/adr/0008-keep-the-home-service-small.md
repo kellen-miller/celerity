@@ -13,11 +13,12 @@ requires them.
 
 ## Decision
 
-Use one Rust HTTP application, one Kubernetes replica, one PVC, SQLite metadata,
+Use one Rust tonic gRPC application, one Kubernetes replica, one PVC, SQLite metadata,
 and filesystem Run/model storage. Rust owns uploads, database migration, durable
 job state, model staging and webhook delivery. Python owns numerical data
 preparation, PyTorch training, ONNX export and evaluation through an immutable
-request/result file contract. A detached Rust worker claims each queued job
+protobuf request/result file contract. sqlc generates typed SQLite queries from
+owned SQL sources. A detached Rust worker claims each queued job
 atomically before launching Python and fences terminal writes by process identity.
 Python inherits a filesystem admission lock across exec. Recovery retains the
 active slot until numerical work exits, including supervisor death and spawn

@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 
 mod artifact;
-mod http;
+
+mod rpc;
+pub use rpc::HomeAuthentication;
 pub mod jobs;
 mod migration;
 pub mod notifications;
@@ -36,7 +38,12 @@ impl HomeService {
     ///
     /// # Errors
     /// Returns invalid configuration, filesystem or migration failures.
-    pub fn open(config: HomeConfig) -> HomeResult<Self> {
+    pub fn open(mut config: HomeConfig) -> HomeResult<Self> {
+        config.vehicle_token = config.vehicle_token.trim().to_owned();
+        if config.vehicle_token.is_empty() {
+            return Err("vehicle bearer token is required".into());
+        }
+
         if !config.webhook_url.starts_with("https://") {
             return Err("CELERITY_HOME_WEBHOOK_URL must use HTTPS".into());
         }
@@ -50,9 +57,31 @@ impl HomeService {
         Ok(Self { config })
     }
 
-    /// Build the existing protobuf HTTP surface; recovery remains explicit.
-    pub fn router(&self) -> axum::Router {
-        http::router(self.clone())
+    /// Build the authenticated Home RPC service with artifact-sized messages.
+    #[must_use]
+    pub fn grpc_server(
+        &self,
+    ) -> tonic::service::interceptor::InterceptedService<
+        celerity_proto::celerity::v1::home_server::HomeServer<Self>,
+        HomeAuthentication,
+    > {
+        let server = celerity_proto::celerity::v1::home_server::HomeServer::new(self.clone())
+            .max_decoding_message_size(celerity_proto::HOME_MAX_MESSAGE_BYTES)
+            .max_encoding_message_size(celerity_proto::HOME_MAX_MESSAGE_BYTES);
+        tonic::service::interceptor::InterceptedService::new(
+            server,
+            HomeAuthentication::new(&self.config.vehicle_token),
+        )
+    }
+
+    /// Check durable storage before advertising Home readiness.
+    ///
+    /// # Errors
+    /// Returns SQLite connection or query failures.
+    pub fn check_ready(&self) -> HomeResult<()> {
+        let connection = storage::connect(&self.database())?;
+        celerity_sql::home::Ping.query_one(&connection)?;
+        Ok(())
     }
 
     /// Recover queued work and fail dead running workers.

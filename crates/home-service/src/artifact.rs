@@ -3,13 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use celerity_proto::celerity::v1::ModelBundleManifest;
+use celerity_proto::celerity::v1::{ModelBundleManifest, TrainingResult};
 use prost::Message;
 
-use crate::{
-    HomeResult, digest, is_digest,
-    training::{ModelContract, TrainingResult},
-};
+use crate::{HomeResult, digest, is_digest, training::ModelContract};
 
 pub(crate) struct Candidate {
     pub(crate) digest: String,

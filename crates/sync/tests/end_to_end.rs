@@ -7,19 +7,25 @@ use std::{
     time::{Duration, Instant},
 };
 
-use celerity_proto::celerity::v1::{JobRequest, JobStarted, JobState, JobStatus};
+use celerity_proto::{
+    HOME_MAX_MESSAGE_BYTES,
+    celerity::v1::{GetJobRequest, JobRequest, JobState, JobStatus, home_client::HomeClient},
+};
 use control_core::{
     CommandSource, EnqueueResult, ExternalAdapters, ModelSlots, RunContext, RunRecord, RunWriter,
     Runtime, RuntimeEffect, RuntimeEvent, RuntimeModel, StartupMode, ValidatedBundle,
 };
-use prost::Message;
-use reqwest::blocking::Client;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use sync::{
-    NetworkPresence, ReconcileOutcome, ReqwestHomeApi, SyncConfiguration, SyncError, Synchronizer,
+    GrpcHomeApi, NetworkPresence, ReconcileOutcome, SyncConfiguration, SyncError, Synchronizer,
 };
 use tempfile::TempDir;
+use tokio::runtime::Runtime as TokioRuntime;
+use tonic::{Request, transport::Channel};
+use tonic_health::pb::{
+    HealthCheckRequest, health_check_response::ServingStatus, health_client::HealthClient,
+};
 
 struct AlwaysHome;
 
@@ -116,49 +122,46 @@ fn make_complete_run(spool: &Path, name: &str) -> io::Result<String> {
 }
 
 fn start_and_poll_training_job(
-    client: &Client,
-    base_url: &str,
+    runtime: &TokioRuntime,
+    client: &mut HomeClient<Channel>,
     run_digests: &[String],
 ) -> Result<JobStatus, Box<dyn std::error::Error>> {
-    let response = client
-        .post(format!("{base_url}/v1/jobs"))
-        .bearer_auth("e2e-secret")
-        .header("Content-Type", "application/x-protobuf")
-        .body(
-            JobRequest {
-                run_digests: run_digests.to_vec(),
-                recipe: "causal-tcn-v1".to_owned(),
+    runtime.block_on(async {
+        let mut request = Request::new(JobRequest {
+            run_digests: run_digests.to_vec(),
+            recipe: "causal-tcn-v1".to_owned(),
+        });
+        request
+            .metadata_mut()
+            .insert("authorization", "Bearer e2e-secret".parse()?);
+        request.set_timeout(Duration::from_secs(10));
+        let started = client.start_job(request).await?.into_inner();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let mut request = Request::new(GetJobRequest {
+                job_id: started.job_id.clone(),
+            });
+            request
+                .metadata_mut()
+                .insert("authorization", "Bearer e2e-secret".parse()?);
+            request.set_timeout(Duration::from_secs(10));
+            let job = client.get_job(request).await?.into_inner();
+            if job.state != JobState::Queued as i32 && job.state != JobState::Running as i32 {
+                return Ok(job);
             }
-            .encode_to_vec(),
-        )
-        .send()?
-        .error_for_status()?
-        .bytes()?;
-    let started = JobStarted::decode(response.as_ref())?;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let response = client
-            .get(format!("{base_url}/v1/jobs/{}", started.job_id))
-            .bearer_auth("e2e-secret")
-            .send()?
-            .error_for_status()?
-            .bytes()?;
-        let job = JobStatus::decode(response.as_ref())?;
-        if job.state != JobState::Queued as i32 && job.state != JobState::Running as i32 {
-            return Ok(job);
-        }
 
-        if Instant::now() >= deadline {
-            return Err(format!("training job timed out: {job:?}").into());
-        }
+            if Instant::now() >= deadline {
+                return Err(format!("training job timed out: {job:?}").into());
+            }
 
-        thread::sleep(Duration::from_millis(50));
-    }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
 }
 
 #[test]
 #[ignore = "run by scripts/check-e2e with the home Python environment"]
-fn production_http_upload_trains_and_stages_exact_model() {
+fn production_grpc_upload_trains_and_stages_exact_model() {
     let temporary = TempDir::new().expect("temporary acceptance root");
     let spool = temporary.path().join("spool");
     let model_root = temporary.path().join("models");
@@ -169,7 +172,7 @@ fn production_http_upload_trains_and_stages_exact_model() {
     let token_path = temporary.path().join("vehicle-token");
     fs::write(&token_path, "e2e-secret\n").expect("vehicle token");
 
-    let listener = TcpListener::bind("127.0.0.1:0").expect("reserve local HTTP port");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("reserve local gRPC port");
     let port = listener.local_addr().expect("reserved address").port();
     drop(listener);
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -196,22 +199,40 @@ fn production_http_upload_trains_and_stages_exact_model() {
     let _home_process = HomeProcess(child);
 
     let base_url = format!("http://127.0.0.1:{port}");
-    let client = Client::builder()
-        .timeout(Duration::from_secs(10))
+    let rpc_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
         .build()
-        .expect("HTTP client");
+        .expect("test RPC runtime");
+    let channel = {
+        let _entered = rpc_runtime.enter();
+        Channel::from_shared(base_url.clone())
+            .expect("home endpoint")
+            .connect_timeout(Duration::from_secs(1))
+            .timeout(Duration::from_secs(10))
+            .connect_lazy()
+    };
+    let mut health = HealthClient::new(channel.clone());
     let ready_deadline = Instant::now() + Duration::from_secs(10);
-    while client
-        .get(format!("{base_url}/health/ready"))
-        .send()
-        .is_err()
-    {
+    loop {
+        let response = rpc_runtime.block_on(health.check(HealthCheckRequest {
+            service: "celerity.v1.Home".into(),
+        }));
+        if response
+            .is_ok_and(|response| response.into_inner().status == ServingStatus::Serving as i32)
+        {
+            break;
+        }
+
         assert!(
             Instant::now() < ready_deadline,
             "home API did not become ready"
         );
         thread::sleep(Duration::from_millis(50));
     }
+
+    let mut job_client = HomeClient::new(channel)
+        .max_encoding_message_size(HOME_MAX_MESSAGE_BYTES)
+        .max_decoding_message_size(HOME_MAX_MESSAGE_BYTES);
 
     let configuration = SyncConfiguration {
         spool_root: spool,
@@ -232,7 +253,7 @@ fn production_http_upload_trains_and_stages_exact_model() {
         model_command_lattice: vec![1000, 5000, 9000],
         model_maximum_calibration_error: 100.0,
     };
-    let home = ReqwestHomeApi::new(&base_url, &token_path).expect("production home client");
+    let home = GrpcHomeApi::new(&base_url, &token_path).expect("production home client");
     let mut synchronizer = Synchronizer::new(configuration).expect("synchronizer");
     assert_eq!(
         synchronizer
@@ -325,7 +346,7 @@ fn production_http_upload_trains_and_stages_exact_model() {
         }
     )));
 
-    let repeated = start_and_poll_training_job(&client, &base_url, &input_runs)
+    let repeated = start_and_poll_training_job(&rpc_runtime, &mut job_client, &input_runs)
         .expect("repeat training reaches terminal state");
     assert_eq!(repeated.state, JobState::NoChange as i32, "{repeated:?}");
     assert_eq!(
@@ -343,7 +364,7 @@ fn production_http_upload_trains_and_stages_exact_model() {
         )
         .expect("staged baseline path");
     fs::write(baseline_path, b"not a model bundle").expect("corrupt baseline fixture");
-    let failed = start_and_poll_training_job(&client, &base_url, &input_runs)
+    let failed = start_and_poll_training_job(&rpc_runtime, &mut job_client, &input_runs)
         .expect("corrupt baseline training reaches terminal state");
     assert_eq!(failed.state, JobState::Failed as i32, "{failed:?}");
     assert!(

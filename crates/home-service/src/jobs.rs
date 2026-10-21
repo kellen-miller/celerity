@@ -1,28 +1,17 @@
 //! Durable admission, child self-claim, recovery and fenced terminal state.
 
-use std::{collections::BTreeSet, fs::OpenOptions, path::Path, process::Command, sync::Arc};
+use std::{collections::BTreeSet, fs::OpenOptions, path::Path, process::Command};
 
-use axum::{
-    body::Bytes,
-    extract::{Path as RoutePath, State},
-    http::StatusCode,
-    response::Response,
-};
 use celerity_proto::celerity::v1::{JobRequest, JobStarted, JobState, JobStatus, WebhookEventType};
-use prost::Message;
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
-use serde::Serialize;
+use rusqlite::{Connection, Transaction, TransactionBehavior};
+
+use celerity_sql::home as sql;
 
 use crate::{
-    HomeConfig, HomeResult, HomeService,
-    http::{ApiError, ApiResult, protobuf},
-    notifications, storage, training,
+    HomeConfig, HomeResult, HomeService, notifications,
+    rpc::{ApiError, ApiResult},
+    storage, training,
 };
-
-#[derive(Serialize)]
-struct MissingRuns {
-    incomplete_runs: Vec<String>,
-}
 
 struct ActiveJob {
     id: String,
@@ -40,20 +29,25 @@ pub(crate) struct WorkerOwnership {
 
 impl WorkerOwnership {
     pub(crate) fn is_current(&self, connection: &Connection) -> HomeResult<bool> {
-        Ok(connection
-            .query_row(
-                "SELECT 1 FROM jobs WHERE id=? AND state='running' AND pid=? AND pid_start_ticks=?",
-                params![self.job_id, self.pid, self.identity],
-                |_| Ok(()),
-            )
-            .optional()?
+        Ok(sql::CheckJobOwner::builder()
+            .job_id(&self.job_id)
+            .pid(Some(i64::from(self.pid)))
+            .identity(Some(&self.identity))
+            .build()
+            .query_opt(connection)?
             .is_some())
     }
 
     pub(crate) fn fail(&self, database: &Path, summary: &str) -> HomeResult<()> {
         let mut connection = storage::connect(database)?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let changed = transaction.execute("UPDATE jobs SET state='failed', terminal_summary=? WHERE id=? AND state='running' AND pid=? AND pid_start_ticks=?", params![summary, self.job_id, self.pid, self.identity])?;
+        let changed = sql::FailOwnedJob::builder()
+            .summary(Some(summary))
+            .job_id(&self.job_id)
+            .pid(Some(i64::from(self.pid)))
+            .identity(Some(&self.identity))
+            .build()
+            .execute(&transaction)?;
         if changed != 0 {
             let payload = notifications::webhook_event(
                 &self.job_id,
@@ -62,7 +56,12 @@ impl WorkerOwnership {
                 Some(&self.job_id),
                 None,
             );
-            transaction.execute("INSERT OR IGNORE INTO notifications(event_id, job_id, payload_pb, state) VALUES (?, ?, ?, 'pending')", params![self.job_id, self.job_id, payload])?;
+            sql::InsertNotification::builder()
+                .event_id(&self.job_id)
+                .job_id(Some(&self.job_id))
+                .payload(&payload)
+                .build()
+                .execute(&transaction)?;
         }
 
         transaction.commit()?;
@@ -81,16 +80,18 @@ pub(crate) fn enqueue(
     std::fs::create_dir_all(&directory)?;
     let stdout = directory.join(format!("{job_id}.stdout"));
     let stderr = directory.join(format!("{job_id}.stderr"));
-    transaction.execute("INSERT INTO jobs(id, state, recipe, input_digests_json, stdout_path, stderr_path) VALUES (?, 'queued', ?, ?, ?, ?)", params![job_id, recipe, serde_json::to_string(run_digests)?, stdout.to_string_lossy(), stderr.to_string_lossy()])?;
+    sql::EnqueueJob::builder()
+        .job_id(&job_id)
+        .recipe(recipe)
+        .inputs(&serde_json::to_string(run_digests)?)
+        .stdout(Some(&stdout.to_string_lossy()))
+        .stderr(Some(&stderr.to_string_lossy()))
+        .build()
+        .execute(transaction)?;
     Ok(job_id)
 }
 
-pub(crate) async fn start_job(
-    State(home): State<Arc<HomeService>>,
-    data: Bytes,
-) -> ApiResult<Response> {
-    let mut request =
-        JobRequest::decode(data.as_ref()).map_err(|_| ApiError::invalid("invalid job request"))?;
+pub(crate) fn start_job(home: &HomeService, mut request: JobRequest) -> ApiResult<JobStarted> {
     if request.run_digests.is_empty() {
         return Err(ApiError::invalid("job requires at least one Run"));
     }
@@ -102,22 +103,15 @@ pub(crate) async fn start_job(
     home.recover_jobs().map_err(ApiError::internal)?;
     let mut connection = storage::connect(&home.database()).map_err(ApiError::internal)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    if transaction
-        .query_row(
-            "SELECT 1 FROM jobs WHERE state IN ('queued', 'running') LIMIT 1",
-            [],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some()
-    {
+    if sql::HasActiveJob.query_opt(&transaction)?.is_some() {
         return Err(ApiError::conflict("another training job is active"));
     }
 
-    let admitted: BTreeSet<String> = transaction
-        .prepare("SELECT digest FROM runs")?
-        .query_map([], |row| row.get(0))?
-        .collect::<Result<_, _>>()?;
+    let admitted: BTreeSet<String> = sql::ListRunDigests
+        .query_many(&transaction)?
+        .into_iter()
+        .map(|row| row.digest)
+        .collect();
     let missing: Vec<String> = request
         .run_digests
         .iter()
@@ -127,9 +121,7 @@ pub(crate) async fn start_job(
         .into_iter()
         .collect();
     if !missing.is_empty() {
-        return Err(ApiError::conflict(serde_json::to_value(MissingRuns {
-            incomplete_runs: missing,
-        })?));
+        return Err(ApiError::incomplete_runs(missing));
     }
 
     request.run_digests.sort();
@@ -142,54 +134,39 @@ pub(crate) async fn start_job(
     .map_err(ApiError::internal)?;
     transaction.commit()?;
     launch(&home.config, &job_id).map_err(ApiError::internal)?;
-    Ok(protobuf(
-        &JobStarted {
-            job_id,
-            state: JobState::Running as i32,
-        },
-        StatusCode::ACCEPTED,
-    ))
+    Ok(JobStarted {
+        job_id,
+        state: JobState::Running as i32,
+    })
 }
 
-pub(crate) async fn get_job(
-    State(home): State<Arc<HomeService>>,
-    RoutePath(job_id): RoutePath<String>,
-) -> ApiResult<Response> {
+pub(crate) fn get_job(home: &HomeService, job_id: String) -> ApiResult<JobStatus> {
     let connection = storage::connect(&home.database()).map_err(ApiError::internal)?;
-    let job = connection
-        .query_row("SELECT * FROM jobs WHERE id=?", [job_id], |row| {
-            let state: String = row.get("state")?;
-            let inputs: String = row.get("input_digests_json")?;
-            let run_digests = serde_json::from_str(&inputs).map_err(|error| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    0,
-                    rusqlite::types::Type::Text,
-                    Box::new(error),
-                )
-            })?;
-            Ok(JobStatus {
-                id: row.get("id")?,
-                state: match state.as_str() {
-                    "queued" => JobState::Queued,
-                    "running" => JobState::Running,
-                    "completed" => JobState::Completed,
-                    "no_change" => JobState::NoChange,
-                    "rejected" => JobState::Rejected,
-                    _ => JobState::Failed,
-                } as i32,
-                recipe: row.get("recipe")?,
-                run_digests,
-                pid: row.get("pid")?,
-                stdout_path: row.get("stdout_path")?,
-                stderr_path: row.get("stderr_path")?,
-                artifact_digest: row.get("artifact_digest")?,
-                terminal_summary: row.get("terminal_summary")?,
-                created_at: row.get("created_at")?,
-            })
-        })
-        .optional()?
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "job not found"))?;
-    Ok(protobuf(&job, StatusCode::OK))
+    let row = sql::GetJob::builder()
+        .job_id(&job_id)
+        .build()
+        .query_opt(&connection)?
+        .ok_or_else(|| ApiError::new(tonic::Code::NotFound, "job not found"))?;
+    let job = JobStatus {
+        id: row.id,
+        state: match row.state.as_str() {
+            "queued" => JobState::Queued,
+            "running" => JobState::Running,
+            "completed" => JobState::Completed,
+            "no_change" => JobState::NoChange,
+            "rejected" => JobState::Rejected,
+            _ => JobState::Failed,
+        } as i32,
+        recipe: row.recipe,
+        run_digests: serde_json::from_str(&row.input_digests_json)?,
+        pid: row.pid,
+        stdout_path: row.stdout_path,
+        stderr_path: row.stderr_path,
+        artifact_digest: row.artifact_digest,
+        terminal_summary: row.terminal_summary,
+        created_at: row.created_at,
+    };
+    Ok(job)
 }
 
 /// Launch a durable worker; a reaper owns the child handle, never cancellation.
@@ -200,16 +177,19 @@ pub(crate) async fn get_job(
 /// leaves the queued row available for explicit startup/request recovery.
 pub fn launch(config: &HomeConfig, job_id: &str) -> HomeResult<()> {
     let connection = storage::connect(&config.storage_root.join("home.sqlite3"))?;
-    let paths: Option<(String, String)> = connection
-        .query_row(
-            "SELECT stdout_path, stderr_path FROM jobs WHERE id=? AND state='queued'",
-            [job_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
-    let Some((stdout, stderr)) = paths else {
+    let Some(paths) = sql::QueuedJobPaths::builder()
+        .job_id(job_id)
+        .build()
+        .query_opt(&connection)?
+    else {
         return Ok(());
     };
+    let stdout = paths
+        .stdout_path
+        .ok_or("queued job stdout path is absent")?;
+    let stderr = paths
+        .stderr_path
+        .ok_or("queued job stderr path is absent")?;
     let stdout = OpenOptions::new().append(true).create(true).open(stdout)?;
     let stderr = OpenOptions::new().append(true).create(true).open(stderr)?;
     let mut child = Command::new(&config.worker_binary)
@@ -240,16 +220,17 @@ pub fn recover(config: &HomeConfig) -> HomeResult<usize> {
     let database = config.storage_root.join("home.sqlite3");
     let mut connection = storage::connect(&database)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let running = transaction
-        .prepare("SELECT id, pid, pid_start_ticks FROM jobs WHERE state='running'")?
-        .query_map([], |row| {
+    let running = sql::ListRunningJobs
+        .query_many(&transaction)?
+        .into_iter()
+        .map(|row| {
             Ok(ActiveJob {
-                id: row.get(0)?,
-                pid: row.get(1)?,
-                identity: row.get(2)?,
+                id: row.id,
+                pid: row.pid.map(u32::try_from).transpose()?,
+                identity: row.pid_start_ticks,
             })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+        })
+        .collect::<HomeResult<Vec<_>>>()?;
     for job in running {
         if job
             .pid
@@ -280,7 +261,13 @@ pub fn recover(config: &HomeConfig) -> HomeResult<usize> {
         }
 
         let summary = "managed training worker exited before recording a terminal state";
-        let changed = transaction.execute("UPDATE jobs SET state='failed', terminal_summary=? WHERE id=? AND state='running' AND pid IS ? AND pid_start_ticks IS ?", params![summary, job.id, job.pid, job.identity])?;
+        let changed = sql::FailOrphanedJob::builder()
+            .summary(Some(summary))
+            .job_id(&job.id)
+            .pid(job.pid.map(i64::from))
+            .identity(job.identity.as_deref())
+            .build()
+            .execute(&transaction)?;
         if changed != 0 {
             let event_id = format!("orphan:{}", job.id);
             let payload = notifications::webhook_event(
@@ -290,17 +277,19 @@ pub fn recover(config: &HomeConfig) -> HomeResult<usize> {
                 Some(&job.id),
                 None,
             );
-            transaction.execute("INSERT OR IGNORE INTO notifications(event_id, job_id, payload_pb, state) VALUES (?, ?, ?, 'pending')", params![event_id, job.id, payload])?;
+            sql::InsertNotification::builder()
+                .event_id(&event_id)
+                .job_id(Some(&job.id))
+                .payload(&payload)
+                .build()
+                .execute(&transaction)?;
         }
     }
 
-    let queued = transaction
-        .prepare("SELECT id FROM jobs WHERE state='queued' ORDER BY created_at, id")?
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<Result<Vec<_>, _>>()?;
+    let queued = sql::ListQueuedJobs.query_many(&transaction)?;
     transaction.commit()?;
-    for job_id in &queued {
-        launch(config, job_id)?;
+    for job in &queued {
+        launch(config, &job.id)?;
     }
 
     Ok(queued.len())
@@ -341,10 +330,12 @@ pub(crate) fn claim(storage_root: &Path, job_id: &str) -> HomeResult<Option<Work
     let identity = process_identity(pid).ok_or("cannot establish worker process identity")?;
     let mut connection = storage::connect(&storage_root.join("home.sqlite3"))?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let changed = transaction.execute(
-        "UPDATE jobs SET state='running', pid=?, pid_start_ticks=? WHERE id=? AND state='queued'",
-        params![pid, identity, job_id],
-    )?;
+    let changed = sql::ClaimJob::builder()
+        .pid(Some(i64::from(pid)))
+        .identity(Some(&identity))
+        .job_id(job_id)
+        .build()
+        .execute(&transaction)?;
     transaction.commit()?;
     Ok((changed != 0).then(|| WorkerOwnership {
         job_id: job_id.into(),
@@ -420,7 +411,7 @@ pub fn run_trainer(
         fcntl(&lock, FcntlArg::F_SETFD(FdFlag::empty()))?;
         Err(Command::new(python)
             .args(["-m", "celerity_home.worker", "--request"])
-            .arg(storage_root.join("jobs").join(job_id).join("request.json"))
+            .arg(storage_root.join("jobs").join(job_id).join("request.pb"))
             .exec()
             .into())
     }

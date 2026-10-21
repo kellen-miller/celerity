@@ -1,4 +1,4 @@
-FROM rust:1.99.0-bookworm AS home-build
+FROM rust:1.99.1-bookworm AS home-build
 
 ENV RUSTUP_TOOLCHAIN=1.99.0
 WORKDIR /src

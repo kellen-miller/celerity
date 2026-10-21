@@ -28,11 +28,8 @@ pub(super) fn decode(
         return Err(PowertrainDecodeError::WrongLength);
     }
 
-    let unsigned =
-        |offset: usize| f64::from(u16::from_be_bytes([payload[offset], payload[offset + 1]]));
-    let signed = |offset: usize| {
-        f64::from(i16::from_be_bytes([payload[offset], payload[offset + 1]])) / 10.0
-    };
+    let unsigned = |offset: usize| f64::from(u16::from_be_bytes([payload[offset], payload[offset + 1]]));
+    let signed = |offset: usize| f64::from(i16::from_be_bytes([payload[offset], payload[offset + 1]])) / 10.0;
     let fields: &[(&'static str, f64, f64, f64)] = match frame {
         NexusFrame::ControlTemperatures => {
             if payload[4..] != [0; 4] {
@@ -41,24 +38,14 @@ pub(super) fn decode(
 
             &[
                 ("coolant_temperature_c", signed(0), -50.0, 300.0),
-                (
-                    "intercooler_outlet_air_temperature_c",
-                    signed(2),
-                    -50.0,
-                    300.0,
-                ),
+                ("intercooler_outlet_air_temperature_c", signed(2), -50.0, 300.0),
             ]
         }
 
         NexusFrame::AirPath => &[
             ("pre_intercooler_air_temperature_c", signed(0), -50.0, 300.0),
             ("ambient_air_temperature_c", signed(2), -50.0, 300.0),
-            (
-                "pre_intercooler_boost_pressure_kpa",
-                unsigned(4) / 10.0,
-                0.0,
-                1_000.0,
-            ),
+            ("pre_intercooler_boost_pressure_kpa", unsigned(4) / 10.0, 0.0, 1_000.0),
             ("map_kpa_absolute", unsigned(6) / 10.0, 0.0, 1_000.0),
         ],
         NexusFrame::FluidHealth => &[

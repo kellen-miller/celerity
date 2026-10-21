@@ -35,10 +35,8 @@ impl ExperimentPlan {
     /// Returns an error for filesystem, syntax, version, range, or total
     /// duration failures.
     pub fn load(path: &Path) -> Result<Self, ExperimentError> {
-        let source =
-            fs::read_to_string(path).map_err(|error| ExperimentError::Read(error.to_string()))?;
-        let plan: Self =
-            toml::from_str(&source).map_err(|error| ExperimentError::Parse(error.to_string()))?;
+        let source = fs::read_to_string(path).map_err(|error| ExperimentError::Read(error.to_string()))?;
+        let plan: Self = toml::from_str(&source).map_err(|error| ExperimentError::Parse(error.to_string()))?;
         let total_duration = plan
             .steps
             .iter()
@@ -97,7 +95,7 @@ pub enum ExperimentAbort {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ExperimentPhase {
+pub(crate) enum ExperimentPhase {
     WaitingForAcceptance,
     Settling { started_ms: u64 },
     Holding { started_ms: u64 },
@@ -159,16 +157,12 @@ impl RunningExperiment {
             {
                 ExperimentPhase::Settling { started_ms: now_ms }
             }
-            ExperimentPhase::Settling { started_ms }
-                if now_ms.saturating_sub(started_ms) >= self.plan.settling_ms =>
-            {
+            ExperimentPhase::Settling { started_ms } if now_ms.saturating_sub(started_ms) >= self.plan.settling_ms => {
                 ExperimentPhase::Holding {
                     started_ms: started_ms.saturating_add(self.plan.settling_ms),
                 }
             }
-            ExperimentPhase::Holding { started_ms }
-                if now_ms.saturating_sub(started_ms) >= step.duration_ms =>
-            {
+            ExperimentPhase::Holding { started_ms } if now_ms.saturating_sub(started_ms) >= step.duration_ms => {
                 self.step_index += 1;
                 if self.step_index == self.plan.steps.len() {
                     self.terminal = true;

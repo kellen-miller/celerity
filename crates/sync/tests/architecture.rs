@@ -16,12 +16,7 @@ fn sync_has_no_authority_or_can_dependency_path() {
         .iter()
         .find(|package| package["name"] == "sync")
         .expect("sync package");
-    let forbidden = [
-        "control-core",
-        "control-protocol",
-        "socketcan",
-        "tokio-socketcan",
-    ];
+    let forbidden = ["control-core", "control-protocol", "socketcan", "tokio-socketcan"];
     for dependency in package["dependencies"].as_array().expect("dependencies") {
         if dependency["kind"].as_str() == Some("dev") {
             continue;

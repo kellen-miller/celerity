@@ -45,11 +45,7 @@ pub(super) fn write_manifest(directory: &Path, manifest: &RunManifest) -> Result
         model_history_length: u64::try_from(manifest.model_history_length)
             .map_err(|error| RunError(error.to_string()))?,
         sample_period_ms: manifest.sample_period_ms,
-        command_lattice: manifest
-            .command_lattice
-            .iter()
-            .map(|value| u32::from(*value))
-            .collect(),
+        command_lattice: manifest.command_lattice.iter().map(|value| u32::from(*value)).collect(),
         maximum_calibration_error: manifest.maximum_calibration_error,
     }
     .encode_to_vec();

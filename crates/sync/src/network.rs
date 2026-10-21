@@ -38,8 +38,7 @@ impl LinuxNetworkPresence {
 
 impl NetworkPresence for LinuxNetworkPresence {
     fn is_home(&self, interface: &str, expected_gateway: &str) -> Result<bool, SyncError> {
-        let operstate = fs::read_to_string(self.sys_class_net.join(interface).join("operstate"))
-            .map_err(sync_io)?;
+        let operstate = fs::read_to_string(self.sys_class_net.join(interface).join("operstate")).map_err(sync_io)?;
         if operstate.trim() != "up" {
             return Ok(false);
         }
@@ -54,10 +53,7 @@ impl NetworkPresence for LinuxNetworkPresence {
                 continue;
             }
             let encoded = u32::from_str_radix(columns[2], 16).unwrap_or_default();
-            let gateway = encoded
-                .to_le_bytes()
-                .map(|octet| octet.to_string())
-                .join(".");
+            let gateway = encoded.to_le_bytes().map(|octet| octet.to_string()).join(".");
             return Ok(gateway == expected_gateway);
         }
         Ok(false)

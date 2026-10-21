@@ -4,8 +4,8 @@ use std::{
 };
 
 use control_core::{
-    CommandSource, ControllerRuntimeConfiguration, PowertrainDecoder, RunContext, RunWriter,
-    RuntimeEvent, RuntimeModel, RuntimeSession, StartupMode, TimingModel, ValidatedBundle,
+    CommandSource, ControllerRuntimeConfiguration, PowertrainDecoder, RunContext, RunWriter, RuntimeEvent,
+    RuntimeModel, RuntimeSession, StartupMode, TimingModel, ValidatedBundle,
 };
 use nix::errno::Errno;
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
@@ -243,8 +243,7 @@ impl LiveRuntime {
         }
 
         let now = Instant::now();
-        let remaining_cycle_ns =
-            u64::try_from(deadline.saturating_duration_since(now).as_nanos()).unwrap_or(u64::MAX);
+        let remaining_cycle_ns = u64::try_from(deadline.saturating_duration_since(now).as_nanos()).unwrap_or(u64::MAX);
         self.ingest_safety_snapshot()?;
         self.ingest_model_snapshot()?;
         let event = RuntimeEvent::Cycle {
@@ -300,9 +299,7 @@ mod receive;
 
 const fn map_command_source(source: CommandSource) -> vehicle_diagnostics::CommandSource {
     match source {
-        CommandSource::ControllerLocalFallback => {
-            vehicle_diagnostics::CommandSource::ControllerLocalFallback
-        }
+        CommandSource::ControllerLocalFallback => vehicle_diagnostics::CommandSource::ControllerLocalFallback,
         CommandSource::Deterministic => vehicle_diagnostics::CommandSource::Deterministic,
         CommandSource::ModelOptimized => vehicle_diagnostics::CommandSource::ModelOptimized,
         CommandSource::Experiment => vehicle_diagnostics::CommandSource::Experiment,

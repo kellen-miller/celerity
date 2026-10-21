@@ -1,11 +1,9 @@
 use super::{
-    CapabilityReport, Command, CommandAck, Configuration, ConfigurationAck, DiscoveryProbe,
-    FallbackAck, FallbackRequest, FaultReport, Frame, Heartbeat, NodeAnnounce, RuntimeLease,
-    RuntimeLeaseAck, WireError,
+    CapabilityReport, Command, CommandAck, Configuration, ConfigurationAck, DiscoveryProbe, FallbackAck,
+    FallbackRequest, FaultReport, Frame, Heartbeat, NodeAnnounce, RuntimeLease, RuntimeLeaseAck, WireError,
 };
 use crate::codec::{
-    exact_length, frame_family, get_u16, get_u32, get_u64, reserved_zero, validate_enum,
-    validate_split,
+    exact_length, frame_family, get_u16, get_u32, get_u64, reserved_zero, validate_enum, validate_split,
 };
 
 /// Decodes and validates one fixed v1 CAN FD payload.

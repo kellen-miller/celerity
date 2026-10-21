@@ -43,9 +43,7 @@ impl ValidatedBundle {
                 return Err(BundleError::DuplicateControllerAddress(controller.address));
             }
             if !identities.insert(controller.identity) {
-                return Err(BundleError::DuplicateControllerIdentity(
-                    controller.identity,
-                ));
+                return Err(BundleError::DuplicateControllerIdentity(controller.identity));
             }
             addresses[usize::from(controller.address)] = true;
         }
@@ -123,9 +121,7 @@ impl ValidatedBundle {
                 .input_signals
                 .iter()
                 .enumerate()
-                .any(|(index, signal)| {
-                    signal.is_empty() || self.model.input_signals[..index].contains(signal)
-                })
+                .any(|(index, signal)| signal.is_empty() || self.model.input_signals[..index].contains(signal))
             || self.model.history_length == 0
             || self.model.warmup_iterations == 0
             || !self.model.maximum_uncertainty.is_finite()
@@ -142,24 +138,20 @@ impl ValidatedBundle {
             || !self.model.iat_input_maximum_c.is_finite()
             || self.model.iat_input_minimum_c >= self.model.iat_input_maximum_c
             || self.model.command_lattice.is_empty()
-            || self.model.command_lattice.iter().any(|command| {
-                !(controller.minimum_basis_points..=controller.maximum_basis_points)
-                    .contains(command)
-            })
             || self
                 .model
                 .command_lattice
-                .windows(2)
-                .any(|pair| pair[0] >= pair[1])
+                .iter()
+                .any(|command| !(controller.minimum_basis_points..=controller.maximum_basis_points).contains(command))
+            || self.model.command_lattice.windows(2).any(|pair| pair[0] >= pair[1])
         {
             return Err(BundleError::InvalidRuntimeTiming);
         }
-        if self.loaded_experiment_plan.as_ref().is_some_and(|plan| {
-            !plan.commands_within(
-                controller.minimum_basis_points,
-                controller.maximum_basis_points,
-            )
-        }) {
+        if self
+            .loaded_experiment_plan
+            .as_ref()
+            .is_some_and(|plan| !plan.commands_within(controller.minimum_basis_points, controller.maximum_basis_points))
+        {
             return Err(BundleError::InvalidRuntimeTiming);
         }
         if self.sync.spool_root != self.run_storage.root
@@ -200,8 +192,7 @@ impl ValidatedBundle {
 }
 
 pub(super) fn strictly_increasing(values: &[f64; 3]) -> bool {
-    values.iter().all(|value| value.is_finite())
-        && values.windows(2).all(|window| window[0] < window[1])
+    values.iter().all(|value| value.is_finite()) && values.windows(2).all(|window| window[0] < window[1])
 }
 
 pub(super) fn breakpoint_index(value: f64, breakpoints: &[f64; 3]) -> usize {
@@ -233,14 +224,13 @@ fn policy_is_monotonic(table: &[[u16; 3]; 3], minimum: f64, maximum: f64) -> boo
 }
 
 pub(super) fn digest(source: &str) -> String {
-    use std::fmt::Write as _;
-
-    Sha256::digest(source.as_bytes())
-        .iter()
-        .fold(String::with_capacity(64), |mut output, byte| {
-            write!(output, "{byte:02x}").expect("writing to String cannot fail");
-            output
-        })
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(64);
+    for byte in Sha256::digest(source.as_bytes()) {
+        output.push(char::from(HEX[usize::from(byte >> 4)]));
+        output.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    output
 }
 
 pub(super) fn load_experiment(
@@ -257,10 +247,7 @@ pub(super) fn load_experiment(
     let path = if configured.is_absolute() {
         configured.to_path_buf()
     } else {
-        bundle_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(configured)
+        bundle_path.parent().unwrap_or_else(|| Path::new(".")).join(configured)
     };
     ExperimentPlan::load(&path)
         .map(Some)

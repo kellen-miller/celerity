@@ -54,11 +54,7 @@ impl SyncConfiguration {
     ///
     /// Returns an error for unreadable TOML, absent/unknown sync fields, or
     /// invalid sync settings.
-    pub fn from_bundle(
-        bundle_path: &Path,
-        journal_path: PathBuf,
-        model_root: PathBuf,
-    ) -> Result<Self, SyncError> {
+    pub fn from_bundle(bundle_path: &Path, journal_path: PathBuf, model_root: PathBuf) -> Result<Self, SyncError> {
         let source = fs::read_to_string(bundle_path).map_err(sync_io)?;
         let root: toml::Value = toml::from_str(&source).map_err(sync_toml)?;
         let sync = root

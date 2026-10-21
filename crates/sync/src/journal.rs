@@ -68,11 +68,7 @@ impl TransferJournal {
         Ok(())
     }
 
-    pub(super) fn record_attempt(
-        &self,
-        digest: &str,
-        result: &Result<(), SyncError>,
-    ) -> Result<(), SyncError> {
+    pub(super) fn record_attempt(&self, digest: &str, result: &Result<(), SyncError>) -> Result<(), SyncError> {
         let (acknowledged, error) = match result {
             Ok(()) => (1, None),
             Err(error) => (0, Some(error.to_string())),
@@ -116,9 +112,7 @@ impl TransferJournal {
                 [digest],
                 |row| row.get::<_, i64>(0),
             )
-            .map_or(true, |next_attempt_at| {
-                next_attempt_at <= current_unix_seconds()
-            })
+            .map_or(true, |next_attempt_at| next_attempt_at <= current_unix_seconds())
     }
 
     #[must_use]

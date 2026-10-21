@@ -1,19 +1,17 @@
 use control_core::{ControllerEmulator, ControllerMode, EmulatorProvisioning};
-use control_protocol::{
-    Command, Configuration, DiscoveryProbe, Frame, RuntimeLease, decode, encode,
-};
+use control_protocol::{Command, Configuration, DiscoveryProbe, Frame, RuntimeLease, decode, encode};
 
-fn ingest(emulator: &mut ControllerEmulator, now_ms: u64, frame: &Frame) -> Frame {
+fn ingest(emulator: &mut ControllerEmulator, now_ms: u64, frame: &Frame) -> Result<Frame, String> {
     let mut payload = [0_u8; 64];
-    let encoded = encode(frame, &mut payload).expect("fixture must encode");
+    let encoded = encode(frame, &mut payload).map_err(|error| format!("{error:?}"))?;
     let response = emulator
         .ingest(now_ms, encoded.can_id, &payload[..encoded.len])
-        .expect("fixture must be valid")
-        .expect("fixture must produce a response");
-    decode(response.can_id, response.payload()).expect("response must use production codec")
+        .map_err(|error| format!("{error:?}"))?
+        .ok_or_else(|| "fixture must produce a response".to_owned())?;
+    decode(response.can_id, response.payload()).map_err(|error| format!("{error:?}"))
 }
 
-fn configured_emulator() -> ControllerEmulator {
+fn configured_emulator() -> Result<ControllerEmulator, String> {
     let mut emulator = ControllerEmulator::new(EmulatorProvisioning {
         node: 1,
         identity: 42,
@@ -44,14 +42,17 @@ fn configured_emulator() -> ControllerEmulator {
                 digest_prefix: 4,
             },
         },
-    );
-    assert!(matches!(response, Frame::ConfigurationAck { .. }));
-    emulator
+    )?;
+    if !matches!(response, Frame::ConfigurationAck { .. }) {
+        return Err("fixture must produce a configuration acknowledgement".to_owned());
+    }
+
+    Ok(emulator)
 }
 
 #[test]
 fn discovery_emits_announce_then_capability() {
-    let mut emulator = configured_emulator();
+    let mut emulator = configured_emulator().expect("configured emulator");
     let mut payload = [0_u8; 64];
     let encoded = encode(
         &Frame::DiscoveryProbe(DiscoveryProbe {
@@ -73,9 +74,7 @@ fn discovery_emits_announce_then_capability() {
         panic!("expected node announce")
     };
     assert_eq!(message.state_flags, 1);
-    let capability = announce
-        .follow_up()
-        .expect("capability must follow announce");
+    let capability = announce.follow_up().expect("capability must follow announce");
     assert!(matches!(
         decode(capability.can_id, capability.payload()).expect("capability must decode"),
         Frame::CapabilityReport { .. }
@@ -84,7 +83,7 @@ fn discovery_emits_announce_then_capability() {
 
 #[test]
 fn heartbeat_uses_the_configured_period_and_current_truth() {
-    let mut emulator = configured_emulator();
+    let mut emulator = configured_emulator().expect("configured emulator");
     assert!(emulator.heartbeat(49).expect("heartbeat timer").is_none());
 
     let heartbeat = emulator
@@ -105,7 +104,7 @@ fn heartbeat_uses_the_configured_period_and_current_truth() {
 
 #[test]
 fn accepted_command_refreshes_only_command_lease() {
-    let mut emulator = configured_emulator();
+    let mut emulator = configured_emulator().expect("configured emulator");
     ingest(
         &mut emulator,
         0,
@@ -119,7 +118,8 @@ fn accepted_command_refreshes_only_command_lease() {
                 validity_ms: 500,
             },
         },
-    );
+    )
+    .expect("runtime lease acknowledgement");
     let response = ingest(
         &mut emulator,
         10,
@@ -134,7 +134,8 @@ fn accepted_command_refreshes_only_command_lease() {
                 flags: 0,
             },
         },
-    );
+    )
+    .expect("command acknowledgement");
     assert!(matches!(response, Frame::CommandAck { .. }));
     assert_eq!(emulator.mode(), ControllerMode::RemoteAuthority);
     assert_eq!(emulator.accepted_basis_points(), 4_000);
@@ -147,7 +148,7 @@ fn accepted_command_refreshes_only_command_lease() {
 
 #[test]
 fn rejected_command_does_not_refresh_command_lease() {
-    let mut emulator = configured_emulator();
+    let mut emulator = configured_emulator().expect("configured emulator");
     ingest(
         &mut emulator,
         0,
@@ -161,7 +162,8 @@ fn rejected_command_does_not_refresh_command_lease() {
                 validity_ms: 500,
             },
         },
-    );
+    )
+    .expect("runtime lease acknowledgement");
     ingest(
         &mut emulator,
         10,
@@ -176,7 +178,8 @@ fn rejected_command_does_not_refresh_command_lease() {
                 flags: 0,
             },
         },
-    );
+    )
+    .expect("command acknowledgement");
     let rejected = ingest(
         &mut emulator,
         90,
@@ -191,7 +194,8 @@ fn rejected_command_does_not_refresh_command_lease() {
                 flags: 0,
             },
         },
-    );
+    )
+    .expect("rejected command acknowledgement");
     let Frame::CommandAck { message, .. } = rejected else {
         panic!("expected command acknowledgement")
     };
@@ -203,7 +207,7 @@ fn rejected_command_does_not_refresh_command_lease() {
 
 #[test]
 fn reboot_never_restores_authority() {
-    let mut emulator = configured_emulator();
+    let mut emulator = configured_emulator().expect("configured emulator");
     ingest(
         &mut emulator,
         0,
@@ -217,7 +221,8 @@ fn reboot_never_restores_authority() {
                 validity_ms: 500,
             },
         },
-    );
+    )
+    .expect("runtime lease acknowledgement");
     ingest(
         &mut emulator,
         1,
@@ -232,7 +237,8 @@ fn reboot_never_restores_authority() {
                 flags: 0,
             },
         },
-    );
+    )
+    .expect("command acknowledgement");
 
     emulator.reboot(8);
     assert_eq!(emulator.boot_session(), 8);
@@ -242,7 +248,7 @@ fn reboot_never_restores_authority() {
 
 #[test]
 fn expired_runtime_lease_allows_a_new_daemon_epoch() {
-    let mut emulator = configured_emulator();
+    let mut emulator = configured_emulator().expect("configured emulator");
     ingest(
         &mut emulator,
         0,
@@ -256,7 +262,8 @@ fn expired_runtime_lease_allows_a_new_daemon_epoch() {
                 validity_ms: 100,
             },
         },
-    );
+    )
+    .expect("runtime lease acknowledgement");
 
     emulator.advance_to(100);
 
@@ -273,7 +280,8 @@ fn expired_runtime_lease_allows_a_new_daemon_epoch() {
                 validity_ms: 100,
             },
         },
-    ) else {
+    )
+    .expect("runtime lease acknowledgement") else {
         panic!("expected runtime lease acknowledgement")
     };
     assert_eq!(message.result, 1);

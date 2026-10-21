@@ -4,9 +4,7 @@ use crate::ValidatedBundle;
 
 use celerity_proto::celerity::v1::ModelBundleManifest;
 use prost::Message;
-use tract_onnx::prelude::{
-    Framework, InferenceModelExt, IntoRunnable, Tensor, TypedRunnableModel, tvec,
-};
+use tract_onnx::prelude::{Framework, InferenceModelExt, IntoRunnable, Tensor, TypedRunnableModel, tvec};
 
 mod slots;
 
@@ -35,11 +33,7 @@ impl TractModel {
     ///
     /// Returns a typed error for missing/corrupt/incompatible graphs, invalid
     /// shape, nonfinite values, or tract execution failures.
-    pub fn load(
-        path: &Path,
-        input_length: usize,
-        warmup_iterations: usize,
-    ) -> Result<Self, ModelError> {
+    pub fn load(path: &Path, input_length: usize, warmup_iterations: usize) -> Result<Self, ModelError> {
         if input_length == 0 || warmup_iterations == 0 {
             return Err(ModelError::InputShape);
         }
@@ -107,10 +101,7 @@ pub struct InferenceBudget {
 impl InferenceBudget {
     #[must_use]
     pub const fn allows(self, remaining_cycle_ns: u64) -> bool {
-        remaining_cycle_ns
-            >= self
-                .measured_ceiling_ns
-                .saturating_add(self.required_post_work_ns)
+        remaining_cycle_ns >= self.measured_ceiling_ns.saturating_add(self.required_post_work_ns)
     }
 }
 
@@ -146,9 +137,8 @@ impl ThermalOptimizer {
             {
                 continue;
             }
-            let replace = selected.is_none_or(|prior| {
-                compare_candidate(candidate, &prior, current_split_basis_points).is_lt()
-            });
+            let replace =
+                selected.is_none_or(|prior| compare_candidate(candidate, &prior, current_split_basis_points).is_lt());
             if replace {
                 selected = Some(*candidate);
             }
@@ -217,18 +207,16 @@ impl RuntimeModel {
             && metadata.calibration_error >= 0.0
             && metadata.input_ranges.len() == bundle.model.input_signals.len()
             && metadata.normalization.len() == bundle.model.input_signals.len()
-            && metadata.input_ranges.iter().all(|range| {
-                range.minimum.is_finite()
-                    && range.maximum.is_finite()
-                    && range.minimum <= range.maximum
-            })
-            && metadata.normalization.iter().all(|value| {
-                value.mean.is_finite() && value.scale.is_finite() && value.scale > 0.0
-            });
+            && metadata
+                .input_ranges
+                .iter()
+                .all(|range| range.minimum.is_finite() && range.maximum.is_finite() && range.minimum <= range.maximum)
+            && metadata
+                .normalization
+                .iter()
+                .all(|value| value.mean.is_finite() && value.scale.is_finite() && value.scale > 0.0);
         if !metadata_valid {
-            return Err(ModelError::Load(
-                "invalid model eligibility metadata".to_owned(),
-            ));
+            return Err(ModelError::Load("invalid model eligibility metadata".to_owned()));
         }
         let input_ranges = metadata
             .input_ranges
@@ -276,24 +264,37 @@ impl RuntimeModel {
                 reason: ModelIneligibility::IncompleteHistory,
             };
         }
-        let current = self
-            .history
-            .back()
-            .expect("complete history has a current sample");
-        let coolant_c = current[bundle
+        let Some(current) = self.history.back() else {
+            return ModelCommandSelection::Deterministic {
+                split_basis_points: deterministic_split_basis_points,
+                reason: ModelIneligibility::IncompleteHistory,
+            };
+        };
+        let Some(coolant_index) = bundle
             .model
             .input_signals
             .iter()
             .position(|signal| signal == "coolant_temperature_c")
-            .expect("validated coolant input")];
-        let iat_c = current[bundle
+        else {
+            return ModelCommandSelection::Deterministic {
+                split_basis_points: deterministic_split_basis_points,
+                reason: ModelIneligibility::Incompatible,
+            };
+        };
+        let Some(iat_index) = bundle
             .model
             .input_signals
             .iter()
             .position(|signal| signal == "air_temperature_c")
-            .expect("validated IAT input")];
-        let coolant_range =
-            bundle.model.coolant_input_maximum_c - bundle.model.coolant_input_minimum_c;
+        else {
+            return ModelCommandSelection::Deterministic {
+                split_basis_points: deterministic_split_basis_points,
+                reason: ModelIneligibility::Incompatible,
+            };
+        };
+        let coolant_c = current[coolant_index];
+        let iat_c = current[iat_index];
+        let coolant_range = bundle.model.coolant_input_maximum_c - bundle.model.coolant_input_minimum_c;
         let iat_range = bundle.model.iat_input_maximum_c - bundle.model.iat_input_minimum_c;
         let outside = |value: f64, minimum: f64, maximum: f64, range: f64| {
             if value < minimum {
@@ -320,18 +321,14 @@ impl RuntimeModel {
             .iter()
             .zip(&self.input_ranges)
             .map(|(value, (minimum, maximum))| {
-                outside(
-                    *value,
-                    *minimum,
-                    *maximum,
-                    (*maximum - *minimum).max(f64::EPSILON),
-                )
+                outside(*value, *minimum, *maximum, (*maximum - *minimum).max(f64::EPSILON))
             })
             .fold(configured_ood_score, f64::max);
         let budget = InferenceBudget {
-            measured_ceiling_ns: self.graph.measured_ceiling_ns().saturating_mul(
-                u64::try_from(bundle.model.command_lattice.len()).unwrap_or(u64::MAX),
-            ),
+            measured_ceiling_ns: self
+                .graph
+                .measured_ceiling_ns()
+                .saturating_mul(u64::try_from(bundle.model.command_lattice.len()).unwrap_or(u64::MAX)),
             required_post_work_ns: bundle.model.required_post_work_ns,
         };
         if !budget.allows(remaining_cycle_ns) {
@@ -430,14 +427,8 @@ pub fn select_model_or_deterministic(
             reason,
         };
     }
-    match ThermalOptimizer::select(
-        candidates,
-        current_split_basis_points,
-        hard_coolant_ceiling_c,
-    ) {
-        OptimizerDecision::Selected { split_basis_points } => {
-            ModelCommandSelection::Optimized { split_basis_points }
-        }
+    match ThermalOptimizer::select(candidates, current_split_basis_points, hard_coolant_ceiling_c) {
+        OptimizerDecision::Selected { split_basis_points } => ModelCommandSelection::Optimized { split_basis_points },
         OptimizerDecision::NoFeasibleCandidate => ModelCommandSelection::Deterministic {
             split_basis_points: deterministic_split_basis_points,
             reason: ModelIneligibility::NoFeasibleCandidate,
@@ -445,11 +436,7 @@ pub fn select_model_or_deterministic(
     }
 }
 
-fn compare_candidate(
-    candidate: &CandidatePrediction,
-    prior: &CandidatePrediction,
-    current: u16,
-) -> std::cmp::Ordering {
+fn compare_candidate(candidate: &CandidatePrediction, prior: &CandidatePrediction, current: u16) -> std::cmp::Ordering {
     candidate
         .coolant_target_excess_c
         .total_cmp(&prior.coolant_target_excess_c)

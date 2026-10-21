@@ -13,8 +13,7 @@ fn production_dependency_closure_excludes_authority_can_run_and_onnx() {
         "cargo metadata failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let metadata: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("metadata JSON");
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).expect("metadata JSON");
     let packages = metadata["packages"].as_array().expect("packages");
     let viewer = packages
         .iter()
@@ -39,9 +38,7 @@ fn production_dependency_closure_excludes_authority_can_run_and_onnx() {
         ])
     );
 
-    let resolve = metadata["resolve"]["nodes"]
-        .as_array()
-        .expect("resolve nodes");
+    let resolve = metadata["resolve"]["nodes"].as_array().expect("resolve nodes");
     let root_id = viewer["id"].as_str().expect("vehicle-ui ID");
     let mut pending = vec![root_id];
     let mut visited = BTreeSet::new();
@@ -77,10 +74,7 @@ fn production_dependency_closure_excludes_authority_can_run_and_onnx() {
         "tract-core",
         "tract-onnx",
     ] {
-        assert!(
-            !names.contains(forbidden),
-            "forbidden dependency: {forbidden}"
-        );
+        assert!(!names.contains(forbidden), "forbidden dependency: {forbidden}");
     }
     assert!(
         names.iter().all(|name| !name.starts_with("tract-")),

@@ -11,17 +11,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
-    use control_core::{
-        Completion, ModelSlots, RuntimeModel, StartupMode, ValidatedBundle, recover_incomplete_runs,
-    };
+    use control_core::{Completion, ModelSlots, RuntimeModel, StartupMode, ValidatedBundle, recover_incomplete_runs};
     use sd_notify::NotifyState;
     use signal_hook::consts::{SIGINT, SIGTERM};
 
     let mut arguments = env::args().skip(1);
     let argument = arguments.next().ok_or_else(|| {
-        io::Error::other(
-            "usage: celerityd <live-bundle.toml> | celerityd --systemd-vcan-check <live-bundle.toml>",
-        )
+        io::Error::other("usage: celerityd <live-bundle.toml> | celerityd --systemd-vcan-check <live-bundle.toml>")
     })?;
     if argument == "--systemd-supervisor-check" {
         let stopping = Arc::new(AtomicBool::new(false));
@@ -31,8 +27,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             NotifyState::Ready,
             NotifyState::Status("test-only supervisor check; no vehicle authority"),
         ])?;
-        let watchdog_interval = sd_notify::watchdog_enabled()
-            .map_or(Duration::from_millis(250), |duration| duration / 2);
+        let watchdog_interval =
+            sd_notify::watchdog_enabled().map_or(Duration::from_millis(250), |duration| duration / 2);
         while !stopping.load(Ordering::Relaxed) {
             sd_notify::notify(&[NotifyState::Watchdog])?;
             thread::sleep(watchdog_interval);
@@ -45,9 +41,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let (argument, systemd_vcan_check) = if argument == "--systemd-vcan-check" {
-        let bundle = arguments.next().ok_or_else(|| {
-            io::Error::other("usage: celerityd --systemd-vcan-check <live-bundle.toml>")
-        })?;
+        let bundle = arguments
+            .next()
+            .ok_or_else(|| io::Error::other("usage: celerityd --systemd-vcan-check <live-bundle.toml>"))?;
         (bundle, true)
     } else {
         (argument, false)
@@ -61,8 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for recovered in recover_incomplete_runs(bundle.run_storage_root()).map_err(io::Error::other)? {
         eprintln!("recovered incomplete Run manifest {}", recovered.display());
     }
-    let slots = ModelSlots::open(bundle.model_slots_root())
-        .map_err(|error| io::Error::other(format!("{error:?}")))?;
+    let slots = ModelSlots::open(bundle.model_slots_root()).map_err(|error| io::Error::other(format!("{error:?}")))?;
     let mut selected = slots
         .select_configured_startup(bundle.model_abi(), bundle.model_input_length())
         .map_err(|error| io::Error::other(format!("{error:?}")))?;
@@ -86,13 +81,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Err(error) => {
                             slots
                                 .mark_rejected(&known_good.digest)
-                                .map_err(|slot_error| {
-                                    io::Error::other(format!("{slot_error:?}"))
-                                })?;
-                            eprintln!(
-                                "rejected known-good startup model {}: {error:?}",
-                                known_good.digest
-                            );
+                                .map_err(|slot_error| io::Error::other(format!("{slot_error:?}")))?;
+                            eprintln!("rejected known-good startup model {}: {error:?}", known_good.digest);
                             selected = None;
                         }
                     }
@@ -118,14 +108,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         bundle.cycle_ms(),
         Instant::now(),
     );
-    let diagnostics = vehicle_diagnostics::serve_diagnostics(
-        &socket,
-        Arc::clone(&stopping),
-        diagnostics_store.clone(),
-    )?;
+    let diagnostics =
+        vehicle_diagnostics::serve_diagnostics(&socket, Arc::clone(&stopping), diagnostics_store.clone())?;
 
-    let epoch = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())
-        .unwrap_or(u64::MAX)
+    let epoch = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()).unwrap_or(u64::MAX)
         ^ u64::from(std::process::id());
     let epoch = epoch.max(1);
     let run_id = format!("live-{epoch:016x}");

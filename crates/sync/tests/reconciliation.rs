@@ -1,6 +1,5 @@
 use std::{
     cell::RefCell,
-    fmt::Write as _,
     fs,
     io::{Cursor, Write},
     path::{Path, PathBuf},
@@ -9,14 +8,13 @@ use std::{
 };
 
 use celerity_proto::celerity::v1::{
-    CompletedRun, Completion, ModelBundleManifest, ModelCompatibility, ModelInputRange,
-    ModelNormalization, ReconcileRequest, ReconcileResponse, RunChunk, RunManifest,
+    CompletedRun, Completion, ModelBundleManifest, ModelCompatibility, ModelInputRange, ModelNormalization,
+    ReconcileRequest, ReconcileResponse, RunChunk, RunManifest,
 };
 use prost::Message;
 use sha2::{Digest, Sha256};
 use sync::{
-    HomeApi, LinuxNetworkPresence, NetworkPresence, ReconcileOutcome, SyncConfiguration, SyncError,
-    Synchronizer,
+    HomeApi, LinuxNetworkPresence, NetworkPresence, ReconcileOutcome, SyncConfiguration, SyncError, Synchronizer,
 };
 
 struct Present;
@@ -36,9 +34,7 @@ struct RecordingHome {
 
 impl HomeApi for RecordingHome {
     fn reconcile(&self, request: &ReconcileRequest) -> Result<ReconcileResponse, SyncError> {
-        self.missing
-            .borrow_mut()
-            .clone_from(&request.completed_run_digests);
+        self.missing.borrow_mut().clone_from(&request.completed_run_digests);
         Ok(ReconcileResponse {
             missing_run_digests: self.missing.borrow().clone(),
             desired_model_digest: self.model.borrow().as_ref().map(|bytes| digest(bytes)),
@@ -57,7 +53,11 @@ impl HomeApi for RecordingHome {
     }
 
     fn get_model(&self, _digest: &str) -> Result<Vec<u8>, SyncError> {
-        Ok(self.model.borrow().clone().expect("model bytes"))
+        let Some(model) = self.model.borrow().clone() else {
+            panic!("model fixture must be configured before get_model");
+        };
+
+        Ok(model)
     }
 }
 
@@ -71,24 +71,15 @@ fn root() -> PathBuf {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(64);
-    for byte in Sha256::digest(bytes) {
-        write!(output, "{byte:02x}").expect("String write");
-    }
-    output
+    hex::encode(Sha256::digest(bytes))
 }
 
-fn model_bundle() -> Vec<u8> {
-    let model =
-        fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx"))
-            .expect("model fixture");
+fn model_bundle() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let model = fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx"))?;
     let manifest = ModelBundleManifest {
         schema_version: 1,
         onnx_sha256: digest(&model),
-        signal_order: vec![
-            "coolant_temperature_c".to_owned(),
-            "air_temperature_c".to_owned(),
-        ],
+        signal_order: vec!["coolant_temperature_c".to_owned(), "air_temperature_c".to_owned()],
         units: vec!["native".to_owned(), "native".to_owned()],
         sample_period_ms: 20,
         history_length: 4,
@@ -126,22 +117,18 @@ fn model_bundle() -> Vec<u8> {
     let cursor = Cursor::new(Vec::new());
     let mut archive = zip::ZipWriter::new(cursor);
     let options = zip::write::SimpleFileOptions::default();
-    archive
-        .start_file("manifest.pb", options)
-        .expect("manifest entry");
-    archive.write_all(&manifest).expect("manifest bytes");
-    archive
-        .start_file("model.onnx", options)
-        .expect("model entry");
-    archive.write_all(&model).expect("model bytes");
-    archive.finish().expect("finish bundle").into_inner()
+    archive.start_file("manifest.pb", options)?;
+    archive.write_all(&manifest)?;
+    archive.start_file("model.onnx", options)?;
+    archive.write_all(&model)?;
+    Ok(archive.finish()?.into_inner())
 }
 
-fn write_run(root: &Path, name: &str) {
+fn write_run(root: &Path, name: &str) -> std::io::Result<()> {
     let directory = root.join("runs").join(name);
-    fs::create_dir_all(&directory).expect("run directory");
+    fs::create_dir_all(&directory)?;
     let bytes = format!("chunk-{name}").into_bytes();
-    fs::write(directory.join("events.chunk"), &bytes).expect("chunk");
+    fs::write(directory.join("events.chunk"), &bytes)?;
     fs::write(
         directory.join("manifest.pb"),
         RunManifest {
@@ -157,8 +144,8 @@ fn write_run(root: &Path, name: &str) {
             ..RunManifest::default()
         }
         .encode_to_vec(),
-    )
-    .expect("write manifest");
+    )?;
+    Ok(())
 }
 
 fn configuration(root: &Path) -> SyncConfiguration {
@@ -173,10 +160,7 @@ fn configuration(root: &Path) -> SyncConfiguration {
         journal_path: root.join("sync.sqlite3"),
         model_root: root.join("models"),
         model_abi: "thermal-v1".to_owned(),
-        model_input_signals: vec![
-            "coolant_temperature_c".to_owned(),
-            "air_temperature_c".to_owned(),
-        ],
+        model_input_signals: vec!["coolant_temperature_c".to_owned(), "air_temperature_c".to_owned()],
         model_history_length: 4,
         model_command_lattice: vec![1000, 5000, 9000],
         model_maximum_calibration_error: 0.1,
@@ -201,10 +185,10 @@ fn linux_presence_requires_up_link_and_matching_default_route() {
 #[test]
 fn reconcile_uploads_exact_artifacts_then_applies_acknowledged_retention() {
     let root = root();
-    write_run(&root, "z-old");
+    write_run(&root, "z-old").expect("old run fixture");
     std::thread::sleep(Duration::from_millis(10));
-    write_run(&root, "a-new");
-    let bundle = model_bundle();
+    write_run(&root, "a-new").expect("new run fixture");
+    let bundle = model_bundle().expect("model bundle fixture");
     let home = RecordingHome {
         model: RefCell::new(Some(bundle.clone())),
         ..RecordingHome::default()
@@ -259,19 +243,13 @@ fn staging_preserves_the_only_known_good_rollback_slot() {
     fs::write(models.join("active-digest"), "unproven-active\n").expect("active marker");
     let known_good_contents = fs::read(models.join("slot-a/bundle-digest")).expect("contents");
     let home = RecordingHome {
-        model: RefCell::new(Some(model_bundle())),
+        model: RefCell::new(Some(model_bundle().expect("model bundle fixture"))),
         ..RecordingHome::default()
     };
     let mut sync = Synchronizer::new(configuration(&root)).expect("synchronizer");
 
     assert_eq!(
-        sync.reconcile_once(
-            &Present,
-            &home,
-            Some("unproven-active"),
-            Some("unproven-active"),
-            &[],
-        ),
+        sync.reconcile_once(&Present, &home, Some("unproven-active"), Some("unproven-active"), &[],),
         Ok(ReconcileOutcome::Synchronized {
             uploaded: 0,
             model_staged: false,

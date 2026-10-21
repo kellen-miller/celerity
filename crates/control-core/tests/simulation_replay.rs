@@ -1,21 +1,18 @@
 use std::{fs, path::PathBuf};
 
 use control_core::{
-    EnqueueResult, ExternalAdapters, RunRecord, RunWriter, Runtime, SimulationScenario,
-    StartupMode, ValidatedBundle, replay_events,
+    EnqueueResult, ExternalAdapters, RunRecord, RunWriter, Runtime, SimulationScenario, StartupMode, ValidatedBundle,
+    replay_events,
 };
 
 fn repository_path(path: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(path)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").join(path)
 }
 
 #[test]
 fn sealed_simulation_replays_through_identical_policy() {
     let scenario =
-        SimulationScenario::load(&repository_path("fixtures/scenarios/healthy-startup.toml"))
-            .expect("scenario");
+        SimulationScenario::load(&repository_path("fixtures/scenarios/healthy-startup.toml")).expect("scenario");
     let simulation_bundle = ValidatedBundle::load(
         &repository_path("config/examples/simulation.toml"),
         StartupMode::Simulation,
@@ -42,11 +39,8 @@ fn sealed_simulation_replays_through_identical_policy() {
     }
     writer.seal().expect("seal run");
 
-    let replay_bundle = ValidatedBundle::load(
-        &repository_path("config/examples/replay.toml"),
-        StartupMode::Replay,
-    )
-    .expect("replay config");
+    let replay_bundle = ValidatedBundle::load(&repository_path("config/examples/replay.toml"), StartupMode::Replay)
+        .expect("replay config");
     let replayed = Runtime::new(
         replay_bundle,
         ExternalAdapters::replay(replay_events(&root.join("healthy")).expect("replay events")),

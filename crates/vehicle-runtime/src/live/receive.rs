@@ -4,9 +4,7 @@ use control_core::{ControllerMode, EnqueueResult, RawCanEvidence, RunRecord, Run
 use control_protocol::{DiscoveryProbe, Frame};
 use vehicle_diagnostics::AcceptedRadiatorSplitCommand;
 
-use super::{
-    CONFIGURATION_RETRY_INTERVAL, DISCOVERY_RETRY_INTERVAL, LiveRuntime, map_command_source,
-};
+use super::{CONFIGURATION_RETRY_INTERVAL, DISCOVERY_RETRY_INTERVAL, LiveRuntime, map_command_source};
 
 impl LiveRuntime {
     pub(crate) fn receive_powertrain(&mut self) {
@@ -37,8 +35,7 @@ impl LiveRuntime {
                 fd: false,
                 bit_rate_switch: false,
                 data: received.data.clone(),
-                hardware_timestamp_ns: (received.timestamp_source
-                    == crate::TimestampSource::RawHardware)
+                hardware_timestamp_ns: (received.timestamp_source == crate::TimestampSource::RawHardware)
                     .then_some(received.timestamp_ns),
             },
         ));
@@ -68,10 +65,8 @@ impl LiveRuntime {
                 0,
                 raw_sequence,
             ));
-            self.signal_values.insert(
-                signal.name.to_owned(),
-                (signal.value, observed_ms, raw_sequence),
-            );
+            self.signal_values
+                .insert(signal.name.to_owned(), (signal.value, observed_ms, raw_sequence));
         }
     }
 
@@ -80,10 +75,7 @@ impl LiveRuntime {
         let iat = self.signal_values.get("air_temperature_c").copied();
         if let (Some((coolant_c, coolant_ms, _)), Some((iat_c, iat_ms, _))) = (coolant, iat) {
             let observed_ms = coolant_ms.min(iat_ms);
-            if self
-                .last_safety_observed_ms
-                .is_some_and(|last| observed_ms <= last)
-            {
+            if self.last_safety_observed_ms.is_some_and(|last| observed_ms <= last) {
                 return Ok(());
             }
             self.last_safety_observed_ms = Some(observed_ms);
@@ -105,11 +97,9 @@ impl LiveRuntime {
             .model_input_signals()
             .iter()
             .map(|signal| {
-                self.signal_values
-                    .get(signal)
-                    .and_then(|(value, observed_ms, _)| {
-                        (now_ms.saturating_sub(*observed_ms) <= maximum_age_ms).then_some(*value)
-                    })
+                self.signal_values.get(signal).and_then(|(value, observed_ms, _)| {
+                    (now_ms.saturating_sub(*observed_ms) <= maximum_age_ms).then_some(*value)
+                })
             })
             .collect::<Option<Vec<_>>>();
         match values {
@@ -142,9 +132,7 @@ impl LiveRuntime {
                     values,
                 })
             }
-            None => self.ingest(RuntimeEvent::ModelSignalsUnavailable {
-                monotonic_ms: now_ms,
-            }),
+            None => self.ingest(RuntimeEvent::ModelSignalsUnavailable { monotonic_ms: now_ms }),
         }
     }
 
@@ -154,9 +142,10 @@ impl LiveRuntime {
         }
         let now = Instant::now();
         if self.capability_boot_session.is_some() {
-            if self.configuration_sent_at.is_none_or(|sent| {
-                now.saturating_duration_since(sent) >= CONFIGURATION_RETRY_INTERVAL
-            }) {
+            if self
+                .configuration_sent_at
+                .is_none_or(|sent| now.saturating_duration_since(sent) >= CONFIGURATION_RETRY_INTERVAL)
+            {
                 self.configure_reconciled_controller()?;
             }
         } else if self
@@ -231,20 +220,16 @@ impl LiveRuntime {
                     && message.provisioned_identity == self.controller.identity
                     && message.capability_generation == self.controller.capability_generation
                     && (message.configuration_generation == 0
-                        || message.configuration_generation
-                            == self.controller.configuration_generation);
+                        || message.configuration_generation == self.controller.configuration_generation);
                 if valid {
-                    let session_changed = self
-                        .boot_session
-                        .is_some_and(|session| session != message.boot_session);
+                    let session_changed = self.boot_session.is_some_and(|session| session != message.boot_session);
                     let was_configured = self.configured;
                     if session_changed {
                         self.clear_controller_diagnostics();
                         self.configuration_sent_at = None;
                     }
                     if self.writer.as_ref().is_some_and(|writer| {
-                        writer.record_firmware_generation(message.firmware_generation)
-                            == EnqueueResult::Degraded
+                        writer.record_firmware_generation(message.firmware_generation) == EnqueueResult::Degraded
                     }) {
                         self.storage_degraded = true;
                     }
@@ -343,8 +328,7 @@ impl LiveRuntime {
             Frame::CommandAck { node, message } if node == self.controller.address => {
                 let accepted = self.last_sent_command.is_some_and(|command| {
                     Some(message.boot_session) == self.boot_session
-                        && message.configuration_generation
-                            == self.controller.configuration_generation
+                        && message.configuration_generation == self.controller.configuration_generation
                         && message.epoch == self.epoch
                         && message.command_sequence == command.sequence
                         && message.accepted_basis_points == command.basis_points
@@ -361,11 +345,10 @@ impl LiveRuntime {
                 })?;
                 if accepted && let Some(command) = self.last_sent_command.take() {
                     self.last_matching_command_ack_at = Some(Instant::now());
-                    self.last_accepted_radiator_split_command =
-                        Some(AcceptedRadiatorSplitCommand {
-                            basis_points: command.basis_points,
-                            source: map_command_source(command.source),
-                        });
+                    self.last_accepted_radiator_split_command = Some(AcceptedRadiatorSplitCommand {
+                        basis_points: command.basis_points,
+                        source: map_command_source(command.source),
+                    });
                     self.event_sequence = self.event_sequence.saturating_add(1);
                     self.enqueue_record(RunRecord::control(
                         self.event_sequence,
@@ -388,8 +371,7 @@ impl LiveRuntime {
             Frame::RuntimeLeaseAck { node, message } if node == self.controller.address => {
                 if self.last_sent_runtime_lease.is_some_and(|lease| {
                     Some(message.boot_session) == self.boot_session
-                        && message.configuration_generation
-                            == self.controller.configuration_generation
+                        && message.configuration_generation == self.controller.configuration_generation
                         && message.epoch == self.epoch
                         && message.renewal_sequence == lease.sequence
                         && message.result == 1

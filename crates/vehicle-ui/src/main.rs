@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let worker_stopping = Arc::clone(&stopping);
     let worker = thread::Builder::new()
         .name("celerity-status-observer".to_owned())
-        .spawn(move || {
+        .spawn(move || -> Result<(), std::io::Error> {
             let mut failure_active = false;
             let mut last_failure_log = None;
             while !worker_stopping.load(Ordering::Relaxed) {
@@ -36,8 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     Err(error)
                         if !failure_active
                             || last_failure_log.is_none_or(|last_log: Instant| {
-                                observed_at.saturating_duration_since(last_log)
-                                    >= Duration::from_secs(5)
+                                observed_at.saturating_duration_since(last_log) >= Duration::from_secs(5)
                             }) =>
                     {
                         eprintln!("diagnostics read failed: {error}");
@@ -50,17 +49,20 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
                 worker_observer
                     .write()
-                    .expect("status observer lock poisoned")
+                    .map_err(|_| std::io::Error::other("status observer lock poisoned"))?
                     .observe(result, observed_at);
                 thread::sleep(Duration::from_millis(500));
             }
+
+            Ok(())
         })?;
 
     let result = vehicle_ui::run_http(server, observer, Arc::clone(&stopping));
     stopping.store(true, Ordering::Relaxed);
-    worker
+    let worker_result = worker
         .join()
         .map_err(|_| std::io::Error::other("status observer thread panicked"))?;
+    worker_result?;
     result.map_err(std::io::Error::other)?;
     Ok(())
 }

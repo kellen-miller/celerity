@@ -37,8 +37,8 @@ pub fn verify_actuator_netdevice(
     if expected_actuator == powertrain_interface {
         return Err(LiveNetdeviceError::SameInterface);
     }
-    let value: serde_json::Value = serde_json::from_str(details_json)
-        .map_err(|error| LiveNetdeviceError::InvalidJson(error.to_string()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(details_json).map_err(|error| LiveNetdeviceError::InvalidJson(error.to_string()))?;
     let link = value
         .as_array()
         .and_then(|items| items.first())
@@ -99,8 +99,8 @@ pub fn verify_powertrain_netdevice(
     if expected_powertrain == actuator_interface {
         return Err(LiveNetdeviceError::SameInterface);
     }
-    let value: serde_json::Value = serde_json::from_str(details_json)
-        .map_err(|error| LiveNetdeviceError::InvalidJson(error.to_string()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(details_json).map_err(|error| LiveNetdeviceError::InvalidJson(error.to_string()))?;
     let link = value
         .as_array()
         .and_then(|items| items.first())
@@ -111,11 +111,7 @@ pub fn verify_powertrain_netdevice(
     if link.get("operstate").and_then(serde_json::Value::as_str) != Some("UP") {
         return Err(LiveNetdeviceError::LinkDown);
     }
-    if link
-        .pointer("/linkinfo/info_kind")
-        .and_then(serde_json::Value::as_str)
-        != Some("can")
-    {
+    if link.pointer("/linkinfo/info_kind").and_then(serde_json::Value::as_str) != Some("can") {
         return Err(LiveNetdeviceError::NotClassicalCan);
     }
     let data = link
@@ -131,11 +127,7 @@ pub fn verify_powertrain_netdevice(
     let listen_only = data
         .get("ctrlmode")
         .and_then(serde_json::Value::as_array)
-        .is_some_and(|modes| {
-            modes
-                .iter()
-                .any(|mode| mode.as_str() == Some("LISTEN-ONLY"))
-        });
+        .is_some_and(|modes| modes.iter().any(|mode| mode.as_str() == Some("LISTEN-ONLY")));
     if !listen_only {
         return Err(LiveNetdeviceError::NotListenOnly);
     }
@@ -156,14 +148,7 @@ pub fn query_and_verify_powertrain_netdevice(
     actuator_interface: &str,
 ) -> Result<(), LiveNetdeviceError> {
     let output = std::process::Command::new("ip")
-        .args([
-            "-details",
-            "-json",
-            "link",
-            "show",
-            "dev",
-            powertrain_interface,
-        ])
+        .args(["-details", "-json", "link", "show", "dev", powertrain_interface])
         .output()
         .map_err(|error| LiveNetdeviceError::Query(error.to_string()))?;
     if !output.status.success() {
@@ -236,14 +221,11 @@ impl PowertrainCanReceiver {
         use nix::sys::socket::{setsockopt, sockopt};
         use socketcan::{Socket, SocketOptions};
 
-        let socket =
-            socketcan::CanSocket::open(powertrain_interface).map_err(|error| error.to_string())?;
+        let socket = socketcan::CanSocket::open(powertrain_interface).map_err(|error| error.to_string())?;
         socket
             .set_error_filter_accept_all()
             .map_err(|error| error.to_string())?;
-        socket
-            .set_recv_timestamp(true)
-            .map_err(|error| error.to_string())?;
+        socket.set_recv_timestamp(true).map_err(|error| error.to_string())?;
         socket
             .set_timestamping(
                 socketcan::timestamp::SOF_TIMESTAMPING_RX_HARDWARE
@@ -327,8 +309,7 @@ impl ActuatorCanTransport {
 
         query_and_verify_actuator_netdevice(actuator_interface, powertrain_interface)
             .map_err(|error| format!("{error:?}"))?;
-        let socket =
-            socketcan::CanFdSocket::open(actuator_interface).map_err(|error| error.to_string())?;
+        let socket = socketcan::CanFdSocket::open(actuator_interface).map_err(|error| error.to_string())?;
         socket
             .set_error_filter_accept_all()
             .map_err(|error| error.to_string())?;
@@ -338,8 +319,7 @@ impl ActuatorCanTransport {
     pub(crate) fn bind_prequalified(actuator_interface: &str) -> Result<Self, String> {
         use socketcan::{Socket, SocketOptions};
 
-        let socket =
-            socketcan::CanFdSocket::open(actuator_interface).map_err(|error| error.to_string())?;
+        let socket = socketcan::CanFdSocket::open(actuator_interface).map_err(|error| error.to_string())?;
         socket
             .set_error_filter_accept_all()
             .map_err(|error| error.to_string())?;
@@ -355,16 +335,13 @@ impl ActuatorCanTransport {
         use socketcan::{EmbeddedFrame, Socket};
 
         let mut payload = [0_u8; 64];
-        let encoded =
-            control_protocol::encode(frame, &mut payload).map_err(|error| format!("{error:?}"))?;
+        let encoded = control_protocol::encode(frame, &mut payload).map_err(|error| format!("{error:?}"))?;
         let id = socketcan::StandardId::new(encoded.can_id)
             .ok_or_else(|| "controller frame has invalid standard ID".to_owned())?;
         let mut frame = socketcan::CanFdFrame::new(id, &payload[..encoded.len])
             .ok_or_else(|| "controller frame has invalid CAN FD length".to_owned())?;
         frame.set_brs(true);
-        self.socket
-            .write_frame(&frame)
-            .map_err(|error| error.to_string())
+        self.socket.write_frame(&frame).map_err(|error| error.to_string())
     }
 
     /// Reads one controller frame. CAN error frames and unknown protocol IDs
@@ -376,10 +353,7 @@ impl ActuatorCanTransport {
     pub(crate) fn receive(&self) -> Result<ReceivedControllerFrame, String> {
         use socketcan::{EmbeddedFrame, Frame, Socket};
 
-        let frame = self
-            .socket
-            .read_frame()
-            .map_err(|error| error.to_string())?;
+        let frame = self.socket.read_frame().map_err(|error| error.to_string())?;
         let id = frame.raw_id();
         let data = frame.data().to_vec();
         let (decoded, ignored_reason) = if let socketcan::CanAnyFrame::Error(error) = frame {
@@ -390,10 +364,7 @@ impl ActuatorCanTransport {
                     Ok(decoded) => (Some(decoded), None),
                     Err(error) => (None, Some(format!("unknown controller frame: {error:?}"))),
                 },
-                Err(error) => (
-                    None,
-                    Some(format!("controller frame ID is out of range: {error}")),
-                ),
+                Err(error) => (None, Some(format!("controller frame ID is out of range: {error}"))),
             }
         };
         Ok(ReceivedControllerFrame {
@@ -439,15 +410,14 @@ mod linux_application_tests {
 
     #[test]
     fn production_receive_surface_never_transmits_to_either_vcan() {
-        let receiver = PowertrainCanReceiver::bind_prequalified("vcan-powertrain")
-            .expect("bind production receive-only surface");
+        let receiver =
+            PowertrainCanReceiver::bind_prequalified("vcan-powertrain").expect("bind production receive-only surface");
         let powertrain_sender = CanSocket::open("vcan-powertrain").expect("powertrain sender");
         let controller_observer = CanSocket::open("vcan-controller").expect("controller observer");
         controller_observer
             .set_read_timeout(Duration::from_millis(50))
             .expect("bounded observation");
-        let frame = CanFrame::new(StandardId::new(0x3e0).expect("standard ID"), &[0; 8])
-            .expect("Classical CAN frame");
+        let frame = CanFrame::new(StandardId::new(0x3e0).expect("standard ID"), &[0; 8]).expect("Classical CAN frame");
         powertrain_sender
             .write_frame(&frame)
             .expect("inject powertrain evidence");

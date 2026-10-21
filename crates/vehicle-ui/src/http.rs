@@ -38,37 +38,32 @@ pub fn run_http(
             .collect::<Vec<_>>();
         if host_allowed.len() != 1 || !valid_loopback_host(host_allowed[0]) {
             request
-                .respond(text_response(403, "forbidden\n"))
+                .respond(text_response(403, "forbidden\n")?)
                 .map_err(|error| error.to_string())?;
             continue;
         }
         let known_path = matches!(request.url(), "/" | "/v1/status");
         if !known_path {
             request
-                .respond(text_response(404, "not found\n"))
+                .respond(text_response(404, "not found\n")?)
                 .map_err(|error| error.to_string())?;
             continue;
         }
         if request.method() != &Method::Get {
             request
-                .respond(
-                    text_response(405, "method not allowed\n").with_header(header("Allow", "GET")),
-                )
+                .respond(text_response(405, "method not allowed\n")?.with_header(header("Allow", "GET")?))
                 .map_err(|error| error.to_string())?;
             continue;
         }
         if request.url() == "/" {
-            request
-                .respond(
-                    Response::from_data(INDEX_HTML)
-                        .with_header(header("Content-Type", "text/html; charset=utf-8"))
-                        .with_header(header("X-Content-Type-Options", "nosniff"))
-                        .with_header(header(
-                            "Content-Security-Policy",
-                            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:",
-                        )),
-                )
-                .map_err(|error| error.to_string())?;
+            let response = Response::from_data(INDEX_HTML)
+                .with_header(header("Content-Type", "text/html; charset=utf-8")?)
+                .with_header(header("X-Content-Type-Options", "nosniff")?)
+                .with_header(header(
+                    "Content-Security-Policy",
+                    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:",
+                )?);
+            request.respond(response).map_err(|error| error.to_string())?;
             continue;
         }
         let envelope = observer
@@ -76,14 +71,11 @@ pub fn run_http(
             .map_err(|error| error.to_string())?
             .envelope(Instant::now());
         let body = envelope.to_proto().encode_to_vec();
-        request
-            .respond(
-                Response::from_data(body)
-                    .with_header(header("Content-Type", "application/x-protobuf"))
-                    .with_header(header("Cache-Control", "no-store"))
-                    .with_header(header("X-Content-Type-Options", "nosniff")),
-            )
-            .map_err(|error| error.to_string())?;
+        let response = Response::from_data(body)
+            .with_header(header("Content-Type", "application/x-protobuf")?)
+            .with_header(header("Cache-Control", "no-store")?)
+            .with_header(header("X-Content-Type-Options", "nosniff")?);
+        request.respond(response).map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -106,13 +98,13 @@ fn valid_loopback_host(value: &str) -> bool {
     )
 }
 
-fn text_response(status: u16, body: &str) -> Response<std::io::Cursor<Vec<u8>>> {
-    Response::from_string(body)
+fn text_response(status: u16, body: &str) -> Result<Response<std::io::Cursor<Vec<u8>>>, String> {
+    Ok(Response::from_string(body)
         .with_status_code(StatusCode(status))
-        .with_header(header("Content-Type", "text/plain; charset=utf-8"))
-        .with_header(header("X-Content-Type-Options", "nosniff"))
+        .with_header(header("Content-Type", "text/plain; charset=utf-8")?)
+        .with_header(header("X-Content-Type-Options", "nosniff")?))
 }
 
-fn header(name: &str, value: &str) -> Header {
-    Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("static HTTP header is ASCII")
+fn header(name: &'static str, value: &'static str) -> Result<Header, String> {
+    Header::from_bytes(name.as_bytes(), value.as_bytes()).map_err(|()| format!("invalid static HTTP header: {name}"))
 }

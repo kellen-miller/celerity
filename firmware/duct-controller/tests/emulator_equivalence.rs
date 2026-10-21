@@ -2,18 +2,19 @@ use control_core::{ControllerEmulator, ControllerMode, EmulatorProvisioning};
 use control_protocol::{Command, Configuration, Frame, RuntimeLease, decode, encode};
 use duct_controller::{ControllerState, FirmwareConfiguration, FirmwareMode};
 
-fn ingest(emulator: &mut ControllerEmulator, now_ms: u64, frame: &Frame) -> Frame {
+fn ingest(emulator: &mut ControllerEmulator, now_ms: u64, frame: &Frame) -> Result<Frame, String> {
     let mut payload = [0_u8; 64];
-    let encoded = encode(frame, &mut payload).expect("fixture must encode");
+    let encoded = encode(frame, &mut payload).map_err(|error| format!("{error:?}"))?;
     let response = emulator
         .ingest(now_ms, encoded.can_id, &payload[..encoded.len])
-        .expect("fixture must decode")
-        .expect("fixture must produce a response");
-    decode(response.can_id, response.payload()).expect("response must decode")
+        .map_err(|error| format!("{error:?}"))?
+        .ok_or_else(|| "fixture must produce a response".to_owned())?;
+
+    decode(response.can_id, response.payload()).map_err(|error| format!("{error:?}"))
 }
 
 #[test]
-fn firmware_state_and_emulator_keep_the_same_authority_semantics() {
+fn firmware_state_and_emulator_keep_the_same_authority_semantics() -> Result<(), String> {
     let mut firmware = ControllerState::new(7, 9_000);
     let mut emulator = ControllerEmulator::new(EmulatorProvisioning {
         node: 1,
@@ -56,8 +57,9 @@ fn firmware_state_and_emulator_keep_the_same_authority_semantics() {
             node: 1,
             message: configuration,
         },
-    ) else {
-        panic!("expected configuration acknowledgement")
+    )?
+    else {
+        return Err("expected configuration acknowledgement".to_owned());
     };
     assert_eq!(message.result, 1);
 
@@ -83,8 +85,9 @@ fn firmware_state_and_emulator_keep_the_same_authority_semantics() {
             node: 1,
             message: lease,
         },
-    ) else {
-        panic!("expected lease acknowledgement")
+    )?
+    else {
+        return Err("expected lease acknowledgement".to_owned());
     };
     assert_eq!(message.result, 1);
 
@@ -111,27 +114,21 @@ fn firmware_state_and_emulator_keep_the_same_authority_semantics() {
             node: 1,
             message: command,
         },
-    ) else {
-        panic!("expected command acknowledgement")
+    )?
+    else {
+        return Err("expected command acknowledgement".to_owned());
     };
     assert_eq!(message.result, 1);
     assert_eq!(firmware.mode(), FirmwareMode::RemoteAuthority);
     assert_eq!(emulator.mode(), ControllerMode::RemoteAuthority);
-    assert_eq!(
-        firmware.accepted_basis_points(),
-        emulator.accepted_basis_points()
-    );
+    assert_eq!(firmware.accepted_basis_points(), emulator.accepted_basis_points());
 
     firmware.advance_to(111);
     emulator.advance_to(111);
     assert_eq!(firmware.mode(), FirmwareMode::LocalFallback);
     assert_eq!(emulator.mode(), ControllerMode::LocalFallback);
-    assert_eq!(
-        firmware.accepted_basis_points(),
-        emulator.accepted_basis_points()
-    );
-    assert_eq!(
-        firmware.runtime_lease_valid(111),
-        emulator.runtime_lease_valid(111)
-    );
+    assert_eq!(firmware.accepted_basis_points(), emulator.accepted_basis_points());
+    assert_eq!(firmware.runtime_lease_valid(111), emulator.runtime_lease_valid(111));
+
+    Ok(())
 }

@@ -1,13 +1,12 @@
 use control_protocol::{
-    Command, CommandAck, Configuration, ConfigurationAck, DiscoveryProbe, FallbackAck,
-    FallbackRequest, FaultReport, Frame, Heartbeat, NodeAnnounce, RuntimeLease, RuntimeLeaseAck,
-    WireError, decode, encode,
+    Command, CommandAck, Configuration, ConfigurationAck, DiscoveryProbe, FallbackAck, FallbackRequest, FaultReport,
+    Frame, Heartbeat, NodeAnnounce, RuntimeLease, RuntimeLeaseAck, WireError, decode, encode,
 };
 
-fn encoded(frame: &Frame) -> (u16, Vec<u8>) {
+fn encoded(frame: &Frame) -> Result<(u16, Vec<u8>), String> {
     let mut bytes = [0_u8; 64];
-    let encoded = encode(frame, &mut bytes).expect("fixture must encode");
-    (encoded.can_id, bytes[..encoded.len].to_vec())
+    let encoded = encode(frame, &mut bytes).map_err(|error| format!("{error:?}"))?;
+    Ok((encoded.can_id, bytes[..encoded.len].to_vec()))
 }
 
 #[test]
@@ -184,7 +183,7 @@ fn every_v1_frame_has_exact_id_length_and_round_trip() {
     ];
 
     for (frame, (can_id, length)) in frames.iter().zip(expected) {
-        let (actual_id, bytes) = encoded(frame);
+        let (actual_id, bytes) = encoded(frame).expect("frame encoding");
         assert_eq!((actual_id, bytes.len()), (can_id, length));
         assert_eq!(decode(actual_id, &bytes), Ok(frame.clone()));
     }
@@ -203,13 +202,12 @@ fn command_wire_bytes_are_little_endian_and_reserved_zero() {
             flags: 0x15,
         },
     };
-    let (can_id, bytes) = encoded(&frame);
+    let (can_id, bytes) = encoded(&frame).expect("frame encoding");
     assert_eq!(can_id, 0x101);
     assert_eq!(
         bytes,
         [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0x10, 0x27,
-            0x15, 0
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0x10, 0x27, 0x15, 0
         ]
     );
 }
@@ -227,7 +225,7 @@ fn invalid_wire_values_are_rejected() {
             flags: 0,
         },
     };
-    let (_, mut bytes) = encoded(&command);
+    let (_, mut bytes) = encoded(&command).expect("frame encoding");
     assert_eq!(
         decode(0x101, &bytes[..23]),
         Err(WireError::WrongLength {
@@ -239,10 +237,7 @@ fn invalid_wire_values_are_rejected() {
     assert_eq!(decode(0x101, &bytes), Err(WireError::ReservedNotZero));
     bytes[23] = 0;
     bytes[20..22].copy_from_slice(&10_001_u16.to_le_bytes());
-    assert_eq!(
-        decode(0x101, &bytes),
-        Err(WireError::SplitOutOfRange(10_001))
-    );
+    assert_eq!(decode(0x101, &bytes), Err(WireError::SplitOutOfRange(10_001)));
     assert_eq!(decode(0x100, &bytes), Err(WireError::UnknownId(0x100)));
     assert_eq!(decode(0x7ff, &[]), Err(WireError::UnknownId(0x7ff)));
 }
@@ -258,7 +253,7 @@ fn zero_enum_values_are_rejected() {
             result: 1,
         },
     };
-    let (_, mut bytes) = encoded(&frame);
+    let (_, mut bytes) = encoded(&frame).expect("frame encoding");
     bytes[12] = 0;
     assert_eq!(
         decode(0x301, &bytes),

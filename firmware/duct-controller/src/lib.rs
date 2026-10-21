@@ -86,9 +86,9 @@ impl ControllerState {
             && self
                 .active_configuration
                 .is_some_and(|configuration| configuration.generation == configuration_generation)
-            && self.runtime_lease.is_none_or(|lease| {
-                lease.epoch == epoch && renewal_sequence > lease.renewal_sequence
-            });
+            && self
+                .runtime_lease
+                .is_none_or(|lease| lease.epoch == epoch && renewal_sequence > lease.renewal_sequence);
         if valid {
             self.runtime_lease = Some(RuntimeLeaseState {
                 epoch,
@@ -121,8 +121,7 @@ impl ControllerState {
                 .last_command_sequence
                 .is_none_or(|sequence| command_sequence > sequence);
         if valid && let Some(configuration) = self.active_configuration {
-            self.command_deadline_ms =
-                Some(now_ms.saturating_add(u64::from(configuration.command_lease_ms)));
+            self.command_deadline_ms = Some(now_ms.saturating_add(u64::from(configuration.command_lease_ms)));
             self.last_command_sequence = Some(command_sequence);
             self.accepted_basis_points = radiator_split_basis_points;
             self.mode = FirmwareMode::RemoteAuthority;
@@ -136,9 +135,7 @@ impl ControllerState {
             self.runtime_lease = None;
             self.select_fallback();
         } else if self.mode == FirmwareMode::RemoteAuthority
-            && self
-                .command_deadline_ms
-                .is_none_or(|deadline| now_ms >= deadline)
+            && self.command_deadline_ms.is_none_or(|deadline| now_ms >= deadline)
         {
             self.select_fallback();
         }
@@ -146,8 +143,7 @@ impl ControllerState {
 
     #[must_use]
     pub fn runtime_lease_valid(&self, now_ms: u64) -> bool {
-        self.runtime_lease
-            .is_some_and(|lease| now_ms < lease.deadline_ms)
+        self.runtime_lease.is_some_and(|lease| now_ms < lease.deadline_ms)
     }
 
     #[must_use]
@@ -162,8 +158,7 @@ impl ControllerState {
 
     #[must_use]
     pub fn configuration_generation(&self) -> Option<u32> {
-        self.active_configuration
-            .map(|configuration| configuration.generation)
+        self.active_configuration.map(|configuration| configuration.generation)
     }
 
     #[must_use]

@@ -1,6 +1,6 @@
 use crate::{
-    ExperimentAbort, ExperimentDecision, ExperimentPlan, ModelCommandSelection, RunningExperiment,
-    RuntimeModel, ValidatedBundle,
+    ExperimentAbort, ExperimentDecision, ExperimentPlan, ModelCommandSelection, RunningExperiment, RuntimeModel,
+    ValidatedBundle,
 };
 
 mod events;
@@ -36,10 +36,7 @@ impl Runtime {
     ///
     /// Returns [`RuntimeStartError::CompositionModeMismatch`] if the adapter
     /// kind does not match the validated startup bundle.
-    pub fn new(
-        bundle: ValidatedBundle,
-        adapters: ExternalAdapters,
-    ) -> Result<Self, RuntimeStartError> {
+    pub fn new(bundle: ValidatedBundle, adapters: ExternalAdapters) -> Result<Self, RuntimeStartError> {
         if bundle.mode() != adapters.mode() {
             return Err(RuntimeStartError::CompositionModeMismatch);
         }
@@ -207,13 +204,8 @@ impl ExecutorState {
                     self.select_fallback();
                 }
             }
-            RuntimeEvent::ModelSignalSnapshot {
-                monotonic_ms,
-                values,
-            } => {
-                if values.len() == bundle.model_input_signals().len()
-                    && values.iter().all(|value| value.is_finite())
-                {
+            RuntimeEvent::ModelSignalSnapshot { monotonic_ms, values } => {
+                if values.len() == bundle.model_input_signals().len() && values.iter().all(|value| value.is_finite()) {
                     self.model_snapshot_at_ms = Some(monotonic_ms);
                     if let Some(model) = &mut self.model {
                         model.observe(values);
@@ -327,19 +319,16 @@ impl ExecutorState {
             self.select_fallback();
             return;
         };
-        let healthy = now_ms.saturating_sub(input.observed_monotonic_ms)
-            <= self.input_stale_after_ms
-            && now_ms.saturating_sub(controller.monotonic_ms)
-                <= self.controller_truth_stale_after_ms
+        let healthy = now_ms.saturating_sub(input.observed_monotonic_ms) <= self.input_stale_after_ms
+            && now_ms.saturating_sub(controller.monotonic_ms) <= self.controller_truth_stale_after_ms
             && controller.identity_matches
             && controller.configuration_generation > 0;
         if !healthy {
-            let reason =
-                if now_ms.saturating_sub(input.observed_monotonic_ms) > self.input_stale_after_ms {
-                    ExperimentAbort::StaleInput
-                } else {
-                    ExperimentAbort::AuthorityLost
-                };
+            let reason = if now_ms.saturating_sub(input.observed_monotonic_ms) > self.input_stale_after_ms {
+                ExperimentAbort::StaleInput
+            } else {
+                ExperimentAbort::AuthorityLost
+            };
             self.abort_experiment(reason);
             self.select_fallback();
             return;
@@ -355,18 +344,18 @@ impl ExecutorState {
 
         let deterministic = bundle.deterministic_command(input.coolant_c, input.iat_c);
         let current = self.accepted_basis_points.unwrap_or(deterministic);
-        let model_fresh = self.model_snapshot_at_ms.is_some_and(|observed| {
-            now_ms.saturating_sub(observed) <= self.model_signals_stale_after_ms
-        });
+        let model_fresh = self
+            .model_snapshot_at_ms
+            .is_some_and(|observed| now_ms.saturating_sub(observed) <= self.model_signals_stale_after_ms);
         let (mut command, mut source) = self.model.as_ref().filter(|_| model_fresh).map_or(
             (deterministic, CommandSource::Deterministic),
             |model| match model.select(bundle, deterministic, current, remaining_cycle_ns) {
                 ModelCommandSelection::Optimized { split_basis_points } => {
                     (split_basis_points, CommandSource::ModelOptimized)
                 }
-                ModelCommandSelection::Deterministic {
-                    split_basis_points, ..
-                } => (split_basis_points, CommandSource::Deterministic),
+                ModelCommandSelection::Deterministic { split_basis_points, .. } => {
+                    (split_basis_points, CommandSource::Deterministic)
+                }
             },
         );
         if !self.experiment_finished && self.feature_authority == FeatureAuthority::Active {
@@ -374,40 +363,32 @@ impl ExecutorState {
                 && let Some(plan) = self.experiment_plan.take()
             {
                 self.experiment = Some(plan.start(now_ms));
-                self.effects.push(RuntimeEffect::RecordExperiment(
-                    r#"{"event":"start"}"#.to_owned(),
-                ));
+                self.effects
+                    .push(RuntimeEffect::RecordExperiment(r#"{"event":"start"}"#.to_owned()));
             }
             if let Some(experiment) = &mut self.experiment {
-                match experiment.advance(
-                    now_ms,
-                    true,
-                    input.coolant_c,
-                    true,
-                    self.accepted_basis_points,
-                ) {
+                match experiment.advance(now_ms, true, input.coolant_c, true, self.accepted_basis_points) {
                     ExperimentDecision::Apply {
                         radiator_split_basis_points,
                     } => {
-                        if self.last_experiment_command != Some(radiator_split_basis_points) {
-                            self.effects.push(RuntimeEffect::RecordExperiment(format!(
-                                r#"{{"event":"step","radiator_split_basis_points":{radiator_split_basis_points}}}"#
-                            )));
-                            self.last_experiment_command = Some(radiator_split_basis_points);
-                        }
                         command = radiator_split_basis_points;
                         source = CommandSource::Experiment;
                     }
                     ExperimentDecision::Complete => {
-                        self.effects.push(RuntimeEffect::RecordExperiment(
-                            r#"{"event":"complete"}"#.to_owned(),
-                        ));
+                        self.effects
+                            .push(RuntimeEffect::RecordExperiment(r#"{"event":"complete"}"#.to_owned()));
                         self.experiment = None;
                         self.experiment_finished = true;
                     }
                     ExperimentDecision::Abort(reason) => self.abort_experiment(reason),
                 }
             }
+        }
+        if source == CommandSource::Experiment && self.last_experiment_command != Some(command) {
+            self.effects.push(RuntimeEffect::RecordExperiment(format!(
+                r#"{{"event":"step","radiator_split_basis_points":{command}}}"#
+            )));
+            self.last_experiment_command = Some(command);
         }
         self.lease_sequence = self.lease_sequence.wrapping_add(1);
         self.command_sequence = self.command_sequence.wrapping_add(1);

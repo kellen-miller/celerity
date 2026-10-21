@@ -1,31 +1,24 @@
 use std::{fs, path::PathBuf};
 
-use control_core::{
-    BundleError, PowertrainDecodeError, PowertrainSource, StartupMode, ValidatedBundle,
-};
+use control_core::{BundleError, PowertrainDecodeError, PowertrainSource, StartupMode, ValidatedBundle};
 
-fn fixture() -> String {
-    fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/simulation.toml"),
-    )
-    .expect("simulation fixture")
+fn fixture() -> std::io::Result<String> {
+    fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/simulation.toml"))
 }
 
-fn write_bundle(contents: &str, name: &str) -> PathBuf {
+fn write_bundle(contents: &str, name: &str) -> std::io::Result<PathBuf> {
     let root = std::env::temp_dir().join(format!("celerity-config-{}", std::process::id()));
-    fs::create_dir_all(&root).expect("temporary directory");
+    fs::create_dir_all(&root)?;
     let path = root.join(name);
-    fs::write(&path, contents).expect("temporary bundle");
-    path
+    fs::write(&path, contents)?;
+    Ok(path)
 }
 
 #[test]
 fn one_loader_accepts_complete_matching_bundle() {
-    let bundle = ValidatedBundle::load(
-        &write_bundle(&fixture(), "valid.toml"),
-        StartupMode::Simulation,
-    )
-    .expect("valid simulation bundle");
+    let fixture = fixture().expect("simulation fixture");
+    let path = write_bundle(&fixture, "valid.toml").expect("temporary bundle");
+    let bundle = ValidatedBundle::load(&path, StartupMode::Simulation).expect("valid simulation bundle");
     assert_eq!(bundle.generation(), 1);
     assert_eq!(bundle.mode(), StartupMode::Simulation);
     assert_eq!(bundle.controller_count(), 1);
@@ -33,32 +26,32 @@ fn one_loader_accepts_complete_matching_bundle() {
 
 #[test]
 fn timing_windows_are_explicit_and_cross_validated() {
-    let too_short_for_sensor_period =
-        fixture().replace("input_stale_after_ms = 250", "input_stale_after_ms = 200");
+    let fixture = fixture().expect("simulation fixture");
+    let too_short_for_sensor_period = fixture.replace("input_stale_after_ms = 250", "input_stale_after_ms = 200");
     assert_eq!(
         ValidatedBundle::load(
-            &write_bundle(&too_short_for_sensor_period, "timing-sensor.toml"),
+            &write_bundle(&too_short_for_sensor_period, "timing-sensor.toml").expect("temporary bundle"),
             StartupMode::Simulation,
         ),
         Err(BundleError::InvalidRuntimeTiming)
     );
 
-    let model_window_too_short = fixture().replace(
+    let model_window_too_short = fixture.replace(
         "model_signals_stale_after_ms = 250",
         "model_signals_stale_after_ms = 200",
     );
     assert_eq!(
         ValidatedBundle::load(
-            &write_bundle(&model_window_too_short, "timing-model-sensor.toml"),
+            &write_bundle(&model_window_too_short, "timing-model-sensor.toml").expect("temporary bundle"),
             StartupMode::Simulation,
         ),
         Err(BundleError::InvalidRuntimeTiming)
     );
 
-    let cycle_exceeds_ack_deadline = fixture().replace("cycle_ms = 20", "cycle_ms = 25");
+    let cycle_exceeds_ack_deadline = fixture.replace("cycle_ms = 20", "cycle_ms = 25");
     assert_eq!(
         ValidatedBundle::load(
-            &write_bundle(&cycle_exceeds_ack_deadline, "timing-cycle.toml"),
+            &write_bundle(&cycle_exceeds_ack_deadline, "timing-cycle.toml").expect("temporary bundle"),
             StartupMode::Simulation,
         ),
         Err(BundleError::InvalidRuntimeTiming)
@@ -67,8 +60,9 @@ fn timing_windows_are_explicit_and_cross_validated() {
 
 #[test]
 fn explicit_disabled_cantcu_stream_keeps_frames_opaque() {
+    let fixture = fixture().expect("simulation fixture");
     let bundle = ValidatedBundle::load(
-        &write_bundle(&fixture(), "cantcu-disabled.toml"),
+        &write_bundle(&fixture, "cantcu-disabled.toml").expect("temporary bundle"),
         StartupMode::Simulation,
     )
     .expect("bundle with explicitly disabled CANTCU reception");
@@ -82,9 +76,10 @@ fn explicit_disabled_cantcu_stream_keeps_frames_opaque() {
 
 #[test]
 fn configured_cantcu_default_stream_decodes_its_base_id() {
-    let configured = fixture().replace("mode = \"disabled\"", "mode = \"default\"\nbase_id = 1280");
+    let fixture = fixture().expect("simulation fixture");
+    let configured = fixture.replace("mode = \"disabled\"", "mode = \"default\"\nbase_id = 1280");
     let bundle = ValidatedBundle::load(
-        &write_bundle(&configured, "cantcu-default.toml"),
+        &write_bundle(&configured, "cantcu-default.toml").expect("temporary bundle"),
         StartupMode::Simulation,
     )
     .expect("bundle with configured CANTCU reception");
@@ -100,11 +95,12 @@ fn configured_cantcu_default_stream_decodes_its_base_id() {
 
 #[test]
 fn cantcu_default_stream_must_not_collide_with_haltech() {
-    let configured = fixture().replace("mode = \"disabled\"", "mode = \"default\"\nbase_id = 863");
+    let fixture = fixture().expect("simulation fixture");
+    let configured = fixture.replace("mode = \"disabled\"", "mode = \"default\"\nbase_id = 863");
 
     assert_eq!(
         ValidatedBundle::load(
-            &write_bundle(&configured, "cantcu-collision.toml"),
+            &write_bundle(&configured, "cantcu-collision.toml").expect("temporary bundle"),
             StartupMode::Simulation,
         ),
         Err(BundleError::InvalidCantcuConfiguration(
@@ -115,16 +111,20 @@ fn cantcu_default_stream_must_not_collide_with_haltech() {
 
 #[test]
 fn unknown_keys_and_mode_mismatch_are_denied() {
-    let unknown = fixture().replace("cycle_ms = 20", "cycle_ms = 20\nsecret_mode = true");
+    let fixture = fixture().expect("simulation fixture");
+    let unknown = fixture.replace("cycle_ms = 20", "cycle_ms = 20\nsecret_mode = true");
     assert!(matches!(
         ValidatedBundle::load(
-            &write_bundle(&unknown, "unknown.toml"),
+            &write_bundle(&unknown, "unknown.toml").expect("temporary bundle"),
             StartupMode::Simulation
         ),
         Err(BundleError::Parse(_))
     ));
     assert_eq!(
-        ValidatedBundle::load(&write_bundle(&fixture(), "mode.toml"), StartupMode::Replay,),
+        ValidatedBundle::load(
+            &write_bundle(&fixture, "mode.toml").expect("temporary bundle"),
+            StartupMode::Replay,
+        ),
         Err(BundleError::RequestedModeMismatch {
             requested: StartupMode::Replay,
             configured: StartupMode::Simulation,
@@ -134,19 +134,20 @@ fn unknown_keys_and_mode_mismatch_are_denied() {
 
 #[test]
 fn nonmonotonic_policy_and_duplicate_identity_are_denied() {
-    let nonmonotonic = fixture().replace(
+    let fixture = fixture().expect("simulation fixture");
+    let nonmonotonic = fixture.replace(
         "[[1000, 2000, 3000], [4000, 5000, 6000], [7000, 8000, 9000]]",
         "[[1000, 2000, 3000], [4000, 3000, 6000], [7000, 8000, 9000]]",
     );
     assert_eq!(
         ValidatedBundle::load(
-            &write_bundle(&nonmonotonic, "policy.toml"),
+            &write_bundle(&nonmonotonic, "policy.toml").expect("temporary bundle"),
             StartupMode::Simulation,
         ),
         Err(BundleError::NonmonotonicPolicy)
     );
 
-    let duplicate = fixture().replace(
+    let duplicate = fixture.replace(
         "[duct]\n",
         "[controllers.second]\n\
          address = 2\n\
@@ -172,7 +173,7 @@ fn nonmonotonic_policy_and_duplicate_identity_are_denied() {
     );
     assert_eq!(
         ValidatedBundle::load(
-            &write_bundle(&duplicate, "duplicate.toml"),
+            &write_bundle(&duplicate, "duplicate.toml").expect("temporary bundle"),
             StartupMode::Simulation,
         ),
         Err(BundleError::DuplicateControllerIdentity(1))
@@ -181,10 +182,11 @@ fn nonmonotonic_policy_and_duplicate_identity_are_denied() {
 
 #[test]
 fn composition_tag_must_match_mode() {
-    let mismatched = fixture().replace("kind = \"simulation\"", "kind = \"replay\"");
+    let fixture = fixture().expect("simulation fixture");
+    let mismatched = fixture.replace("kind = \"simulation\"", "kind = \"replay\"");
     assert!(matches!(
         ValidatedBundle::load(
-            &write_bundle(&mismatched, "composition.toml"),
+            &write_bundle(&mismatched, "composition.toml").expect("temporary bundle"),
             StartupMode::Simulation,
         ),
         Err(BundleError::Parse(_) | BundleError::CompositionModeMismatch)
@@ -193,13 +195,14 @@ fn composition_tag_must_match_mode() {
 
 #[test]
 fn model_commands_must_fit_the_controller_envelope() {
-    let outside_controller = fixture().replace(
+    let fixture = fixture().expect("simulation fixture");
+    let outside_controller = fixture.replace(
         "command_lattice = [1000, 5000, 9000]",
         "command_lattice = [0, 5000, 9000]",
     );
     assert_eq!(
         ValidatedBundle::load(
-            &write_bundle(&outside_controller, "model-envelope.toml"),
+            &write_bundle(&outside_controller, "model-envelope.toml").expect("temporary bundle"),
             StartupMode::Simulation,
         ),
         Err(BundleError::InvalidRuntimeTiming)

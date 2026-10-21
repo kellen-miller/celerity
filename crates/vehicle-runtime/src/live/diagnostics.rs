@@ -2,8 +2,7 @@ use std::time::{Duration, Instant};
 
 use control_core::{Completion, FeatureAuthority, RunManifest, RuntimeEvent, RuntimeOutcome};
 use vehicle_diagnostics::{
-    DiagnosticStatus, DiagnosticUnknownReason, DiagnosticsSnapshot, ObservedTemperature,
-    RunStorageHealth,
+    DiagnosticStatus, DiagnosticUnknownReason, DiagnosticsSnapshot, ObservedTemperature, RunStorageHealth,
 };
 
 use super::{COMMAND_ACK_SUMMARY_WINDOW, LiveRuntime, map_command_source};
@@ -25,59 +24,49 @@ impl LiveRuntime {
             FeatureAuthority::Arming => vehicle_diagnostics::FeatureAuthority::Arming,
             FeatureAuthority::Active => vehicle_diagnostics::FeatureAuthority::Active,
         };
-        let controller_runtime_lease_health =
-            if outcome.final_feature_authority == FeatureAuthority::Fallback {
-                DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback)
-            } else if !self.lease_renewal_expected {
-                DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotRenewing)
-            } else if self
-                .last_matching_runtime_lease_ack_at
-                .is_some_and(|acknowledged_at| {
-                    now.saturating_duration_since(acknowledged_at)
-                        <= Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
-                })
-            {
-                DiagnosticStatus::Healthy
-            } else if self
-                .lease_renewal_expected_since
-                .is_some_and(|expected_since| {
-                    now.saturating_duration_since(expected_since)
-                        > Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
-                })
-                || self.last_sent_runtime_lease.is_some_and(|lease| {
-                    now.saturating_duration_since(lease.sent_at)
-                        > Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
-                })
+        let controller_runtime_lease_health = if outcome.final_feature_authority == FeatureAuthority::Fallback {
+            DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback)
+        } else if !self.lease_renewal_expected {
+            DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotRenewing)
+        } else if self.last_matching_runtime_lease_ack_at.is_some_and(|acknowledged_at| {
+            now.saturating_duration_since(acknowledged_at)
+                <= Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
+        }) {
+            DiagnosticStatus::Healthy
+        } else if self.lease_renewal_expected_since.is_some_and(|expected_since| {
+            now.saturating_duration_since(expected_since)
+                > Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
+        }) || self.last_sent_runtime_lease.is_some_and(|lease| {
+            now.saturating_duration_since(lease.sent_at)
+                > Duration::from_millis(u64::from(self.controller.runtime_lease_ms))
+        }) {
+            DiagnosticStatus::Unhealthy
+        } else {
+            DiagnosticStatus::Unknown(DiagnosticUnknownReason::AwaitingEvidence)
+        };
+        let controller_command_ack_health = if outcome.final_feature_authority == FeatureAuthority::Fallback {
+            DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback)
+        } else if self
+            .last_command_ack_miss_at
+            .is_some_and(|missed_at| now.saturating_duration_since(missed_at) < COMMAND_ACK_SUMMARY_WINDOW)
+        {
+            DiagnosticStatus::Unhealthy
+        } else if self
+            .last_matching_command_ack_at
+            .is_some_and(|acknowledged_at| now.saturating_duration_since(acknowledged_at) < COMMAND_ACK_SUMMARY_WINDOW)
+        {
+            DiagnosticStatus::Healthy
+        } else if let Some(command) = self.last_sent_command {
+            if now.saturating_duration_since(command.sent_at)
+                > Duration::from_millis(u64::from(self.controller.acknowledgement_deadline_ms))
             {
                 DiagnosticStatus::Unhealthy
             } else {
                 DiagnosticStatus::Unknown(DiagnosticUnknownReason::AwaitingEvidence)
-            };
-        let controller_command_ack_health =
-            if outcome.final_feature_authority == FeatureAuthority::Fallback {
-                DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback)
-            } else if self.last_command_ack_miss_at.is_some_and(|missed_at| {
-                now.saturating_duration_since(missed_at) < COMMAND_ACK_SUMMARY_WINDOW
-            }) {
-                DiagnosticStatus::Unhealthy
-            } else if self
-                .last_matching_command_ack_at
-                .is_some_and(|acknowledged_at| {
-                    now.saturating_duration_since(acknowledged_at) < COMMAND_ACK_SUMMARY_WINDOW
-                })
-            {
-                DiagnosticStatus::Healthy
-            } else if let Some(command) = self.last_sent_command {
-                if now.saturating_duration_since(command.sent_at)
-                    > Duration::from_millis(u64::from(self.controller.acknowledgement_deadline_ms))
-                {
-                    DiagnosticStatus::Unhealthy
-                } else {
-                    DiagnosticStatus::Unknown(DiagnosticUnknownReason::AwaitingEvidence)
-                }
-            } else {
-                DiagnosticStatus::Unknown(DiagnosticUnknownReason::NoOutstandingCommand)
-            };
+            }
+        } else {
+            DiagnosticStatus::Unknown(DiagnosticUnknownReason::NoOutstandingCommand)
+        };
         let observed_temperature = |signal: &str| {
             self.signal_values
                 .get(signal)

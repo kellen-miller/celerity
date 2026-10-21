@@ -176,10 +176,7 @@ impl ModelSlots {
             .lines()
             .map(str::to_owned)
             .collect::<std::collections::BTreeSet<_>>();
-        if let Some(desired) = desired
-            .as_deref()
-            .filter(|digest| !rejected.contains(*digest))
-        {
+        if let Some(desired) = desired.as_deref().filter(|digest| !rejected.contains(*digest)) {
             match self.select_startup(Some(desired), None, expected_abi, input_length) {
                 Ok(Some(selected)) => return Ok(Some(selected)),
                 Ok(None) => {}
@@ -187,10 +184,7 @@ impl ModelSlots {
                 Err(error) => return Err(error),
             }
         }
-        let Some(known_good) = known_good
-            .as_deref()
-            .filter(|digest| !rejected.contains(*digest))
-        else {
+        let Some(known_good) = known_good.as_deref().filter(|digest| !rejected.contains(*digest)) else {
             return Ok(None);
         };
         match self.select_startup(None, Some(known_good), expected_abi, input_length) {
@@ -272,8 +266,7 @@ impl ModelSlots {
     pub fn mark_active(&self, selected: &SelectedModel) -> Result<(), SlotError> {
         let temporary = self.root.join("active-digest.staging");
         let mut file = File::create(&temporary).map_err(slot_io)?;
-        file.write_all(selected.digest.as_bytes())
-            .map_err(slot_io)?;
+        file.write_all(selected.digest.as_bytes()).map_err(slot_io)?;
         file.write_all(b"\n").map_err(slot_io)?;
         file.sync_all().map_err(slot_io)?;
         drop(file);
@@ -309,8 +302,7 @@ impl ModelSlots {
         }
         let temporary = self.root.join("known-good-digest.staging");
         let mut file = File::create(&temporary).map_err(slot_io)?;
-        file.write_all(selected.digest.as_bytes())
-            .map_err(slot_io)?;
+        file.write_all(selected.digest.as_bytes()).map_err(slot_io)?;
         file.write_all(b"\n").map_err(slot_io)?;
         file.sync_all().map_err(slot_io)?;
         drop(file);
@@ -331,9 +323,7 @@ impl ModelSlots {
         if !manifest_path.exists() || !onnx_path.exists() || !bundle_digest_path.exists() {
             return Ok(None);
         }
-        let Ok(manifest) =
-            ModelBundleManifest::decode(fs::read(manifest_path).map_err(slot_io)?.as_slice())
-        else {
+        let Ok(manifest) = ModelBundleManifest::decode(fs::read(manifest_path).map_err(slot_io)?.as_slice()) else {
             return Ok(None);
         };
         let Some(compatibility) = manifest.compatibility.as_ref() else {
@@ -343,8 +333,7 @@ impl ModelSlots {
         if manifest.schema_version != 1
             || bundle_digest.trim() != wanted_digest
             || compatibility.model_abi != expected_abi
-            || (!compatibility.input_shape.is_empty()
-                && compatibility.input_shape != [1, input_length as u64])
+            || (!compatibility.input_shape.is_empty() && compatibility.input_shape != [1, input_length as u64])
         {
             return Ok(None);
         }
@@ -364,11 +353,12 @@ impl ModelSlots {
 }
 
 fn digest_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let digest = Sha256::digest(bytes);
     let mut output = String::with_capacity(64);
     for byte in digest {
-        use std::fmt::Write as _;
-        write!(output, "{byte:02x}").expect("String write");
+        output.push(char::from(HEX[usize::from(byte >> 4)]));
+        output.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
     output
 }

@@ -1,5 +1,4 @@
 use std::{
-    fmt::Write as _,
     fs::{self, File},
     io::{Cursor, Read, Write},
     path::Path,
@@ -20,17 +19,24 @@ pub(crate) fn digest_file(path: &Path) -> Result<String, SyncError> {
         }
         hasher.update(&buffer[..read]);
     }
-    let mut output = String::with_capacity(64);
-    for byte in hasher.finalize() {
-        write!(output, "{byte:02x}").expect("String write");
-    }
-    Ok(output)
+    Ok(hex_digest(&hasher.finalize()))
 }
 
-pub(crate) fn read_zip_entry(
-    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
-    name: &str,
-) -> Result<Vec<u8>, SyncError> {
+pub(crate) fn digest(bytes: &[u8]) -> String {
+    hex_digest(&Sha256::digest(bytes))
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(char::from(HEX[usize::from(byte >> 4)]));
+        output.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    output
+}
+
+pub(crate) fn read_zip_entry(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Vec<u8>, SyncError> {
     let mut entry = archive
         .by_name(name)
         .map_err(|error| SyncError(format!("model bundle is missing {name}: {error}")))?;

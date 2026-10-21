@@ -14,17 +14,15 @@ use celerity_proto::celerity::v1::{
     ModelBundleManifest, ModelInputRange, ModelNormalization, RunEvent, run_event::Payload,
 };
 use control_core::{
-    CommandSource, Completion, ControllerEmulator, EmulatorProvisioning, RuntimeModel, StartupMode,
-    ValidatedBundle, replay_events,
+    CommandSource, Completion, ControllerEmulator, EmulatorProvisioning, RuntimeModel, StartupMode, ValidatedBundle,
+    replay_events,
 };
 use control_protocol::{Frame, decode, encode};
 use prost::Message;
-use socketcan::{
-    CanFdFrame, CanFdSocket, CanFrame, CanSocket, EmbeddedFrame, Frame as SocketCanFrame, Socket,
-};
+use socketcan::{CanFdFrame, CanFdSocket, CanFrame, CanSocket, EmbeddedFrame, Frame as SocketCanFrame, Socket};
 use vehicle_diagnostics::{
-    CommandSource as DiagnosticCommandSource, DiagnosticStatus, DiagnosticUnknownReason,
-    DiagnosticsSnapshot, DiagnosticsStore, RunStorageHealth,
+    CommandSource as DiagnosticCommandSource, DiagnosticStatus, DiagnosticUnknownReason, DiagnosticsSnapshot,
+    DiagnosticsStore, RunStorageHealth,
 };
 
 #[test]
@@ -43,14 +41,12 @@ fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
             ),
         )
         .expect("live bundle");
-        let bundle =
-            ValidatedBundle::load(&bundle_path, StartupMode::Live).expect("valid live bundle");
+        let bundle = ValidatedBundle::load(&bundle_path, StartupMode::Live).expect("valid live bundle");
         let model_directory = temporary.path().join("model");
         fs::create_dir_all(&model_directory).expect("model directory");
         let model_path = model_directory.join("identity.onnx");
         fs::copy(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../testdata/models/identity.onnx"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx"),
             &model_path,
         )
         .expect("model fixture");
@@ -84,21 +80,13 @@ fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
         )
         .expect("model manifest");
         let model = RuntimeModel::load(&model_path, &bundle).expect("production model");
-        let diagnostics = DiagnosticsStore::new(
-            DiagnosticsSnapshot::startup_fallback(),
-            20,
-            std::time::Instant::now(),
-        );
+        let diagnostics = DiagnosticsStore::new(DiagnosticsSnapshot::startup_fallback(), 20, std::time::Instant::now());
         let stopping = Arc::new(AtomicBool::new(false));
         let diagnostics_socket = temporary.path().join("runtime-diagnostics.sock");
-        let diagnostics_worker = vehicle_diagnostics::serve_diagnostics(
-            &diagnostics_socket,
-            Arc::clone(&stopping),
-            diagnostics.clone(),
-        )
-        .expect("diagnostics server");
-        let startup = vehicle_diagnostics::read_diagnostics(&diagnostics_socket)
-            .expect("startup diagnostics");
+        let diagnostics_worker =
+            vehicle_diagnostics::serve_diagnostics(&diagnostics_socket, Arc::clone(&stopping), diagnostics.clone())
+                .expect("diagnostics server");
+        let startup = vehicle_diagnostics::read_diagnostics(&diagnostics_socket).expect("startup diagnostics");
         assert!(startup.accepted_radiator_split_command.is_none());
         assert!(startup.coolant_temperature.is_none());
         assert_eq!(
@@ -129,21 +117,15 @@ fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
         if nexus {
             send_powertrain_frame(0x601, &[0x04, 0xe2, 0xff, 0xce, 0x08, 0x98, 0x07, 0x08]);
             send_powertrain_temperature(20, 0, false);
-            runtime
-                .run_cycle()
-                .expect("supplementary and factory traffic");
+            runtime.run_cycle().expect("supplementary and factory traffic");
         }
 
         let outcome = runtime.outcome();
         assert_eq!(outcome.command_source, CommandSource::ModelOptimized);
         assert_eq!(outcome.accepted_basis_points, Some(9_000));
         assert!(observed_commands.lock().expect("commands").contains(&9_000));
-        let snapshot = vehicle_diagnostics::read_diagnostics(&diagnostics_socket)
-            .expect("diagnostics snapshot");
-        assert_eq!(
-            snapshot.command_source,
-            DiagnosticCommandSource::ModelOptimized
-        );
+        let snapshot = vehicle_diagnostics::read_diagnostics(&diagnostics_socket).expect("diagnostics snapshot");
+        assert_eq!(snapshot.command_source, DiagnosticCommandSource::ModelOptimized);
         assert_eq!(
             snapshot
                 .accepted_radiator_split_command
@@ -151,14 +133,8 @@ fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
                 .basis_points,
             9_000
         );
-        assert_eq!(
-            snapshot.controller_runtime_lease_health,
-            DiagnosticStatus::Healthy
-        );
-        assert_eq!(
-            snapshot.controller_command_ack_health,
-            DiagnosticStatus::Healthy
-        );
+        assert_eq!(snapshot.controller_runtime_lease_health, DiagnosticStatus::Healthy);
+        assert_eq!(snapshot.controller_command_ack_health, DiagnosticStatus::Healthy);
         assert_eq!(snapshot.run_storage_health, RunStorageHealth::Healthy);
         let coolant = snapshot
             .coolant_temperature
@@ -166,8 +142,7 @@ fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
             .degrees_celsius;
         assert!((coolant - 100.0).abs() < f64::EPSILON);
         thread::sleep(Duration::from_millis(120));
-        let delayed = vehicle_diagnostics::read_diagnostics(&diagnostics_socket)
-            .expect("delayed diagnostics");
+        let delayed = vehicle_diagnostics::read_diagnostics(&diagnostics_socket).expect("delayed diagnostics");
         assert!(delayed.runtime_update_age_ms >= delayed.runtime_update_stale_after_ms);
         if nexus {
             for _ in 0..15 {
@@ -175,12 +150,9 @@ fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
                 runtime.run_cycle().expect("invalid input cycle");
             }
 
-            assert_eq!(
-                runtime.outcome().command_source,
-                CommandSource::ControllerLocalFallback
-            );
-            let expired = vehicle_diagnostics::read_diagnostics(&diagnostics_socket)
-                .expect("expired-input diagnostics");
+            assert_eq!(runtime.outcome().command_source, CommandSource::ControllerLocalFallback);
+            let expired =
+                vehicle_diagnostics::read_diagnostics(&diagnostics_socket).expect("expired-input diagnostics");
             let temperature = expired.coolant_temperature.expect("last valid temperature");
             assert!((temperature.degrees_celsius - 100.0).abs() < f64::EPSILON);
             assert!(temperature.observation_age_ms >= 250);
@@ -194,8 +166,7 @@ fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
         }
 
         let manifest = runtime.shutdown().expect("Run must seal");
-        let stopped = vehicle_diagnostics::read_diagnostics(&diagnostics_socket)
-            .expect("shutdown diagnostics");
+        let stopped = vehicle_diagnostics::read_diagnostics(&diagnostics_socket).expect("shutdown diagnostics");
         assert!(stopped.accepted_radiator_split_command.is_none());
         assert_eq!(
             stopped.controller_runtime_lease_health,
@@ -203,17 +174,12 @@ fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
         );
         assert_eq!(manifest.completion, Completion::Complete);
         assert!(runs.join("live-kernel/manifest.pb").is_file());
-        assert!(
-            runs.join("live-kernel")
-                .join(&manifest.chunk_file)
-                .is_file()
-        );
+        assert!(runs.join("live-kernel").join(&manifest.chunk_file).is_file());
         let replayed = replay_events(&runs.join("live-kernel")).expect("canonical Run must replay");
         assert!(replayed.len() >= 4, "live Run must contain runtime events");
 
         if nexus {
-            let bytes =
-                fs::read(runs.join("live-kernel").join(&manifest.chunk_file)).expect("Run chunk");
+            let bytes = fs::read(runs.join("live-kernel").join(&manifest.chunk_file)).expect("Run chunk");
             let mut input = bytes.as_slice();
             let mut raw_sequences = Vec::new();
             let mut supplementary = None;
@@ -223,9 +189,7 @@ fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
                     Some(Payload::RawCan(raw)) if raw.id == 0x601 => {
                         raw_sequences.push(event.sequence);
                     }
-                    Some(Payload::SignalObservation(signal))
-                        if signal.signal == "ambient_air_temperature_c" =>
-                    {
+                    Some(Payload::SignalObservation(signal)) if signal.signal == "ambient_air_temperature_c" => {
                         assert_eq!(event.source, "decoded_signal");
                         supplementary = Some(signal);
                     }
@@ -233,8 +197,7 @@ fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
                 }
             }
 
-            let signal =
-                supplementary.expect("supplementary channel recorded without model subscription");
+            let signal = supplementary.expect("supplementary channel recorded without model subscription");
             assert!((signal.value + 5.0).abs() < f64::EPSILON);
             assert_eq!(signal.age_ns, 0);
             assert!(raw_sequences.contains(&signal.source_event_sequence));
@@ -250,10 +213,7 @@ fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
     }
 }
 
-fn spawn_controller(
-    stopping: Arc<AtomicBool>,
-    observed_commands: Arc<Mutex<Vec<u16>>>,
-) -> thread::JoinHandle<()> {
+fn spawn_controller(stopping: Arc<AtomicBool>, observed_commands: Arc<Mutex<Vec<u16>>>) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let socket = CanFdSocket::open("vcan-controller").expect("controller vcan");
         let mut emulator = ControllerEmulator::new(EmulatorProvisioning {
@@ -267,11 +227,8 @@ fn spawn_controller(
         let started = std::time::Instant::now();
         while !stopping.load(Ordering::Relaxed) {
             let frame = socket.read_frame().expect("controller receive");
-            let decoded = decode(
-                u16::try_from(frame.raw_id()).expect("standard id"),
-                frame.data(),
-            )
-            .expect("typed controller frame");
+            let decoded = decode(u16::try_from(frame.raw_id()).expect("standard id"), frame.data())
+                .expect("typed controller frame");
             if let Frame::Command { message, .. } = &decoded {
                 observed_commands
                     .lock()
@@ -280,11 +237,7 @@ fn spawn_controller(
             }
             let now_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
             let mut response = emulator
-                .ingest(
-                    now_ms,
-                    u16::try_from(frame.raw_id()).expect("id"),
-                    frame.data(),
-                )
+                .ingest(now_ms, u16::try_from(frame.raw_id()).expect("id"), frame.data())
                 .expect("controller input");
             while let Some(current) = response {
                 write_fd(&socket, current.can_id, current.payload());
@@ -305,21 +258,13 @@ fn write_fd(socket: &CanFdSocket, can_id: u16, payload: &[u8]) {
 
 fn send_powertrain_temperature(coolant_c: i16, iat_c: i16, nexus: bool) {
     let (id, coolant, iat) = if nexus {
-        (
-            0x600,
-            (coolant_c * 10).to_be_bytes(),
-            (iat_c * 10).to_be_bytes(),
-        )
+        (0x600, (coolant_c * 10).to_be_bytes(), (iat_c * 10).to_be_bytes())
     } else {
         let raw = |temperature_c: i16| {
             u16::try_from(i32::from(temperature_c) * 10 + 2_731)
                 .expect("test temperature must fit the Haltech encoding")
         };
-        (
-            0x3e0,
-            raw(coolant_c).to_be_bytes(),
-            raw(iat_c).to_be_bytes(),
-        )
+        (0x3e0, raw(coolant_c).to_be_bytes(), raw(iat_c).to_be_bytes())
     };
     send_powertrain_frame(id, &[coolant[0], coolant[1], iat[0], iat[1], 0, 0, 0, 0]);
 }

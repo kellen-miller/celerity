@@ -1,8 +1,7 @@
 use super::{
-    AcceptedRadiatorSplitCommand, CommandSource, DiagnosticStatus, DiagnosticUnknownReason,
-    DiagnosticsSnapshot, FeatureAuthority, GlobalAuthority, ObservedTemperature,
-    ProtoCommandSource, ProtoDiagnosticHealthState, ProtoDiagnosticStatus,
-    ProtoDiagnosticUnknownReason, ProtoFeatureAuthority, ProtoGlobalAuthority,
+    AcceptedRadiatorSplitCommand, CommandSource, DiagnosticStatus, DiagnosticUnknownReason, DiagnosticsSnapshot,
+    FeatureAuthority, GlobalAuthority, ObservedTemperature, ProtoCommandSource, ProtoDiagnosticHealthState,
+    ProtoDiagnosticStatus, ProtoDiagnosticUnknownReason, ProtoFeatureAuthority, ProtoGlobalAuthority,
     ProtoRunStorageHealth, RunStorageHealth, proto,
 };
 
@@ -15,9 +14,7 @@ const fn global_authority_to_proto(value: GlobalAuthority) -> ProtoGlobalAuthori
 }
 
 fn global_authority_from_proto(value: i32) -> Result<GlobalAuthority, String> {
-    match ProtoGlobalAuthority::try_from(value)
-        .map_err(|_| "unknown global authority".to_owned())?
-    {
+    match ProtoGlobalAuthority::try_from(value).map_err(|_| "unknown global authority".to_owned())? {
         ProtoGlobalAuthority::Fallback => Ok(GlobalAuthority::Fallback),
         ProtoGlobalAuthority::Active => Ok(GlobalAuthority::Active),
         ProtoGlobalAuthority::HardFault => Ok(GlobalAuthority::HardFault),
@@ -34,9 +31,7 @@ const fn feature_authority_to_proto(value: FeatureAuthority) -> ProtoFeatureAuth
 }
 
 fn feature_authority_from_proto(value: i32) -> Result<FeatureAuthority, String> {
-    match ProtoFeatureAuthority::try_from(value)
-        .map_err(|_| "unknown feature authority".to_owned())?
-    {
+    match ProtoFeatureAuthority::try_from(value).map_err(|_| "unknown feature authority".to_owned())? {
         ProtoFeatureAuthority::Fallback => Ok(FeatureAuthority::Fallback),
         ProtoFeatureAuthority::Arming => Ok(FeatureAuthority::Arming),
         ProtoFeatureAuthority::Active => Ok(FeatureAuthority::Active),
@@ -63,40 +58,24 @@ fn command_source_from_proto(value: i32) -> Result<CommandSource, String> {
     }
 }
 
-const fn diagnostic_unknown_reason_to_proto(
-    value: DiagnosticUnknownReason,
-) -> ProtoDiagnosticUnknownReason {
+const fn diagnostic_unknown_reason_to_proto(value: DiagnosticUnknownReason) -> ProtoDiagnosticUnknownReason {
     match value {
         DiagnosticUnknownReason::NeverObserved => ProtoDiagnosticUnknownReason::NeverObserved,
-        DiagnosticUnknownReason::NotExpectedInFallback => {
-            ProtoDiagnosticUnknownReason::NotExpectedInFallback
-        }
+        DiagnosticUnknownReason::NotExpectedInFallback => ProtoDiagnosticUnknownReason::NotExpectedInFallback,
         DiagnosticUnknownReason::NotRenewing => ProtoDiagnosticUnknownReason::NotRenewing,
-        DiagnosticUnknownReason::NoOutstandingCommand => {
-            ProtoDiagnosticUnknownReason::NoOutstandingCommand
-        }
+        DiagnosticUnknownReason::NoOutstandingCommand => ProtoDiagnosticUnknownReason::NoOutstandingCommand,
         DiagnosticUnknownReason::AwaitingEvidence => ProtoDiagnosticUnknownReason::AwaitingEvidence,
     }
 }
 
 fn diagnostic_unknown_reason_from_proto(value: i32) -> Result<DiagnosticUnknownReason, String> {
-    match ProtoDiagnosticUnknownReason::try_from(value)
-        .map_err(|_| "unknown diagnostics reason".to_owned())?
-    {
+    match ProtoDiagnosticUnknownReason::try_from(value).map_err(|_| "unknown diagnostics reason".to_owned())? {
         ProtoDiagnosticUnknownReason::NeverObserved => Ok(DiagnosticUnknownReason::NeverObserved),
-        ProtoDiagnosticUnknownReason::NotExpectedInFallback => {
-            Ok(DiagnosticUnknownReason::NotExpectedInFallback)
-        }
+        ProtoDiagnosticUnknownReason::NotExpectedInFallback => Ok(DiagnosticUnknownReason::NotExpectedInFallback),
         ProtoDiagnosticUnknownReason::NotRenewing => Ok(DiagnosticUnknownReason::NotRenewing),
-        ProtoDiagnosticUnknownReason::NoOutstandingCommand => {
-            Ok(DiagnosticUnknownReason::NoOutstandingCommand)
-        }
-        ProtoDiagnosticUnknownReason::AwaitingEvidence => {
-            Ok(DiagnosticUnknownReason::AwaitingEvidence)
-        }
-        ProtoDiagnosticUnknownReason::Unspecified => {
-            Err("unspecified diagnostics reason".to_owned())
-        }
+        ProtoDiagnosticUnknownReason::NoOutstandingCommand => Ok(DiagnosticUnknownReason::NoOutstandingCommand),
+        ProtoDiagnosticUnknownReason::AwaitingEvidence => Ok(DiagnosticUnknownReason::AwaitingEvidence),
+        ProtoDiagnosticUnknownReason::Unspecified => Err("unspecified diagnostics reason".to_owned()),
     }
 }
 
@@ -117,9 +96,7 @@ const fn diagnostic_status_to_proto(value: DiagnosticStatus) -> ProtoDiagnosticS
     }
 }
 
-fn diagnostic_status_from_proto(
-    value: Option<&ProtoDiagnosticStatus>,
-) -> Result<DiagnosticStatus, String> {
+fn diagnostic_status_from_proto(value: Option<&ProtoDiagnosticStatus>) -> Result<DiagnosticStatus, String> {
     let value = value.ok_or_else(|| "missing diagnostics status".to_owned())?;
     match ProtoDiagnosticHealthState::try_from(value.state)
         .map_err(|_| "unknown diagnostics health state".to_owned())?
@@ -128,15 +105,11 @@ fn diagnostic_status_from_proto(
             let reason = value
                 .reason
                 .ok_or_else(|| "unknown diagnostics status has no reason".to_owned())?;
-            Ok(DiagnosticStatus::Unknown(
-                diagnostic_unknown_reason_from_proto(reason)?,
-            ))
+            Ok(DiagnosticStatus::Unknown(diagnostic_unknown_reason_from_proto(reason)?))
         }
         ProtoDiagnosticHealthState::Healthy => Ok(DiagnosticStatus::Healthy),
         ProtoDiagnosticHealthState::Unhealthy => Ok(DiagnosticStatus::Unhealthy),
-        ProtoDiagnosticHealthState::Unspecified => {
-            Err("unspecified diagnostics health state".to_owned())
-        }
+        ProtoDiagnosticHealthState::Unspecified => Err("unspecified diagnostics health state".to_owned()),
     }
 }
 
@@ -149,9 +122,7 @@ const fn run_storage_health_to_proto(value: RunStorageHealth) -> ProtoRunStorage
 }
 
 fn run_storage_health_from_proto(value: i32) -> Result<RunStorageHealth, String> {
-    match ProtoRunStorageHealth::try_from(value)
-        .map_err(|_| "unknown Run storage health".to_owned())?
-    {
+    match ProtoRunStorageHealth::try_from(value).map_err(|_| "unknown Run storage health".to_owned())? {
         ProtoRunStorageHealth::Unknown => Ok(RunStorageHealth::Unknown),
         ProtoRunStorageHealth::Healthy => Ok(RunStorageHealth::Healthy),
         ProtoRunStorageHealth::Degraded => Ok(RunStorageHealth::Degraded),
@@ -172,31 +143,26 @@ pub(super) fn to_proto(snapshot: &DiagnosticsSnapshot) -> proto::DiagnosticsSnap
                 source: command_source_to_proto(command.source) as i32,
             }
         }),
-        coolant_temperature: snapshot.coolant_temperature.as_ref().map(|temperature| {
-            proto::ObservedTemperature {
+        coolant_temperature: snapshot
+            .coolant_temperature
+            .as_ref()
+            .map(|temperature| proto::ObservedTemperature {
                 degrees_celsius: temperature.degrees_celsius,
                 observation_age_ms: temperature.observation_age_ms,
-            }
-        }),
+            }),
         intake_air_temperature: snapshot.intake_air_temperature.as_ref().map(|temperature| {
             proto::ObservedTemperature {
                 degrees_celsius: temperature.degrees_celsius,
                 observation_age_ms: temperature.observation_age_ms,
             }
         }),
-        controller_runtime_lease_health: Some(diagnostic_status_to_proto(
-            snapshot.controller_runtime_lease_health,
-        )),
-        controller_command_ack_health: Some(diagnostic_status_to_proto(
-            snapshot.controller_command_ack_health,
-        )),
+        controller_runtime_lease_health: Some(diagnostic_status_to_proto(snapshot.controller_runtime_lease_health)),
+        controller_command_ack_health: Some(diagnostic_status_to_proto(snapshot.controller_command_ack_health)),
         run_storage_health: run_storage_health_to_proto(snapshot.run_storage_health) as i32,
     }
 }
 
-pub(super) fn from_proto(
-    snapshot: proto::DiagnosticsSnapshot,
-) -> Result<DiagnosticsSnapshot, String> {
+pub(super) fn from_proto(snapshot: proto::DiagnosticsSnapshot) -> Result<DiagnosticsSnapshot, String> {
     let accepted_radiator_split_command = snapshot
         .accepted_radiator_split_command
         .map(|command| {
@@ -219,24 +185,18 @@ pub(super) fn from_proto(
         feature_authority: feature_authority_from_proto(snapshot.feature_authority)?,
         command_source: command_source_from_proto(snapshot.command_source)?,
         accepted_radiator_split_command,
-        coolant_temperature: snapshot
-            .coolant_temperature
-            .map(|temperature| ObservedTemperature {
-                degrees_celsius: temperature.degrees_celsius,
-                observation_age_ms: temperature.observation_age_ms,
-            }),
-        intake_air_temperature: snapshot.intake_air_temperature.map(|temperature| {
-            ObservedTemperature {
-                degrees_celsius: temperature.degrees_celsius,
-                observation_age_ms: temperature.observation_age_ms,
-            }
+        coolant_temperature: snapshot.coolant_temperature.map(|temperature| ObservedTemperature {
+            degrees_celsius: temperature.degrees_celsius,
+            observation_age_ms: temperature.observation_age_ms,
+        }),
+        intake_air_temperature: snapshot.intake_air_temperature.map(|temperature| ObservedTemperature {
+            degrees_celsius: temperature.degrees_celsius,
+            observation_age_ms: temperature.observation_age_ms,
         }),
         controller_runtime_lease_health: diagnostic_status_from_proto(
             snapshot.controller_runtime_lease_health.as_ref(),
         )?,
-        controller_command_ack_health: diagnostic_status_from_proto(
-            snapshot.controller_command_ack_health.as_ref(),
-        )?,
+        controller_command_ack_health: diagnostic_status_from_proto(snapshot.controller_command_ack_health.as_ref())?,
         run_storage_health: run_storage_health_from_proto(snapshot.run_storage_health)?,
     })
 }

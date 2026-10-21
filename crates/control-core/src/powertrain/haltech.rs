@@ -34,11 +34,7 @@ impl HaltechFrame {
         Self::try_from(can_id).ok()
     }
 
-    pub(super) fn decode(
-        self,
-        can_id: u16,
-        payload: &[u8],
-    ) -> Result<DecodedPowertrainFrame, PowertrainDecodeError> {
+    pub(super) fn decode(self, can_id: u16, payload: &[u8]) -> Result<DecodedPowertrainFrame, PowertrainDecodeError> {
         if payload.len() != 8 {
             return Err(PowertrainDecodeError::WrongLength);
         }
@@ -49,20 +45,11 @@ impl HaltechFrame {
                 signals.push(signal("engine_rpm", f64::from(be(0))));
                 signals.push(signal("map_kpa_absolute", f64::from(be(2)) / 10.0));
                 signals.push(signal("throttle_percent", f64::from(be(4)) / 10.0));
-                signals.push(signal(
-                    "coolant_pressure_kpa_gauge",
-                    f64::from(be(6)) / 10.0 - 101.3,
-                ));
+                signals.push(signal("coolant_pressure_kpa_gauge", f64::from(be(6)) / 10.0 - 101.3));
             }
             Self::FuelAndOilPressure => {
-                signals.push(signal(
-                    "fuel_pressure_kpa_gauge",
-                    f64::from(be(0)) / 10.0 - 101.3,
-                ));
-                signals.push(signal(
-                    "oil_pressure_kpa_gauge",
-                    f64::from(be(2)) / 10.0 - 101.3,
-                ));
+                signals.push(signal("fuel_pressure_kpa_gauge", f64::from(be(0)) / 10.0 - 101.3));
+                signals.push(signal("oil_pressure_kpa_gauge", f64::from(be(2)) / 10.0 - 101.3));
                 signals.push(signal("engine_demand_percent", f64::from(be(4)) / 10.0));
             }
             Self::WheelSpeeds => {
@@ -78,10 +65,7 @@ impl HaltechFrame {
                     signals.push(signal(name, f64::from(be(index * 2)) / 10.0));
                 }
             }
-            Self::EngineLimiting => signals.push(signal(
-                "engine_limiting_active",
-                if be(0) != 0 { 1.0 } else { 0.0 },
-            )),
+            Self::EngineLimiting => signals.push(signal("engine_limiting_active", if be(0) != 0 { 1.0 } else { 0.0 })),
             Self::VehicleSpeed => {
                 signals.push(signal("vehicle_speed_kph", f64::from(be(0)) / 10.0));
             }
@@ -89,26 +73,16 @@ impl HaltechFrame {
                 signals.push(signal("battery_voltage_v", f64::from(be(0)) / 10.0));
                 signals.push(signal("barometric_pressure_kpa", f64::from(be(6)) / 10.0));
             }
-            Self::ExhaustGasTemperatures1To4
-            | Self::ExhaustGasTemperatures5To8
-            | Self::ExhaustGasTemperatures9To12 => {
-                let first =
-                    usize::from(self as u16 - Self::ExhaustGasTemperatures1To4 as u16) * 4 + 1;
+            Self::ExhaustGasTemperatures1To4 | Self::ExhaustGasTemperatures5To8 | Self::ExhaustGasTemperatures9To12 => {
+                let first = usize::from(self as u16 - Self::ExhaustGasTemperatures1To4 as u16) * 4 + 1;
                 for index in 0..4 {
-                    signals.push(signal(
-                        egt_name(first + index),
-                        f64::from(be(index * 2)) / 10.0 - 273.1,
-                    ));
+                    signals.push(signal(egt_name(first + index), f64::from(be(index * 2)) / 10.0 - 273.1));
                 }
             }
-            Self::AmbientAir => signals.push(signal(
-                "ambient_air_temperature_c",
-                f64::from(be(0)) / 10.0 - 273.1,
-            )),
-            Self::PreIntercoolerBoostPressure => signals.push(signal(
-                "pre_intercooler_boost_pressure_kpa",
-                f64::from(be(0)) / 10.0,
-            )),
+            Self::AmbientAir => signals.push(signal("ambient_air_temperature_c", f64::from(be(0)) / 10.0 - 273.1)),
+            Self::PreIntercoolerBoostPressure => {
+                signals.push(signal("pre_intercooler_boost_pressure_kpa", f64::from(be(0)) / 10.0));
+            }
             Self::FluidTemperatures => {
                 for (offset, name) in [
                     "coolant_temperature_c",
@@ -123,10 +97,7 @@ impl HaltechFrame {
                 }
             }
             Self::DrivelineTemperatures => {
-                signals.push(signal(
-                    "gearbox_oil_temperature_c",
-                    f64::from(be(0)) / 10.0 - 273.1,
-                ));
+                signals.push(signal("gearbox_oil_temperature_c", f64::from(be(0)) / 10.0 - 273.1));
                 signals.push(signal(
                     "differential_oil_temperature_c",
                     f64::from(be(2)) / 10.0 - 273.1,
@@ -146,10 +117,7 @@ impl HaltechFrame {
             Self::GenericSensors1To4 | Self::GenericSensors5To8 | Self::GenericSensors9To10 => {
                 let first = usize::from(self as u16 - Self::GenericSensors1To4 as u16) * 4 + 1;
                 for index in 0..(11 - first).min(4) {
-                    signals.push(signal(
-                        generic_sensor_name(first + index),
-                        f64::from(be(index * 2)),
-                    ));
+                    signals.push(signal(generic_sensor_name(first + index), f64::from(be(index * 2))));
                 }
             }
             Self::EcuTemperature => {
@@ -162,10 +130,9 @@ impl HaltechFrame {
             Self::EngineState => {
                 signals.push(signal("engine_state", f64::from(payload[1] & 0x0f)));
             }
-            Self::CalculatedAirTemperature => signals.push(signal(
-                "calculated_air_temperature_c",
-                f64::from(be(4)) / 10.0 - 273.1,
-            )),
+            Self::CalculatedAirTemperature => {
+                signals.push(signal("calculated_air_temperature_c", f64::from(be(4)) / 10.0 - 273.1));
+            }
         }
         Ok(DecodedPowertrainFrame {
             can_id,
@@ -178,8 +145,8 @@ impl HaltechFrame {
 
 const fn egt_name(index: usize) -> &'static str {
     [
-        "egt_1_c", "egt_2_c", "egt_3_c", "egt_4_c", "egt_5_c", "egt_6_c", "egt_7_c", "egt_8_c",
-        "egt_9_c", "egt_10_c", "egt_11_c", "egt_12_c",
+        "egt_1_c", "egt_2_c", "egt_3_c", "egt_4_c", "egt_5_c", "egt_6_c", "egt_7_c", "egt_8_c", "egt_9_c", "egt_10_c",
+        "egt_11_c", "egt_12_c",
     ][index - 1]
 }
 

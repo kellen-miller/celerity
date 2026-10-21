@@ -1,5 +1,4 @@
 use std::{
-    fmt::Write as _,
     fs, io,
     net::TcpListener,
     path::Path,
@@ -9,15 +8,13 @@ use std::{
 };
 
 use control_core::{
-    CommandSource, EnqueueResult, ExternalAdapters, ModelSlots, RunContext, RunRecord, RunWriter,
-    Runtime, RuntimeEffect, RuntimeEvent, RuntimeModel, StartupMode, ValidatedBundle,
+    CommandSource, EnqueueResult, ExternalAdapters, ModelSlots, RunContext, RunRecord, RunWriter, Runtime,
+    RuntimeEffect, RuntimeEvent, RuntimeModel, StartupMode, ValidatedBundle,
 };
 use reqwest::blocking::Client;
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use sync::{
-    NetworkPresence, ReconcileOutcome, ReqwestHomeApi, SyncConfiguration, SyncError, Synchronizer,
-};
+use sync::{NetworkPresence, ReconcileOutcome, ReqwestHomeApi, SyncConfiguration, SyncError, Synchronizer};
 use tempfile::TempDir;
 
 struct AlwaysHome;
@@ -32,18 +29,20 @@ struct HomeProcess(Child);
 
 impl Drop for HomeProcess {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        if let Err(error) = self.0.kill()
+            && error.kind() != io::ErrorKind::InvalidInput
+        {
+            eprintln!("failed to stop home test process: {error}");
+        }
+
+        if let Err(error) = self.0.wait() {
+            eprintln!("failed to reap home test process: {error}");
+        }
     }
 }
 
 fn digest(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .fold(String::with_capacity(64), |mut output, byte| {
-            write!(output, "{byte:02x}").expect("String write");
-            output
-        })
+    hex::encode(Sha256::digest(bytes))
 }
 
 fn make_complete_run(spool: &Path, name: &str) -> io::Result<String> {
@@ -60,10 +59,7 @@ fn make_complete_run(spool: &Path, name: &str) -> io::Result<String> {
             firmware_generation: 1,
             decoder_generation: 1,
             model_abi: "thermal-v1".to_owned(),
-            model_input_signals: vec![
-                "coolant_temperature_c".to_owned(),
-                "air_temperature_c".to_owned(),
-            ],
+            model_input_signals: vec!["coolant_temperature_c".to_owned(), "air_temperature_c".to_owned()],
             model_history_length: 4,
             sample_period_ms: 20,
             command_lattice: vec![1000, 5000, 9000],
@@ -79,16 +75,17 @@ fn make_complete_run(spool: &Path, name: &str) -> io::Result<String> {
         ] {
             sequence += 1;
             assert_eq!(
-                writer.enqueue(RunRecord::signal(
-                    sequence, sequence, signal, value, 1, 0, 1
-                )),
+                writer.enqueue(RunRecord::signal(sequence, sequence, signal, value, 1, 0, 1)),
                 EnqueueResult::Accepted
             );
         }
         if index < 6 {
             sequence += 1;
-            let command =
-                [1000, 5000, 9000][usize::try_from(index % 3).expect("bounded command index")];
+            let command = match index % 3 {
+                0 => 1000,
+                1 => 5000,
+                _ => 9000,
+            };
             assert_eq!(
                 writer.enqueue(RunRecord::control(
                     sequence,
@@ -157,15 +154,8 @@ fn production_http_upload_trains_and_stages_exact_model() {
         .build()
         .expect("HTTP client");
     let ready_deadline = Instant::now() + Duration::from_secs(10);
-    while client
-        .get(format!("{base_url}/health/ready"))
-        .send()
-        .is_err()
-    {
-        assert!(
-            Instant::now() < ready_deadline,
-            "home API did not become ready"
-        );
+    while client.get(format!("{base_url}/health/ready")).send().is_err() {
+        assert!(Instant::now() < ready_deadline, "home API did not become ready");
         thread::sleep(Duration::from_millis(50));
     }
 
@@ -180,10 +170,7 @@ fn production_http_upload_trains_and_stages_exact_model() {
         journal_path: temporary.path().join("sync.sqlite3"),
         model_root: model_root.clone(),
         model_abi: "thermal-v1".to_owned(),
-        model_input_signals: vec![
-            "coolant_temperature_c".to_owned(),
-            "air_temperature_c".to_owned(),
-        ],
+        model_input_signals: vec!["coolant_temperature_c".to_owned(), "air_temperature_c".to_owned()],
         model_history_length: 4,
         model_command_lattice: vec![1000, 5000, 9000],
         model_maximum_calibration_error: 100.0,
@@ -233,16 +220,11 @@ fn production_http_upload_trains_and_stages_exact_model() {
     let runtime_bundle = fs::read_to_string(repository.join("config/examples/simulation.toml"))
         .expect("runtime bundle")
         .replacen("history_length = 1", "history_length = 4", 1)
-        .replacen(
-            "maximum_uncertainty = 0.1",
-            "maximum_uncertainty = 100.0",
-            1,
-        );
+        .replacen("maximum_uncertainty = 0.1", "maximum_uncertainty = 100.0", 1);
     fs::write(&runtime_bundle_path, runtime_bundle).expect("runtime bundle fixture");
-    let runtime_bundle = ValidatedBundle::load(&runtime_bundle_path, StartupMode::Simulation)
-        .expect("validated runtime bundle");
-    let model = RuntimeModel::load(&selected.onnx_path, &runtime_bundle)
-        .expect("load exact staged graph with tract");
+    let runtime_bundle =
+        ValidatedBundle::load(&runtime_bundle_path, StartupMode::Simulation).expect("validated runtime bundle");
+    let model = RuntimeModel::load(&selected.onnx_path, &runtime_bundle).expect("load exact staged graph with tract");
     let mut events = Vec::new();
     for index in 0_u32..4 {
         events.push(RuntimeEvent::ModelSignalSnapshot {
@@ -268,10 +250,9 @@ fn production_http_upload_trains_and_stages_exact_model() {
             remaining_cycle_ns: 1_000_000_000,
         },
     ]);
-    let outcome =
-        Runtime::new_with_model(runtime_bundle, ExternalAdapters::simulation(events), model)
-            .expect("runtime composition")
-            .run();
+    let outcome = Runtime::new_with_model(runtime_bundle, ExternalAdapters::simulation(events), model)
+        .expect("runtime composition")
+        .run();
     assert_eq!(outcome.command_source, CommandSource::ModelOptimized);
     assert!(outcome.effects.iter().any(|effect| matches!(
         effect,

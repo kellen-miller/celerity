@@ -1,14 +1,11 @@
 use std::{
-    fmt::Write as _,
     fs,
     path::{Component, Path, PathBuf},
 };
 
+use super::{SyncError, artifact::digest, sync_io};
 use celerity_proto::celerity::v1::{Completion, RunManifest};
 use prost::Message;
-use sha2::{Digest, Sha256};
-
-use super::{SyncError, sync_io};
 
 #[derive(Clone, Debug)]
 pub(crate) struct SpoolRun {
@@ -36,8 +33,7 @@ pub(crate) fn inventory(root: &Path) -> Result<Vec<SpoolRun>, SyncError> {
             continue;
         }
         let manifest = fs::read(&manifest_path).map_err(sync_io)?;
-        let value = RunManifest::decode(manifest.as_slice())
-            .map_err(|error| SyncError(error.to_string()))?;
+        let value = RunManifest::decode(manifest.as_slice()).map_err(|error| SyncError(error.to_string()))?;
         if value.completion != Completion::Complete as i32 {
             continue;
         }
@@ -48,9 +44,7 @@ pub(crate) fn inventory(root: &Path) -> Result<Vec<SpoolRun>, SyncError> {
                 return Err(SyncError("complete Run has no chunk_file".to_owned()));
             }
             if !is_digest(chunk_digest) {
-                return Err(SyncError(
-                    "complete Run has an invalid chunk digest".to_owned(),
-                ));
+                return Err(SyncError("complete Run has an invalid chunk digest".to_owned()));
             }
             let relative_path = Path::new(chunk_file);
             if relative_path.is_absolute()
@@ -118,8 +112,7 @@ pub(crate) fn incomplete_inventory(root: &Path) -> Result<Vec<PathBuf>, SyncErro
             continue;
         }
         let manifest = fs::read(&manifest_path).map_err(sync_io)?;
-        let value = RunManifest::decode(manifest.as_slice())
-            .map_err(|error| SyncError(error.to_string()))?;
+        let value = RunManifest::decode(manifest.as_slice()).map_err(|error| SyncError(error.to_string()))?;
         if value.completion != Completion::Complete as i32 {
             directories.push(directory);
         }
@@ -127,17 +120,6 @@ pub(crate) fn incomplete_inventory(root: &Path) -> Result<Vec<PathBuf>, SyncErro
     Ok(directories)
 }
 
-pub(crate) fn digest(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(64);
-    for byte in Sha256::digest(bytes) {
-        write!(output, "{byte:02x}").expect("String write");
-    }
-    output
-}
-
 fn is_digest(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    value.len() == 64 && value.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }

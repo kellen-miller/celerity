@@ -11,9 +11,8 @@ use std::{
 };
 
 use celerity_proto::celerity::v1::{
-    self as proto, CommandSource as ProtoCommandSource,
-    DiagnosticHealthState as ProtoDiagnosticHealthState, DiagnosticStatus as ProtoDiagnosticStatus,
-    DiagnosticUnknownReason as ProtoDiagnosticUnknownReason,
+    self as proto, CommandSource as ProtoCommandSource, DiagnosticHealthState as ProtoDiagnosticHealthState,
+    DiagnosticStatus as ProtoDiagnosticStatus, DiagnosticUnknownReason as ProtoDiagnosticUnknownReason,
     FeatureAuthority as ProtoFeatureAuthority, GlobalAuthority as ProtoGlobalAuthority,
     RunStorageHealth as ProtoRunStorageHealth,
 };
@@ -126,12 +125,8 @@ impl DiagnosticsSnapshot {
             accepted_radiator_split_command: None,
             coolant_temperature: None,
             intake_air_temperature: None,
-            controller_runtime_lease_health: DiagnosticStatus::Unknown(
-                DiagnosticUnknownReason::NotExpectedInFallback,
-            ),
-            controller_command_ack_health: DiagnosticStatus::Unknown(
-                DiagnosticUnknownReason::NoOutstandingCommand,
-            ),
+            controller_runtime_lease_health: DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback),
+            controller_command_ack_health: DiagnosticStatus::Unknown(DiagnosticUnknownReason::NoOutstandingCommand),
             run_storage_health: RunStorageHealth::Unknown,
         }
     }
@@ -168,11 +163,7 @@ impl DiagnosticsStore {
     /// # Errors
     ///
     /// Returns an error when another thread poisoned the diagnostics lock.
-    pub fn publish(
-        &self,
-        mut snapshot: DiagnosticsSnapshot,
-        published_at: Instant,
-    ) -> Result<(), String> {
+    pub fn publish(&self, mut snapshot: DiagnosticsSnapshot, published_at: Instant) -> Result<(), String> {
         let mut published = self.shared.write().map_err(|error| error.to_string())?;
         snapshot.runtime_update_age_ms = 0;
         snapshot.runtime_update_stale_after_ms = published.runtime_update_stale_after_ms;
@@ -185,11 +176,8 @@ impl DiagnosticsStore {
     fn snapshot(&self, now: Instant) -> Result<DiagnosticsSnapshot, String> {
         let published = self.shared.read().map_err(|error| error.to_string())?;
         let mut snapshot = published.snapshot.clone();
-        snapshot.runtime_update_age_ms = u64::try_from(
-            now.saturating_duration_since(published.published_at)
-                .as_millis(),
-        )
-        .unwrap_or(u64::MAX);
+        snapshot.runtime_update_age_ms =
+            u64::try_from(now.saturating_duration_since(published.published_at).as_millis()).unwrap_or(u64::MAX);
         drop(published);
         Ok(snapshot)
     }
@@ -242,12 +230,13 @@ pub fn serve_diagnostics(
                                 continue;
                             }
                         };
-                        if &request[..read] != b"status\n" {
-                            if let Err(error) = stream
-                                .write_all(b"{\"error\":\"read-only status request required\"}\n")
-                            {
-                                eprintln!("diagnostics rejection write failed: {error}");
-                            }
+                        let is_status_request = &request[..read] == b"status\n";
+                        if !is_status_request
+                            && let Err(error) = stream.write_all(b"{\"error\":\"read-only status request required\"}\n")
+                        {
+                            eprintln!("diagnostics rejection write failed: {error}");
+                        }
+                        if !is_status_request {
                             continue;
                         }
                         let current = match store.snapshot(Instant::now()) {
@@ -267,7 +256,11 @@ pub fn serve_diagnostics(
                     }
                     Err(error) => {
                         drop(listener);
-                        let _ = fs::remove_file(&socket_path);
+                        if let Err(cleanup_error) = fs::remove_file(&socket_path)
+                            && cleanup_error.kind() != std::io::ErrorKind::NotFound
+                        {
+                            eprintln!("diagnostics socket cleanup failed: {cleanup_error}");
+                        }
                         return Err(error.to_string());
                     }
                 }
@@ -294,14 +287,9 @@ pub fn read_diagnostics(socket_path: &Path) -> Result<DiagnosticsSnapshot, Strin
         .set_read_timeout(Some(IO_TIMEOUT))
         .and_then(|()| stream.set_write_timeout(Some(IO_TIMEOUT)))
         .map_err(|error| error.to_string())?;
-    stream
-        .write_all(b"status\n")
-        .map_err(|error| error.to_string())?;
+    stream.write_all(b"status\n").map_err(|error| error.to_string())?;
     let mut response = Vec::new();
-    stream
-        .read_to_end(&mut response)
-        .map_err(|error| error.to_string())?;
-    let snapshot = proto::DiagnosticsSnapshot::decode(response.as_slice())
-        .map_err(|error| error.to_string())?;
+    stream.read_to_end(&mut response).map_err(|error| error.to_string())?;
+    let snapshot = proto::DiagnosticsSnapshot::decode(response.as_slice()).map_err(|error| error.to_string())?;
     DiagnosticsSnapshot::from_proto(snapshot)
 }

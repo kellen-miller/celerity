@@ -72,15 +72,15 @@ impl StatusObserver {
     #[must_use]
     pub fn envelope(&self, now: Instant) -> StatusEnvelope {
         let last_success_age_ms = self.last_success_at.map(|last_success_at| {
-            u64::try_from(now.saturating_duration_since(last_success_at).as_millis())
-                .unwrap_or(u64::MAX)
+            u64::try_from(now.saturating_duration_since(last_success_at).as_millis()).unwrap_or(u64::MAX)
         });
         let state = if self.snapshot.is_none() || self.consecutive_failures >= 3 {
             PresentationState::Unavailable
         } else if self.consecutive_failures > 0
-            || self.snapshot.as_ref().is_some_and(|snapshot| {
-                snapshot.runtime_update_age_ms > snapshot.runtime_update_stale_after_ms
-            })
+            || self
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.runtime_update_age_ms > snapshot.runtime_update_stale_after_ms)
         {
             PresentationState::Stale
         } else {

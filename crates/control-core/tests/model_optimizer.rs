@@ -1,9 +1,6 @@
 use std::path::PathBuf;
 
-use control_core::{
-    CandidatePrediction, InferenceBudget, ModelError, OptimizerDecision, ThermalOptimizer,
-    TractModel,
-};
+use control_core::{CandidatePrediction, InferenceBudget, ModelError, OptimizerDecision, ThermalOptimizer, TractModel};
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx")
@@ -26,10 +23,7 @@ fn corrupt_and_nonfinite_model_inputs_are_rejected() {
         Err(ModelError::Load(_))
     ));
     let model = TractModel::load(&fixture(), 3, 1).expect("fixture");
-    assert_eq!(
-        model.infer(&[f32::NAN, 1.0, 0.5]),
-        Err(ModelError::NonfiniteInput)
-    );
+    assert_eq!(model.infer(&[f32::NAN, 1.0, 0.5]), Err(ModelError::NonfiniteInput));
 }
 
 #[test]

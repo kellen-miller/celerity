@@ -56,9 +56,10 @@ the regeneration in a temporary tree and fails if any checked-in binding is
 missing or stale.
 
 CI runs the workspace Cargo checks through the shared `rust-check` action after
-preparing the toolchain and platform dependencies. Cargo lint policy and target
-builds remain in this repository. `check-rust-targets --portable` builds firmware
-and links ARM64 when its cross-linker is available.
+preparing the toolchain and platform dependencies. Formatting and Clippy use
+the action's bundled policy alongside the workspace lint settings. Tests and
+target builds retain their existing platform setup. `check-rust-targets --portable`
+builds firmware and links ARM64 when its cross-linker is available.
 
 Linux CI creates separate `vcan-powertrain` and `vcan-controller` interfaces
 before the workspace checks, then runs `./scripts/check-linux` for target builds

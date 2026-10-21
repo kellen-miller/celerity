@@ -242,10 +242,17 @@ jobs:
           sudo ip link set up vcan-powertrain
           sudo ip link set up vcan-controller
       - name: Check Rust workspace
-        uses: kellen-miller/ci/.github/actions/rust-check@0ee482cdd0ea61bc8b5d95cc8b45195fc0df0d66
+        uses: kellen-miller/ci/.github/actions/rust-check@9478f2f23f217048a86cb1916fb78b312f20afa7
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
         with:
           setup-toolchain: 'false'
+          checks: fmt clippy
+      - name: Test and build Rust workspace
+        uses: kellen-miller/ci/.github/actions/rust-check@9478f2f23f217048a86cb1916fb78b312f20afa7
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
+        with:
+          setup-toolchain: 'false'
+          checks: test build
       - run: ./scripts/check-rust-targets --portable
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
       - run: ./scripts/check-python
@@ -302,7 +309,13 @@ jobs:
           sudo ip link set up vcan-powertrain
           sudo ip link set up vcan-controller
       - name: Check Rust workspace
-        uses: kellen-miller/ci/.github/actions/rust-check@0ee482cdd0ea61bc8b5d95cc8b45195fc0df0d66
+        uses: kellen-miller/ci/.github/actions/rust-check@9478f2f23f217048a86cb1916fb78b312f20afa7
         with:
           setup-toolchain: 'false'
+          checks: fmt clippy
+      - name: Test and build Rust workspace
+        uses: kellen-miller/ci/.github/actions/rust-check@9478f2f23f217048a86cb1916fb78b312f20afa7
+        with:
+          setup-toolchain: 'false'
+          checks: test build
       - run: ./scripts/check-linux

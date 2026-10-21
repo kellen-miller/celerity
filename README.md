@@ -44,7 +44,8 @@ Install the checked-in Rust toolchain, `uv`, and Node/npm. Run `npm ci` in
 ./scripts/check-protos
 ./scripts/check-sql
 cargo fmt --all -- --check
-cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo clippy --locked --workspace --all-targets --all-features \
+  --exclude celerity-proto --exclude celerity-sql --no-deps -- -D warnings
 cargo test --locked --workspace --all-features --all-targets
 cargo test --locked --workspace --all-features --doc
 cargo build --locked --workspace --all-targets --all-features

@@ -22,7 +22,7 @@ tonic = "0.14.6"
 tonic-health = "0.14.6"
 tokio-stream = { version = "0.1", features = ["net"] }
 uuid = { version = "1", features = ["v4"] }
-zip = { version = "7.2.0", default-features = false }
+zip = { version = "9.0.0", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31.3", features = ["fs"] }

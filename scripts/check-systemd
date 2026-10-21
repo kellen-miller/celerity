@@ -85,6 +85,17 @@ cleanup() {
   fi
   rm -rf "$check_root"
 }
+report_service_failure() {
+  local exit_code=$1 line=$2 command=$3
+  printf 'systemd check failed at line %s (exit %s): %s\n' \
+    "$line" "$exit_code" "$command" >&2
+  sudo systemctl status celerityd.service celerity-sync.service celerity-ui.service \
+    --no-pager >&2 || true
+  sudo journalctl -u celerityd.service -u celerity-sync.service -u celerity-ui.service \
+    --no-pager --lines=80 >&2 || true
+  return "$exit_code"
+}
+trap 'report_service_failure "$?" "$LINENO" "$BASH_COMMAND"' ERR
 trap cleanup EXIT
 
 if ! getent group celerity-diagnostics >/dev/null; then
@@ -118,6 +129,7 @@ systemd-analyze verify \
   deploy/systemd/celerity-ui.service
 sudo install -d -m 0755 "$config_root"
 sudo install -m 0600 /dev/null "$config_root/home-token"
+printf '%s\n' 'systemd-fixture-token' | sudo tee "$config_root/home-token" >/dev/null
 sudo install -m 0644 deploy/systemd/celerityd.service "$unit_root/celerityd.service"
 sudo install -m 0644 deploy/systemd/celerity-sync.service "$unit_root/celerity-sync.service"
 sudo install -m 0644 deploy/systemd/celerity-ui.service "$unit_root/celerity-ui.service"

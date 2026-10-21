@@ -2,26 +2,25 @@ use std::{fs, path::PathBuf};
 
 use control_core::{PowertrainDecoder, PowertrainSource, StartupMode, ValidatedBundle};
 
-fn decoder(cantcu: &str, name: &str) -> PowertrainDecoder {
+fn decoder(cantcu: &str, name: &str) -> Result<PowertrainDecoder, control_core::BundleError> {
     let source = fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/simulation.toml"),
     )
-    .expect("simulation fixture")
+    .map_err(|error| control_core::BundleError::Read(error.to_string()))?
     .replace("mode = \"disabled\"", cantcu);
     let path = std::env::temp_dir().join(format!(
         "celerity-powertrain-{name}-{}.toml",
         std::process::id()
     ));
-    fs::write(&path, source).expect("powertrain bundle");
-    ValidatedBundle::load(&path, StartupMode::Simulation)
-        .expect("valid powertrain bundle")
-        .powertrain_decoder()
+    fs::write(&path, source).map_err(|error| control_core::BundleError::Read(error.to_string()))?;
+    ValidatedBundle::load(&path, StartupMode::Simulation).map(|bundle| bundle.powertrain_decoder())
 }
 
 #[test]
 fn haltech_thermal_frames_are_big_endian_and_keep_raw_evidence() {
     let raw = [0x0e, 0x62, 0x0c, 0xee, 0x0c, 0x80, 0x0f, 0xa0];
     let decoded = decoder("mode = \"disabled\"", "haltech")
+        .expect("valid powertrain bundle")
         .decode(0x3e0, &raw)
         .expect("Haltech temperatures");
     assert_eq!(decoded.source, PowertrainSource::HaltechBroadcastV2);
@@ -33,7 +32,8 @@ fn haltech_thermal_frames_are_big_endian_and_keep_raw_evidence() {
 
 #[test]
 fn haltech_sensor_groups_keep_channel_numbers_and_scaling() {
-    let decoder = decoder("mode = \"disabled\"", "haltech-groups");
+    let decoder =
+        decoder("mode = \"disabled\"", "haltech-groups").expect("valid powertrain bundle");
     let raw = [0x0a, 0xab, 0x0a, 0xb5, 0x0a, 0xbf, 0x0a, 0xc9];
     let cases: [(u16, &[&str], &[f64]); 6] = [
         (
@@ -94,6 +94,7 @@ fn haltech_sensor_groups_keep_channel_numbers_and_scaling() {
 #[test]
 fn cantcu_is_opt_in_and_little_endian() {
     let decoded = decoder("mode = \"default\"\nbase_id = 1280", "cantcu")
+        .expect("valid powertrain bundle")
         .decode(0x500, &[0x34, 0x12, 0x78, 0x56, 0xbc, 0x9a, 44, 1])
         .expect("CANTCU frame");
     assert_eq!(decoded.source, PowertrainSource::CantcuDefault);
@@ -103,7 +104,7 @@ fn cantcu_is_opt_in_and_little_endian() {
 
 #[test]
 fn unknown_frames_remain_opaque_and_recognized_dlc_is_strict() {
-    let decoder = decoder("mode = \"disabled\"", "unknown");
+    let decoder = decoder("mode = \"disabled\"", "unknown").expect("valid powertrain bundle");
     let unknown = decoder.decode(0x123, &[1, 2, 3]).expect("opaque frame");
     assert_eq!(unknown.source, PowertrainSource::Unknown);
     assert_eq!(unknown.signals, []);

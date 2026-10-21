@@ -8,12 +8,12 @@ fn bundle(haltech: &str, cantcu: &str, name: &str) -> Result<ValidatedBundle, Bu
     let source = fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/simulation.toml"),
     )
-    .expect("simulation fixture")
+    .map_err(|error| BundleError::Read(error.to_string()))?
     .replace("mode = \"broadcast-v2\"", haltech)
     .replace("mode = \"disabled\"", cantcu);
     let path =
         std::env::temp_dir().join(format!("celerity-nexus-{name}-{}.toml", std::process::id()));
-    fs::write(&path, source).expect("Nexus bundle");
+    fs::write(&path, source).map_err(|error| BundleError::Read(error.to_string()))?;
     ValidatedBundle::load(&path, StartupMode::Simulation)
 }
 

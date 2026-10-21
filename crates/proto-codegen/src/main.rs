@@ -17,7 +17,7 @@ fn main() -> ExitCode {
 }
 
 fn generate() -> Result<(), String> {
-    let repository_root = repository_root();
+    let repository_root = repository_root()?;
     let output_root = output_root(&repository_root)?;
     let proto_path = repository_root.join(PROTO_RELATIVE_PATH);
     let contracts_root = repository_root.join("contracts");
@@ -37,12 +37,12 @@ fn generate() -> Result<(), String> {
     Ok(())
 }
 
-fn repository_root() -> PathBuf {
+fn repository_root() -> Result<PathBuf, String> {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .expect("proto-codegen must live under crates/")
-        .to_path_buf()
+        .ok_or_else(|| "proto-codegen must live under crates/".to_owned())
+        .map(Path::to_path_buf)
 }
 
 fn output_root(repository_root: &Path) -> Result<PathBuf, String> {

@@ -4,10 +4,10 @@ use control_protocol::{
     WireError, decode, encode,
 };
 
-fn encoded(frame: &Frame) -> (u16, Vec<u8>) {
+fn encoded(frame: &Frame) -> Result<(u16, Vec<u8>), String> {
     let mut bytes = [0_u8; 64];
-    let encoded = encode(frame, &mut bytes).expect("fixture must encode");
-    (encoded.can_id, bytes[..encoded.len].to_vec())
+    let encoded = encode(frame, &mut bytes).map_err(|error| format!("{error:?}"))?;
+    Ok((encoded.can_id, bytes[..encoded.len].to_vec()))
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn every_v1_frame_has_exact_id_length_and_round_trip() {
     ];
 
     for (frame, (can_id, length)) in frames.iter().zip(expected) {
-        let (actual_id, bytes) = encoded(frame);
+        let (actual_id, bytes) = encoded(frame).expect("frame encoding");
         assert_eq!((actual_id, bytes.len()), (can_id, length));
         assert_eq!(decode(actual_id, &bytes), Ok(frame.clone()));
     }
@@ -203,7 +203,7 @@ fn command_wire_bytes_are_little_endian_and_reserved_zero() {
             flags: 0x15,
         },
     };
-    let (can_id, bytes) = encoded(&frame);
+    let (can_id, bytes) = encoded(&frame).expect("frame encoding");
     assert_eq!(can_id, 0x101);
     assert_eq!(
         bytes,
@@ -227,7 +227,7 @@ fn invalid_wire_values_are_rejected() {
             flags: 0,
         },
     };
-    let (_, mut bytes) = encoded(&command);
+    let (_, mut bytes) = encoded(&command).expect("frame encoding");
     assert_eq!(
         decode(0x101, &bytes[..23]),
         Err(WireError::WrongLength {
@@ -258,7 +258,7 @@ fn zero_enum_values_are_rejected() {
             result: 1,
         },
     };
-    let (_, mut bytes) = encoded(&frame);
+    let (_, mut bytes) = encoded(&frame).expect("frame encoding");
     bytes[12] = 0;
     assert_eq!(
         decode(0x301, &bytes),

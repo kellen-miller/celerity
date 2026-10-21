@@ -289,6 +289,7 @@ dependencies = [
  "celerity-proto",
  "control-protocol",
  "fs4",
+ "hex",
  "num_enum",
  "prost",
  "serde",
@@ -2806,6 +2807,7 @@ version = "0.1.0"
 dependencies = [
  "celerity-proto",
  "control-core",
+ "hex",
  "prost",
  "reqwest",
  "rusqlite",

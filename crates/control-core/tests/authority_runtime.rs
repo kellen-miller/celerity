@@ -11,20 +11,19 @@ use control_core::{
 };
 use prost::Message;
 
-fn bundle() -> ValidatedBundle {
+fn bundle() -> Result<ValidatedBundle, control_core::BundleError> {
     let source =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/simulation.toml");
-    ValidatedBundle::load(&source, StartupMode::Simulation).expect("valid fixture")
+    ValidatedBundle::load(&source, StartupMode::Simulation)
 }
 
-fn model_fixture() -> (tempfile::TempDir, PathBuf) {
-    let directory = tempfile::tempdir().expect("model fixture directory");
+fn model_fixture() -> std::io::Result<(tempfile::TempDir, PathBuf)> {
+    let directory = tempfile::tempdir()?;
     let model_path = directory.path().join("identity.onnx");
     fs::copy(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx"),
         &model_path,
-    )
-    .expect("model fixture");
+    )?;
     fs::write(
         directory.path().join("manifest.pb"),
         ModelBundleManifest {
@@ -52,16 +51,15 @@ fn model_fixture() -> (tempfile::TempDir, PathBuf) {
             ..ModelBundleManifest::default()
         }
         .encode_to_vec(),
-    )
-    .expect("model manifest");
-    (directory, model_path)
+    )?;
+    Ok((directory, model_path))
 }
 
-fn experiment_bundle() -> ValidatedBundle {
+fn experiment_bundle() -> Result<ValidatedBundle, control_core::BundleError> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let source = fs::read_to_string(repository.join("config/examples/simulation.toml"))
-        .expect("simulation bundle");
+        .map_err(|error| control_core::BundleError::Read(error.to_string()))?;
     let path = std::env::temp_dir().join(format!(
         "celerity-experiment-bundle-{}-{}.toml",
         std::process::id(),
@@ -76,8 +74,8 @@ fn experiment_bundle() -> ValidatedBundle {
                 .display()
         ),
     )
-    .expect("experiment bundle");
-    ValidatedBundle::load(&path, StartupMode::Simulation).expect("valid experiment bundle")
+    .map_err(|error| control_core::BundleError::Read(error.to_string()))?;
+    ValidatedBundle::load(&path, StartupMode::Simulation)
 }
 
 fn healthy_events() -> Vec<RuntimeEvent> {
@@ -117,9 +115,12 @@ fn healthy_events() -> Vec<RuntimeEvent> {
 
 #[test]
 fn healthy_events_reach_deterministic_authority_in_fixed_order() {
-    let outcome = Runtime::new(bundle(), ExternalAdapters::simulation(healthy_events()))
-        .expect("matching composition")
-        .run();
+    let outcome = Runtime::new(
+        bundle().expect("valid simulation bundle"),
+        ExternalAdapters::simulation(healthy_events()),
+    )
+    .expect("matching composition")
+    .run();
     assert_eq!(outcome.final_feature_authority, FeatureAuthority::Active);
     assert_eq!(outcome.command_source, CommandSource::Deterministic);
     assert_eq!(outcome.accepted_basis_points, Some(5_000));
@@ -144,8 +145,8 @@ fn healthy_events_reach_deterministic_authority_in_fixed_order() {
 
 #[test]
 fn startup_selected_model_reaches_the_production_command_effect() {
-    let bundle = bundle();
-    let (_model_directory, model_path) = model_fixture();
+    let bundle = bundle().expect("valid simulation bundle");
+    let (_model_directory, model_path) = model_fixture().expect("model fixture");
     let model = RuntimeModel::load(&model_path, &bundle).expect("startup model");
     let outcome = Runtime::new_with_model(
         bundle,
@@ -166,8 +167,8 @@ fn startup_selected_model_reaches_the_production_command_effect() {
 
 #[test]
 fn unacknowledged_model_command_is_not_acceptance_evidence() {
-    let bundle = bundle();
-    let (_model_directory, model_path) = model_fixture();
+    let bundle = bundle().expect("valid simulation bundle");
+    let (_model_directory, model_path) = model_fixture().expect("model fixture");
     let model = RuntimeModel::load(&model_path, &bundle).expect("startup model");
     let events = healthy_events().into_iter().take(4).collect();
     let outcome = Runtime::new_with_model(bundle, ExternalAdapters::simulation(events), model)
@@ -180,12 +181,18 @@ fn unacknowledged_model_command_is_not_acceptance_evidence() {
 
 #[test]
 fn repeated_logical_time_has_identical_semantics() {
-    let first = Runtime::new(bundle(), ExternalAdapters::simulation(healthy_events()))
-        .expect("matching composition")
-        .run();
-    let second = Runtime::new(bundle(), ExternalAdapters::simulation(healthy_events()))
-        .expect("matching composition")
-        .run();
+    let first = Runtime::new(
+        bundle().expect("valid simulation bundle"),
+        ExternalAdapters::simulation(healthy_events()),
+    )
+    .expect("matching composition")
+    .run();
+    let second = Runtime::new(
+        bundle().expect("valid simulation bundle"),
+        ExternalAdapters::simulation(healthy_events()),
+    )
+    .expect("matching composition")
+    .run();
     assert_eq!(first, second);
 }
 
@@ -209,9 +216,12 @@ fn earlier_signal_observation_does_not_regress_ingest_time() {
             remaining_cycle_ns: 1_000_000_000,
         },
     ];
-    let outcome = Runtime::new(bundle(), ExternalAdapters::simulation(events))
-        .expect("matching composition")
-        .run();
+    let outcome = Runtime::new(
+        bundle().expect("valid simulation bundle"),
+        ExternalAdapters::simulation(events),
+    )
+    .expect("matching composition")
+    .run();
 
     assert!(!outcome.hard_fault_latched);
     assert_eq!(outcome.final_feature_authority, FeatureAuthority::Arming);
@@ -224,9 +234,12 @@ fn stale_input_revokes_authority_and_stops_renewal() {
         monotonic_ms: 300,
         remaining_cycle_ns: 20_000_000,
     });
-    let outcome = Runtime::new(bundle(), ExternalAdapters::simulation(events))
-        .expect("matching composition")
-        .run();
+    let outcome = Runtime::new(
+        bundle().expect("valid simulation bundle"),
+        ExternalAdapters::simulation(events),
+    )
+    .expect("matching composition")
+    .run();
     assert_eq!(outcome.final_feature_authority, FeatureAuthority::Fallback);
     assert_eq!(
         outcome.command_source,
@@ -254,9 +267,12 @@ fn controller_reboot_requires_fresh_acknowledgement() {
             remaining_cycle_ns: 20_000_000,
         },
     ]);
-    let outcome = Runtime::new(bundle(), ExternalAdapters::simulation(events))
-        .expect("matching composition")
-        .run();
+    let outcome = Runtime::new(
+        bundle().expect("valid simulation bundle"),
+        ExternalAdapters::simulation(events),
+    )
+    .expect("matching composition")
+    .run();
     assert_eq!(outcome.final_feature_authority, FeatureAuthority::Arming);
     assert_ne!(outcome.accepted_basis_points, Some(5_000));
 }
@@ -278,9 +294,12 @@ fn hard_fault_latch_clears_after_reconciled_controller_reboot() {
             remaining_cycle_ns: 20_000_000,
         },
     ]);
-    let outcome = Runtime::new(bundle(), ExternalAdapters::simulation(events))
-        .expect("matching composition")
-        .run();
+    let outcome = Runtime::new(
+        bundle().expect("valid simulation bundle"),
+        ExternalAdapters::simulation(events),
+    )
+    .expect("matching composition")
+    .run();
 
     assert!(!outcome.hard_fault_latched);
     assert_eq!(outcome.final_feature_authority, FeatureAuthority::Arming);
@@ -307,9 +326,12 @@ fn stale_command_acknowledgement_stops_lease_renewal() {
             remaining_cycle_ns: 20_000_000,
         },
     ]);
-    let outcome = Runtime::new(bundle(), ExternalAdapters::simulation(events))
-        .expect("matching composition")
-        .run();
+    let outcome = Runtime::new(
+        bundle().expect("valid simulation bundle"),
+        ExternalAdapters::simulation(events),
+    )
+    .expect("matching composition")
+    .run();
     assert_eq!(outcome.final_feature_authority, FeatureAuthority::Fallback);
     assert!(outcome.effects.ends_with(&[
         RuntimeEffect::StopLeaseRenewal,
@@ -339,9 +361,12 @@ fn accepted_command_acknowledgement_refreshes_controller_truth() {
             remaining_cycle_ns: 20_000_000,
         },
     ]);
-    let outcome = Runtime::new(bundle(), ExternalAdapters::simulation(events))
-        .expect("matching composition")
-        .run();
+    let outcome = Runtime::new(
+        bundle().expect("valid simulation bundle"),
+        ExternalAdapters::simulation(events),
+    )
+    .expect("matching composition")
+    .run();
 
     assert_eq!(outcome.final_feature_authority, FeatureAuthority::Active);
     assert_eq!(outcome.accepted_basis_points, Some(5_000));
@@ -407,9 +432,12 @@ fn experiment_waits_for_authority_and_rejection_aborts_once() {
             remaining_cycle_ns: 1_000_000_000,
         },
     ];
-    let outcome = Runtime::new(experiment_bundle(), ExternalAdapters::simulation(events))
-        .expect("matching composition")
-        .run();
+    let outcome = Runtime::new(
+        experiment_bundle().expect("valid experiment bundle"),
+        ExternalAdapters::simulation(events),
+    )
+    .expect("matching composition")
+    .run();
     let experiment_evidence = outcome
         .effects
         .iter()

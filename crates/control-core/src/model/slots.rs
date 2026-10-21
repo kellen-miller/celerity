@@ -364,11 +364,12 @@ impl ModelSlots {
 }
 
 fn digest_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let digest = Sha256::digest(bytes);
     let mut output = String::with_capacity(64);
     for byte in digest {
-        use std::fmt::Write as _;
-        write!(output, "{byte:02x}").expect("String write");
+        output.push(char::from(HEX[usize::from(byte >> 4)]));
+        output.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
     output
 }

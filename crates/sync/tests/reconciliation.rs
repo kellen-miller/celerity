@@ -1,6 +1,5 @@
 use std::{
     cell::RefCell,
-    fmt::Write as _,
     fs,
     io::{Cursor, Write},
     path::{Path, PathBuf},
@@ -57,7 +56,11 @@ impl HomeApi for RecordingHome {
     }
 
     fn get_model(&self, _digest: &str) -> Result<Vec<u8>, SyncError> {
-        Ok(self.model.borrow().clone().expect("model bytes"))
+        let Some(model) = self.model.borrow().clone() else {
+            panic!("model fixture must be configured before get_model");
+        };
+
+        Ok(model)
     }
 }
 
@@ -71,17 +74,13 @@ fn root() -> PathBuf {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(64);
-    for byte in Sha256::digest(bytes) {
-        write!(output, "{byte:02x}").expect("String write");
-    }
-    output
+    hex::encode(Sha256::digest(bytes))
 }
 
-fn model_bundle() -> Vec<u8> {
-    let model =
-        fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx"))
-            .expect("model fixture");
+fn model_bundle() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let model = fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx"),
+    )?;
     let manifest = ModelBundleManifest {
         schema_version: 1,
         onnx_sha256: digest(&model),
@@ -126,22 +125,18 @@ fn model_bundle() -> Vec<u8> {
     let cursor = Cursor::new(Vec::new());
     let mut archive = zip::ZipWriter::new(cursor);
     let options = zip::write::SimpleFileOptions::default();
-    archive
-        .start_file("manifest.pb", options)
-        .expect("manifest entry");
-    archive.write_all(&manifest).expect("manifest bytes");
-    archive
-        .start_file("model.onnx", options)
-        .expect("model entry");
-    archive.write_all(&model).expect("model bytes");
-    archive.finish().expect("finish bundle").into_inner()
+    archive.start_file("manifest.pb", options)?;
+    archive.write_all(&manifest)?;
+    archive.start_file("model.onnx", options)?;
+    archive.write_all(&model)?;
+    Ok(archive.finish()?.into_inner())
 }
 
-fn write_run(root: &Path, name: &str) {
+fn write_run(root: &Path, name: &str) -> std::io::Result<()> {
     let directory = root.join("runs").join(name);
-    fs::create_dir_all(&directory).expect("run directory");
+    fs::create_dir_all(&directory)?;
     let bytes = format!("chunk-{name}").into_bytes();
-    fs::write(directory.join("events.chunk"), &bytes).expect("chunk");
+    fs::write(directory.join("events.chunk"), &bytes)?;
     fs::write(
         directory.join("manifest.pb"),
         RunManifest {
@@ -157,8 +152,8 @@ fn write_run(root: &Path, name: &str) {
             ..RunManifest::default()
         }
         .encode_to_vec(),
-    )
-    .expect("write manifest");
+    )?;
+    Ok(())
 }
 
 fn configuration(root: &Path) -> SyncConfiguration {
@@ -201,10 +196,10 @@ fn linux_presence_requires_up_link_and_matching_default_route() {
 #[test]
 fn reconcile_uploads_exact_artifacts_then_applies_acknowledged_retention() {
     let root = root();
-    write_run(&root, "z-old");
+    write_run(&root, "z-old").expect("old run fixture");
     std::thread::sleep(Duration::from_millis(10));
-    write_run(&root, "a-new");
-    let bundle = model_bundle();
+    write_run(&root, "a-new").expect("new run fixture");
+    let bundle = model_bundle().expect("model bundle fixture");
     let home = RecordingHome {
         model: RefCell::new(Some(bundle.clone())),
         ..RecordingHome::default()
@@ -259,7 +254,7 @@ fn staging_preserves_the_only_known_good_rollback_slot() {
     fs::write(models.join("active-digest"), "unproven-active\n").expect("active marker");
     let known_good_contents = fs::read(models.join("slot-a/bundle-digest")).expect("contents");
     let home = RecordingHome {
-        model: RefCell::new(Some(model_bundle())),
+        model: RefCell::new(Some(model_bundle().expect("model bundle fixture"))),
         ..RecordingHome::default()
     };
     let mut sync = Synchronizer::new(configuration(&root)).expect("synchronizer");

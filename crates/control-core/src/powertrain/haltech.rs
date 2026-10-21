@@ -105,10 +105,12 @@ impl HaltechFrame {
                 "ambient_air_temperature_c",
                 f64::from(be(0)) / 10.0 - 273.1,
             )),
-            Self::PreIntercoolerBoostPressure => signals.push(signal(
-                "pre_intercooler_boost_pressure_kpa",
-                f64::from(be(0)) / 10.0,
-            )),
+            Self::PreIntercoolerBoostPressure => {
+                signals.push(signal(
+                    "pre_intercooler_boost_pressure_kpa",
+                    f64::from(be(0)) / 10.0,
+                ));
+            }
             Self::FluidTemperatures => {
                 for (offset, name) in [
                     "coolant_temperature_c",
@@ -162,10 +164,12 @@ impl HaltechFrame {
             Self::EngineState => {
                 signals.push(signal("engine_state", f64::from(payload[1] & 0x0f)));
             }
-            Self::CalculatedAirTemperature => signals.push(signal(
-                "calculated_air_temperature_c",
-                f64::from(be(4)) / 10.0 - 273.1,
-            )),
+            Self::CalculatedAirTemperature => {
+                signals.push(signal(
+                    "calculated_air_temperature_c",
+                    f64::from(be(4)) / 10.0 - 273.1,
+                ));
+            }
         }
         Ok(DecodedPowertrainFrame {
             can_id,

@@ -21,6 +21,7 @@ signal-hook = "0.4.4"
 
 [dev-dependencies]
 control-core = { path = "../control-core" }
+hex = "0.4.3"
 tempfile = "3.27.0"
 
 [[bin]]

@@ -1,11 +1,10 @@
 #![cfg(target_os = "linux")]
 
 use std::{
-    fs,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    error::Error,
+    fs, io,
+    path::Path,
+    sync::{Arc, Mutex},
     thread,
     time::Duration,
 };
@@ -14,339 +13,284 @@ use celerity_proto::celerity::v1::{
     ModelBundleManifest, ModelInputRange, ModelNormalization, RunEvent, run_event::Payload,
 };
 use control_core::{
-    CommandSource, Completion, ControllerEmulator, EmulatorProvisioning, RuntimeModel, StartupMode,
-    ValidatedBundle, replay_events,
+    CommandSource, Completion, RuntimeModel, StartupMode, ValidatedBundle, replay_events,
 };
-use control_protocol::{Frame, decode, encode};
 use prost::Message;
-use socketcan::{
-    CanFdFrame, CanFdSocket, CanFrame, CanSocket, EmbeddedFrame, Frame as SocketCanFrame, Socket,
-};
 use vehicle_diagnostics::{
     CommandSource as DiagnosticCommandSource, DiagnosticStatus, DiagnosticUnknownReason,
     DiagnosticsSnapshot, DiagnosticsStore, RunStorageHealth,
 };
 
+#[path = "live_composition/can_bus.rs"]
+mod can_bus;
+
+use can_bus::{LiveWorkers, send_powertrain_frame, send_powertrain_temperature};
+
+type LiveTestResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
+
 #[test]
-fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() {
+fn live_kernel_sockets_drive_broadcast_and_nexus_and_seal_runs() -> LiveTestResult<()> {
     for nexus in [false, true] {
-        let temporary = tempfile::tempdir().expect("temporary directory");
-        let bundle_path = temporary.path().join("live.toml");
-        let runs = temporary.path().join("runs");
-        let slots = temporary.path().join("models");
-        fs::write(
-            &bundle_path,
-            live_bundle(
-                runs.to_str().expect("run path"),
-                slots.to_str().expect("slot path"),
-                nexus,
-            ),
-        )
-        .expect("live bundle");
-        let bundle =
-            ValidatedBundle::load(&bundle_path, StartupMode::Live).expect("valid live bundle");
-        let model_directory = temporary.path().join("model");
-        fs::create_dir_all(&model_directory).expect("model directory");
-        let model_path = model_directory.join("identity.onnx");
-        fs::copy(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../testdata/models/identity.onnx"),
-            &model_path,
-        )
-        .expect("model fixture");
-        fs::write(
-            model_directory.join("manifest.pb"),
-            ModelBundleManifest {
-                input_ranges: vec![
-                    ModelInputRange {
-                        minimum: 60.0,
-                        maximum: 120.0,
-                    },
-                    ModelInputRange {
-                        minimum: 0.0,
-                        maximum: 100.0,
-                    },
-                ],
-                normalization: vec![
-                    ModelNormalization {
-                        mean: 90.0,
-                        scale: 10.0,
-                    },
-                    ModelNormalization {
-                        mean: 40.0,
-                        scale: 10.0,
-                    },
-                ],
-                calibration_error: 0.01,
-                ..ModelBundleManifest::default()
-            }
-            .encode_to_vec(),
-        )
-        .expect("model manifest");
-        let model = RuntimeModel::load(&model_path, &bundle).expect("production model");
-        let diagnostics = DiagnosticsStore::new(
-            DiagnosticsSnapshot::startup_fallback(),
-            20,
-            std::time::Instant::now(),
-        );
-        let stopping = Arc::new(AtomicBool::new(false));
-        let diagnostics_socket = temporary.path().join("runtime-diagnostics.sock");
-        let diagnostics_worker = vehicle_diagnostics::serve_diagnostics(
-            &diagnostics_socket,
-            Arc::clone(&stopping),
-            diagnostics.clone(),
-        )
-        .expect("diagnostics server");
-        let startup = vehicle_diagnostics::read_diagnostics(&diagnostics_socket)
-            .expect("startup diagnostics");
-        assert!(startup.accepted_radiator_split_command.is_none());
-        assert!(startup.coolant_temperature.is_none());
-        assert_eq!(
-            startup.controller_runtime_lease_health,
-            DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback)
-        );
-        assert_eq!(
-            startup.controller_command_ack_health,
-            DiagnosticStatus::Unknown(DiagnosticUnknownReason::NoOutstandingCommand)
-        );
-        let observed_commands = Arc::new(Mutex::new(Vec::new()));
-        let controller = spawn_controller(Arc::clone(&stopping), Arc::clone(&observed_commands));
-
-        let mut runtime = vehicle_runtime::LiveRuntime::open_virtual_hardware_free(
-            bundle,
-            Some(model),
-            Some("fixture-model-bundle"),
-            99,
-            "live-kernel",
-            diagnostics,
-        )
-        .expect("production loop must bind vcan");
-        for _ in 0..4 {
-            send_powertrain_temperature(100, 40, nexus);
-            runtime.run_cycle().expect("bounded live cycle");
-        }
-
-        if nexus {
-            send_powertrain_frame(0x601, &[0x04, 0xe2, 0xff, 0xce, 0x08, 0x98, 0x07, 0x08]);
-            send_powertrain_temperature(20, 0, false);
-            runtime
-                .run_cycle()
-                .expect("supplementary and factory traffic");
-        }
-
-        let outcome = runtime.outcome();
-        assert_eq!(outcome.command_source, CommandSource::ModelOptimized);
-        assert_eq!(outcome.accepted_basis_points, Some(9_000));
-        assert!(observed_commands.lock().expect("commands").contains(&9_000));
-        let snapshot = vehicle_diagnostics::read_diagnostics(&diagnostics_socket)
-            .expect("diagnostics snapshot");
-        assert_eq!(
-            snapshot.command_source,
-            DiagnosticCommandSource::ModelOptimized
-        );
-        assert_eq!(
-            snapshot
-                .accepted_radiator_split_command
-                .expect("accepted command")
-                .basis_points,
-            9_000
-        );
-        assert_eq!(
-            snapshot.controller_runtime_lease_health,
-            DiagnosticStatus::Healthy
-        );
-        assert_eq!(
-            snapshot.controller_command_ack_health,
-            DiagnosticStatus::Healthy
-        );
-        assert_eq!(snapshot.run_storage_health, RunStorageHealth::Healthy);
-        let coolant = snapshot
-            .coolant_temperature
-            .expect("finite coolant temperature")
-            .degrees_celsius;
-        assert!((coolant - 100.0).abs() < f64::EPSILON);
-        thread::sleep(Duration::from_millis(120));
-        let delayed = vehicle_diagnostics::read_diagnostics(&diagnostics_socket)
-            .expect("delayed diagnostics");
-        assert!(delayed.runtime_update_age_ms >= delayed.runtime_update_stale_after_ms);
-        if nexus {
-            for _ in 0..15 {
-                send_powertrain_frame(0x600, &[0x80, 0, 0, 0, 0, 0, 0, 0]);
-                runtime.run_cycle().expect("invalid input cycle");
-            }
-
-            assert_eq!(
-                runtime.outcome().command_source,
-                CommandSource::ControllerLocalFallback
-            );
-            let expired = vehicle_diagnostics::read_diagnostics(&diagnostics_socket)
-                .expect("expired-input diagnostics");
-            let temperature = expired.coolant_temperature.expect("last valid temperature");
-            assert!((temperature.degrees_celsius - 100.0).abs() < f64::EPSILON);
-            assert!(temperature.observation_age_ms >= 250);
-            assert!(
-                expired
-                    .intake_air_temperature
-                    .expect("last valid outlet temperature")
-                    .observation_age_ms
-                    >= 250
-            );
-        }
-
-        let manifest = runtime.shutdown().expect("Run must seal");
-        let stopped = vehicle_diagnostics::read_diagnostics(&diagnostics_socket)
-            .expect("shutdown diagnostics");
-        assert!(stopped.accepted_radiator_split_command.is_none());
-        assert_eq!(
-            stopped.controller_runtime_lease_health,
-            DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback)
-        );
-        assert_eq!(manifest.completion, Completion::Complete);
-        assert!(runs.join("live-kernel/manifest.pb").is_file());
-        assert!(
-            runs.join("live-kernel")
-                .join(&manifest.chunk_file)
-                .is_file()
-        );
-        let replayed = replay_events(&runs.join("live-kernel")).expect("canonical Run must replay");
-        assert!(replayed.len() >= 4, "live Run must contain runtime events");
-
-        if nexus {
-            let bytes =
-                fs::read(runs.join("live-kernel").join(&manifest.chunk_file)).expect("Run chunk");
-            let mut input = bytes.as_slice();
-            let mut raw_sequences = Vec::new();
-            let mut supplementary = None;
-            while !input.is_empty() {
-                let event = RunEvent::decode_length_delimited(&mut input).expect("Run event");
-                match event.payload {
-                    Some(Payload::RawCan(raw)) if raw.id == 0x601 => {
-                        raw_sequences.push(event.sequence);
-                    }
-                    Some(Payload::SignalObservation(signal))
-                        if signal.signal == "ambient_air_temperature_c" =>
-                    {
-                        assert_eq!(event.source, "decoded_signal");
-                        supplementary = Some(signal);
-                    }
-                    _ => {}
-                }
-            }
-
-            let signal =
-                supplementary.expect("supplementary channel recorded without model subscription");
-            assert!((signal.value + 5.0).abs() < f64::EPSILON);
-            assert_eq!(signal.age_ns, 0);
-            assert!(raw_sequences.contains(&signal.source_event_sequence));
-        }
-
-        stopping.store(true, Ordering::Relaxed);
-        send_controller_wakeup();
-        controller.join().expect("controller thread");
-        diagnostics_worker
-            .join()
-            .expect("diagnostics thread")
-            .expect("diagnostics result");
+        run_live_case(nexus)?;
     }
+
+    Ok(())
 }
 
-fn spawn_controller(
-    stopping: Arc<AtomicBool>,
-    observed_commands: Arc<Mutex<Vec<u16>>>,
-) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        let socket = CanFdSocket::open("vcan-controller").expect("controller vcan");
-        let mut emulator = ControllerEmulator::new(EmulatorProvisioning {
-            node: 1,
-            identity: 1,
-            boot_session: 7,
-            firmware_generation: 1,
-            capability_generation: 1,
-            fallback_basis_points: 9_000,
-        });
-        let started = std::time::Instant::now();
-        while !stopping.load(Ordering::Relaxed) {
-            let frame = socket.read_frame().expect("controller receive");
-            let decoded = decode(
-                u16::try_from(frame.raw_id()).expect("standard id"),
-                frame.data(),
-            )
-            .expect("typed controller frame");
-            if let Frame::Command { message, .. } = &decoded {
-                observed_commands
-                    .lock()
-                    .expect("commands")
-                    .push(message.radiator_split_basis_points);
-            }
-            let now_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-            let mut response = emulator
-                .ingest(
-                    now_ms,
-                    u16::try_from(frame.raw_id()).expect("id"),
-                    frame.data(),
-                )
-                .expect("controller input");
-            while let Some(current) = response {
-                write_fd(&socket, current.can_id, current.payload());
-                response = current.follow_up().cloned();
-            }
-            if let Some(heartbeat) = emulator.heartbeat(now_ms).expect("heartbeat") {
-                write_fd(&socket, heartbeat.can_id, heartbeat.payload());
-            }
+fn run_live_case(nexus: bool) -> LiveTestResult<()> {
+    let temporary = tempfile::tempdir()?;
+    let bundle_path = temporary.path().join("live.toml");
+    let runs = temporary.path().join("runs");
+    let slots = temporary.path().join("models");
+    let runs_root = runs
+        .to_str()
+        .ok_or_else(|| io::Error::other("run path is not UTF-8"))?;
+    let slots_root = slots
+        .to_str()
+        .ok_or_else(|| io::Error::other("slot path is not UTF-8"))?;
+    fs::write(&bundle_path, live_bundle(runs_root, slots_root, nexus))?;
+    let bundle = ValidatedBundle::load(&bundle_path, StartupMode::Live)
+        .map_err(|error| io::Error::other(format!("valid live bundle: {error:?}")))?;
+    let model_directory = temporary.path().join("model");
+    fs::create_dir_all(&model_directory)?;
+    let model_path = model_directory.join("identity.onnx");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/identity.onnx"),
+        &model_path,
+    )?;
+    fs::write(
+        model_directory.join("manifest.pb"),
+        ModelBundleManifest {
+            input_ranges: vec![
+                ModelInputRange {
+                    minimum: 60.0,
+                    maximum: 120.0,
+                },
+                ModelInputRange {
+                    minimum: 0.0,
+                    maximum: 100.0,
+                },
+            ],
+            normalization: vec![
+                ModelNormalization {
+                    mean: 90.0,
+                    scale: 10.0,
+                },
+                ModelNormalization {
+                    mean: 40.0,
+                    scale: 10.0,
+                },
+            ],
+            calibration_error: 0.01,
+            ..ModelBundleManifest::default()
         }
-    })
-}
+        .encode_to_vec(),
+    )?;
+    let model = RuntimeModel::load(&model_path, &bundle)
+        .map_err(|error| io::Error::other(format!("production model: {error:?}")))?;
+    let diagnostics = DiagnosticsStore::new(
+        DiagnosticsSnapshot::startup_fallback(),
+        20,
+        std::time::Instant::now(),
+    );
+    let diagnostics_socket = temporary.path().join("runtime-diagnostics.sock");
+    let observed_commands = Arc::new(Mutex::new(Vec::new()));
+    let mut workers = LiveWorkers::start(
+        &diagnostics_socket,
+        diagnostics.clone(),
+        Arc::clone(&observed_commands),
+    )?;
+    let startup =
+        vehicle_diagnostics::read_diagnostics(&diagnostics_socket).map_err(io::Error::other)?;
+    assert!(startup.accepted_radiator_split_command.is_none());
+    assert!(startup.coolant_temperature.is_none());
+    assert_eq!(
+        startup.controller_runtime_lease_health,
+        DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback)
+    );
+    assert_eq!(
+        startup.controller_command_ack_health,
+        DiagnosticStatus::Unknown(DiagnosticUnknownReason::NoOutstandingCommand)
+    );
 
-fn write_fd(socket: &CanFdSocket, can_id: u16, payload: &[u8]) {
-    let id = socketcan::StandardId::new(can_id).expect("standard id");
-    let frame = CanFdFrame::new(id, payload).expect("CAN FD frame");
-    socket.write_frame(&frame).expect("controller transmit");
-}
+    let mut runtime = match vehicle_runtime::LiveRuntime::open_virtual_hardware_free(
+        bundle,
+        Some(model),
+        Some("fixture-model-bundle"),
+        99,
+        "live-kernel",
+        diagnostics,
+    ) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            workers.stop()?;
 
-fn send_powertrain_temperature(coolant_c: i16, iat_c: i16, nexus: bool) {
-    let (id, coolant, iat) = if nexus {
-        (
-            0x600,
-            (coolant_c * 10).to_be_bytes(),
-            (iat_c * 10).to_be_bytes(),
-        )
-    } else {
-        let raw = |temperature_c: i16| {
-            u16::try_from(i32::from(temperature_c) * 10 + 2_731)
-                .expect("test temperature must fit the Haltech encoding")
-        };
-        (
-            0x3e0,
-            raw(coolant_c).to_be_bytes(),
-            raw(iat_c).to_be_bytes(),
-        )
+            return Err(io::Error::other(error).into());
+        }
     };
-    send_powertrain_frame(id, &[coolant[0], coolant[1], iat[0], iat[1], 0, 0, 0, 0]);
+    let exercise_result =
+        exercise_live_runtime(&mut runtime, nexus, &diagnostics_socket, &observed_commands);
+    let manifest_result = runtime.shutdown().map_err(io::Error::other);
+    let stopped_result =
+        vehicle_diagnostics::read_diagnostics(&diagnostics_socket).map_err(io::Error::other);
+    let workers_result = workers.stop();
+    exercise_result?;
+    let manifest = manifest_result?;
+    let stopped = stopped_result?;
+    workers_result?;
+    verify_sealed_run(&stopped, &runs, &manifest, nexus)?;
+
+    Ok(())
 }
 
-fn send_powertrain_frame(can_id: u16, payload: &[u8]) {
-    let socket = CanSocket::open("vcan-powertrain").expect("powertrain vcan");
-    let id = socketcan::StandardId::new(can_id).expect("standard id");
-    socket
-        .write_frame(&CanFrame::new(id, payload).expect("powertrain frame"))
-        .expect("powertrain transmit");
+fn exercise_live_runtime(
+    runtime: &mut vehicle_runtime::LiveRuntime,
+    nexus: bool,
+    diagnostics_socket: &Path,
+    observed_commands: &Mutex<Vec<u16>>,
+) -> LiveTestResult<()> {
+    for _ in 0..4 {
+        send_powertrain_temperature(100, 40, nexus)?;
+        runtime.run_cycle().map_err(io::Error::other)?;
+    }
+
+    if nexus {
+        send_powertrain_frame(0x601, &[0x04, 0xe2, 0xff, 0xce, 0x08, 0x98, 0x07, 0x08])?;
+        send_powertrain_temperature(20, 0, false)?;
+        runtime.run_cycle().map_err(io::Error::other)?;
+    }
+
+    let outcome = runtime.outcome();
+    assert_eq!(outcome.command_source, CommandSource::ModelOptimized);
+    assert_eq!(outcome.accepted_basis_points, Some(9_000));
+    assert!(
+        observed_commands
+            .lock()
+            .map_err(|error| io::Error::other(error.to_string()))?
+            .contains(&9_000)
+    );
+    let snapshot =
+        vehicle_diagnostics::read_diagnostics(diagnostics_socket).map_err(io::Error::other)?;
+    assert_eq!(
+        snapshot.command_source,
+        DiagnosticCommandSource::ModelOptimized
+    );
+    assert_eq!(
+        snapshot
+            .accepted_radiator_split_command
+            .ok_or_else(|| io::Error::other("accepted command missing"))?
+            .basis_points,
+        9_000
+    );
+    assert_eq!(
+        snapshot.controller_runtime_lease_health,
+        DiagnosticStatus::Healthy
+    );
+    assert_eq!(
+        snapshot.controller_command_ack_health,
+        DiagnosticStatus::Healthy
+    );
+    assert_eq!(snapshot.run_storage_health, RunStorageHealth::Healthy);
+    let coolant = snapshot
+        .coolant_temperature
+        .ok_or_else(|| io::Error::other("finite coolant temperature missing"))?
+        .degrees_celsius;
+    assert!((coolant - 100.0).abs() < f64::EPSILON);
+    thread::sleep(Duration::from_millis(120));
+    let delayed =
+        vehicle_diagnostics::read_diagnostics(diagnostics_socket).map_err(io::Error::other)?;
+    assert!(delayed.runtime_update_age_ms >= delayed.runtime_update_stale_after_ms);
+    if nexus {
+        exercise_nexus_fallback(runtime, diagnostics_socket)?;
+    }
+
+    Ok(())
 }
 
-fn send_controller_wakeup() {
-    let socket = CanFdSocket::open("vcan-controller").expect("controller vcan");
-    let mut payload = [0_u8; 64];
-    let encoded = encode(
-        &Frame::DiscoveryProbe(control_protocol::DiscoveryProbe {
-            protocol_major: 1,
-            protocol_minor: 0,
-            flags: 0,
-            probe_sequence: 0,
-        }),
-        &mut payload,
-    )
-    .expect("wakeup frame");
-    write_fd(&socket, encoded.can_id, &payload[..encoded.len]);
-    thread::sleep(Duration::from_millis(10));
+fn exercise_nexus_fallback(
+    runtime: &mut vehicle_runtime::LiveRuntime,
+    diagnostics_socket: &Path,
+) -> LiveTestResult<()> {
+    for _ in 0..15 {
+        send_powertrain_frame(0x600, &[0x80, 0, 0, 0, 0, 0, 0, 0])?;
+        runtime.run_cycle().map_err(io::Error::other)?;
+    }
+
+    assert_eq!(
+        runtime.outcome().command_source,
+        CommandSource::ControllerLocalFallback
+    );
+    let expired =
+        vehicle_diagnostics::read_diagnostics(diagnostics_socket).map_err(io::Error::other)?;
+    let temperature = expired
+        .coolant_temperature
+        .ok_or_else(|| io::Error::other("last valid coolant temperature missing"))?;
+    assert!((temperature.degrees_celsius - 100.0).abs() < f64::EPSILON);
+    assert!(temperature.observation_age_ms >= 250);
+    assert!(
+        expired
+            .intake_air_temperature
+            .ok_or_else(|| io::Error::other("last valid outlet temperature missing"))?
+            .observation_age_ms
+            >= 250
+    );
+
+    Ok(())
+}
+
+fn verify_sealed_run(
+    stopped: &DiagnosticsSnapshot,
+    runs: &Path,
+    manifest: &control_core::RunManifest,
+    nexus: bool,
+) -> LiveTestResult<()> {
+    assert!(stopped.accepted_radiator_split_command.is_none());
+    assert_eq!(
+        stopped.controller_runtime_lease_health,
+        DiagnosticStatus::Unknown(DiagnosticUnknownReason::NotExpectedInFallback)
+    );
+    assert_eq!(manifest.completion, Completion::Complete);
+    let run_directory = runs.join("live-kernel");
+    assert!(run_directory.join("manifest.pb").is_file());
+    assert!(run_directory.join(&manifest.chunk_file).is_file());
+    let replayed =
+        replay_events(&run_directory).map_err(|error| io::Error::other(format!("{error:?}")))?;
+    assert!(replayed.len() >= 4, "live Run must contain runtime events");
+    if nexus {
+        verify_nexus_recording(runs, manifest)?;
+    }
+
+    Ok(())
+}
+
+fn verify_nexus_recording(runs: &Path, manifest: &control_core::RunManifest) -> LiveTestResult<()> {
+    let bytes = fs::read(runs.join("live-kernel").join(&manifest.chunk_file))?;
+    let mut input = bytes.as_slice();
+    let mut raw_sequences = Vec::new();
+    let mut supplementary = None;
+    while !input.is_empty() {
+        let event = RunEvent::decode_length_delimited(&mut input)?;
+        match event.payload {
+            Some(Payload::RawCan(raw)) if raw.id == 0x601 => {
+                raw_sequences.push(event.sequence);
+            }
+            Some(Payload::SignalObservation(signal))
+                if signal.signal == "ambient_air_temperature_c" =>
+            {
+                assert_eq!(event.source, "decoded_signal");
+                supplementary = Some(signal);
+            }
+            _ => {}
+        }
+    }
+
+    let signal =
+        supplementary.ok_or_else(|| io::Error::other("supplementary channel missing from Run"))?;
+    assert!((signal.value + 5.0).abs() < f64::EPSILON);
+    assert_eq!(signal.age_ns, 0);
+    assert!(raw_sequences.contains(&signal.source_event_sequence));
+
+    Ok(())
 }
 
 fn live_bundle(run_root: &str, slots_root: &str, nexus: bool) -> String {

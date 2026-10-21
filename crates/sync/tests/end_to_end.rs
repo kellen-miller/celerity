@@ -1,5 +1,4 @@
 use std::{
-    fmt::Write as _,
     fs, io,
     net::TcpListener,
     path::Path,
@@ -32,18 +31,20 @@ struct HomeProcess(Child);
 
 impl Drop for HomeProcess {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        if let Err(error) = self.0.kill()
+            && error.kind() != io::ErrorKind::InvalidInput
+        {
+            eprintln!("failed to stop home test process: {error}");
+        }
+
+        if let Err(error) = self.0.wait() {
+            eprintln!("failed to reap home test process: {error}");
+        }
     }
 }
 
 fn digest(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .fold(String::with_capacity(64), |mut output, byte| {
-            write!(output, "{byte:02x}").expect("String write");
-            output
-        })
+    hex::encode(Sha256::digest(bytes))
 }
 
 fn make_complete_run(spool: &Path, name: &str) -> io::Result<String> {
@@ -87,8 +88,11 @@ fn make_complete_run(spool: &Path, name: &str) -> io::Result<String> {
         }
         if index < 6 {
             sequence += 1;
-            let command =
-                [1000, 5000, 9000][usize::try_from(index % 3).expect("bounded command index")];
+            let command = match index % 3 {
+                0 => 1000,
+                1 => 5000,
+                _ => 9000,
+            };
             assert_eq!(
                 writer.enqueue(RunRecord::control(
                     sequence,

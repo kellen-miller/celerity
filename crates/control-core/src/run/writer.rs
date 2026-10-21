@@ -111,7 +111,7 @@ impl RunWriter {
             return EnqueueResult::Degraded;
         }
         let Some(sender) = &self.sender else {
-            self.mark_degraded(DEGRADE_QUEUE_FAILURE);
+            self.mark_degraded();
             return EnqueueResult::Degraded;
         };
         if sender
@@ -120,7 +120,7 @@ impl RunWriter {
         {
             EnqueueResult::Accepted
         } else {
-            self.mark_degraded(DEGRADE_QUEUE_FAILURE);
+            self.mark_degraded();
             EnqueueResult::Degraded
         }
     }
@@ -131,13 +131,13 @@ impl RunWriter {
             return EnqueueResult::Degraded;
         }
         let Some(sender) = &self.sender else {
-            self.mark_degraded(DEGRADE_QUEUE_FAILURE);
+            self.mark_degraded();
             return EnqueueResult::Degraded;
         };
         if sender.try_send(WorkerMessage::Record(record)).is_ok() {
             EnqueueResult::Accepted
         } else {
-            self.mark_degraded(DEGRADE_QUEUE_FAILURE);
+            self.mark_degraded();
             EnqueueResult::Degraded
         }
     }
@@ -148,7 +148,7 @@ impl RunWriter {
             return EnqueueResult::Degraded;
         }
         let Some(sender) = &self.sender else {
-            self.mark_degraded(DEGRADE_QUEUE_FAILURE);
+            self.mark_degraded();
             return EnqueueResult::Degraded;
         };
         if sender.try_send(WorkerMessage::Record(record)).is_ok() {
@@ -182,13 +182,9 @@ impl RunWriter {
             .map_err(|_| RunError("writer worker panicked".to_owned()))?
     }
 
-    fn mark_degraded(&self, reason: u8) {
-        let _ = self.degraded_reason.compare_exchange(
-            DEGRADE_NONE,
-            reason,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
+    fn mark_degraded(&self) {
+        self.degraded_reason
+            .store(DEGRADE_QUEUE_FAILURE, Ordering::Release);
     }
 }
 

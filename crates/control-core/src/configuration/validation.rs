@@ -233,14 +233,13 @@ fn policy_is_monotonic(table: &[[u16; 3]; 3], minimum: f64, maximum: f64) -> boo
 }
 
 pub(super) fn digest(source: &str) -> String {
-    use std::fmt::Write as _;
-
-    Sha256::digest(source.as_bytes())
-        .iter()
-        .fold(String::with_capacity(64), |mut output, byte| {
-            write!(output, "{byte:02x}").expect("writing to String cannot fail");
-            output
-        })
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(64);
+    for byte in Sha256::digest(source.as_bytes()) {
+        output.push(char::from(HEX[usize::from(byte >> 4)]));
+        output.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    output
 }
 
 pub(super) fn load_experiment(

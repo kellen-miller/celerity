@@ -1,0 +1,12 @@
+{
+  "checks": [
+    "Prerelease generated contracts",
+    "linux",
+    "portable (macos-15)",
+    "portable (ubuntu-24.04)",
+    "quality",
+    "Renovate / Config validation",
+    "GitHub Actions / Workflow validation",
+    "Code duplication (CPD)"
+  ]
+}

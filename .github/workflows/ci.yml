@@ -430,7 +430,10 @@ jobs:
           cache-key: cross-targets-v1
           rustflags: ""
       - name: Install ARM64 cross linker
+        timeout-minutes: 10
         run: |
+          sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors.txt' \) \
+            -exec sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' {} +
           sudo apt-get update
           sudo apt-get install --yes gcc-aarch64-linux-gnu
       - name: Build ARM64 services and controller firmware

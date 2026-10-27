@@ -252,8 +252,7 @@ jobs:
       - name: Set up virtual CAN on Linux
         if: runner.os == 'Linux'
         run: |
-          sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors.txt' \) \
-            -exec sed -i -E 's|https?://azure[.]archive[.]ubuntu[.]com/ubuntu|https://archive.ubuntu.com/ubuntu|g' {} +
+          ./scripts/configure-ubuntu-ci
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           modules_package="linux-modules-extra-$(uname -r)"
           if apt-cache show "$modules_package" 2>/dev/null | grep -q '^Package:'; then
@@ -337,8 +336,7 @@ jobs:
       - name: Use Ubuntu archive for browser dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors.txt' \) \
-            -exec sed -i -E 's|https?://azure[.]archive[.]ubuntu[.]com/ubuntu|https://archive.ubuntu.com/ubuntu|g' {} +
+          ./scripts/configure-ubuntu-ci
       - name: Set up Playwright
         uses: kellen-miller/ci/.github/actions/playwright-setup@2af77688327c2fc0f164e91f77e8784ef25e14c6
         with:
@@ -408,8 +406,7 @@ jobs:
           rustflags: ""
       - name: Set up virtual CAN
         run: |
-          sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors.txt' \) \
-            -exec sed -i -E 's|https?://azure[.]archive[.]ubuntu[.]com/ubuntu|https://archive.ubuntu.com/ubuntu|g' {} +
+          ./scripts/configure-ubuntu-ci
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           modules_package="linux-modules-extra-$(uname -r)"
           if apt-cache show "$modules_package" 2>/dev/null | grep -q '^Package:'; then
@@ -441,10 +438,7 @@ jobs:
       - name: Install ARM64 cross linker
         timeout-minutes: 10
         run: |
-          sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors.txt' \) \
-            -exec sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' {} +
-          sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors.txt' \) \
-            -exec sed -i -E 's|https?://azure[.]archive[.]ubuntu[.]com/ubuntu|https://archive.ubuntu.com/ubuntu|g' {} +
+          ./scripts/configure-ubuntu-ci
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install --yes gcc-aarch64-linux-gnu
       - name: Build ARM64 services and controller firmware

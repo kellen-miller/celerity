@@ -201,7 +201,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).contracts) }}
     name: Prerelease generated contracts
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -231,7 +231,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-24.04]
+        os: [macos-15, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -283,7 +283,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-24.04]
+        os: [macos-15, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -316,7 +316,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-24.04]
+        os: [macos-15, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -345,7 +345,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-24.04]
+        os: [macos-15, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Require portable checks
@@ -366,7 +366,7 @@ jobs:
   quality:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).shell || fromJSON(needs.changes.outputs.changes).docker || fromJSON(needs.changes.outputs.changes).length) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -389,7 +389,7 @@ jobs:
     name: Linux service lifecycle
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -411,7 +411,7 @@ jobs:
           sudo ip link add dev vcan-controller type vcan
           sudo ip link set up vcan-powertrain
           sudo ip link set up vcan-controller
-      # Workspace checks already run in portable (ubuntu-24.04).
+      # Workspace checks already run in portable (ubuntu-latest).
       - name: Check Linux service lifecycle
         run: ./scripts/check-systemd
 
@@ -419,7 +419,7 @@ jobs:
     name: Cross-compile ARM64 and firmware
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -442,7 +442,7 @@ jobs:
   linux:
     needs: [changes, systemd, targets]
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     steps:
       - name: Require Linux service and target checks
         env:

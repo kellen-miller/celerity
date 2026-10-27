@@ -334,6 +334,11 @@ jobs:
         with:
           node-version: '26'
           working-directory: crates/vehicle-ui/web
+      - name: Use Ubuntu archive for browser dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors.txt' \) \
+            -exec sed -i -E 's|https?://azure[.]archive[.]ubuntu[.]com/ubuntu|https://archive.ubuntu.com/ubuntu|g' {} +
       - name: Set up Playwright
         uses: kellen-miller/ci/.github/actions/playwright-setup@2af77688327c2fc0f164e91f77e8784ef25e14c6
         with:

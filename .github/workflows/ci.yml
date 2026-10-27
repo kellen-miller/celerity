@@ -341,7 +341,7 @@ jobs:
 
   portable:
     needs: [changes, rust, home, ui]
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).python || fromJSON(needs.changes.outputs.changes).e2e || fromJSON(needs.changes.outputs.changes).ui || fromJSON(needs.changes.outputs.changes).artifacts) }}
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:

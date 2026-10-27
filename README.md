@@ -59,6 +59,19 @@ Rust, Python, and TypeScript bindings with `./scripts/generate-protos`. CI runs
 the regeneration in a temporary tree and fails if any checked-in binding is
 missing or stale.
 
+After dependency updates, run `./scripts/sync-dependency-artifacts` with Node 26,
+`uv`, the checked-in Rust toolchain, and sqlc 1.31.1. It installs the committed
+npm graph, regenerates protobuf/SQL bindings and the bundled vehicle UI, and
+refreshes the Python lockfile. Commit resulting artifacts with the dependency
+change; rerunning the command should leave a clean tree.
+
+Renovate groups do not execute these generators automatically. The current
+runner command allowlist does not permit this command, so no unsupported
+`postUpgradeTasks` is configured. CI checks generated bindings and UI assets;
+run the command when a dependency PR reports drift. Python stays on 3.14 until
+PyTorch publishes compatible 3.15 wheels; update its Renovate cap, both Python
+package constraints, and the CI/container runtime together when upgrading.
+
 Contracts follow the local monorepo layout: `proto/` owns protobuf sources;
 `sql/migrations/<owner>/` owns the initial SQLite schemas, and
 `sql/queries/<owner>/` owns sqlc queries. `tools/generate/` owns generators and

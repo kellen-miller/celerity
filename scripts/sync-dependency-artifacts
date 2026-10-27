@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$repo_root"
+
+# Use the committed dependency graph before rebuilding generated sources/assets.
+cargo metadata --locked --no-deps --format-version 1 >/dev/null
+npm --prefix gen/typescript ci
+npm --prefix crates/vehicle-ui/web ci
+./scripts/generate-protos
+./scripts/generate-sql
+npm --prefix gen/typescript run build
+npm --prefix crates/vehicle-ui/web run build
+uv lock --project services/home

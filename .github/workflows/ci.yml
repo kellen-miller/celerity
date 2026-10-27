@@ -252,10 +252,12 @@ jobs:
       - name: Set up virtual CAN on Linux
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
+          sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors.txt' \) \
+            -exec sed -i -E 's|https?://azure[.]archive[.]ubuntu[.]com/ubuntu|https://archive.ubuntu.com/ubuntu|g' {} +
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           modules_package="linux-modules-extra-$(uname -r)"
           if apt-cache show "$modules_package" 2>/dev/null | grep -q '^Package:'; then
-            sudo apt-get install --yes "$modules_package"
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install --yes "$modules_package"
           fi
           sudo modprobe vcan
           sudo ip link add dev vcan-powertrain type vcan
@@ -401,10 +403,12 @@ jobs:
           rustflags: ""
       - name: Set up virtual CAN
         run: |
-          sudo apt-get update
+          sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors.txt' \) \
+            -exec sed -i -E 's|https?://azure[.]archive[.]ubuntu[.]com/ubuntu|https://archive.ubuntu.com/ubuntu|g' {} +
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           modules_package="linux-modules-extra-$(uname -r)"
           if apt-cache show "$modules_package" 2>/dev/null | grep -q '^Package:'; then
-            sudo apt-get install --yes "$modules_package"
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install --yes "$modules_package"
           fi
           sudo modprobe vcan
           sudo ip link add dev vcan-powertrain type vcan
@@ -434,8 +438,10 @@ jobs:
         run: |
           sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors.txt' \) \
             -exec sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' {} +
-          sudo apt-get update
-          sudo apt-get install --yes gcc-aarch64-linux-gnu
+          sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors.txt' \) \
+            -exec sed -i -E 's|https?://azure[.]archive[.]ubuntu[.]com/ubuntu|https://archive.ubuntu.com/ubuntu|g' {} +
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install --yes gcc-aarch64-linux-gnu
       - name: Build ARM64 services and controller firmware
         run: ./scripts/check-rust-targets
 

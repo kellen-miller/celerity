@@ -3,7 +3,7 @@
     "Prerelease generated contracts",
     "linux",
     "portable (macos-15)",
-    "portable (ubuntu-24.04)",
+    "portable (ubuntu-latest)",
     "quality",
     "Renovate / Config validation",
     "GitHub Actions / Workflow validation",

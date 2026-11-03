@@ -8,7 +8,7 @@ dependencies = [
   "numpy>=2.3,<3",
   "onnx>=1.18,<2",
   "onnxscript>=0.5,<1",
-  "pyarrow>=25,<26",
+  "pyarrow>=26,<27",
   "torch>=2.8,<3",
 ]
 

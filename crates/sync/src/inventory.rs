@@ -1,14 +1,11 @@
 use std::{
-    fmt::Write as _,
     fs,
     path::{Component, Path, PathBuf},
 };
 
+use super::{SyncError, artifact::digest, sync_io};
 use celerity_proto::celerity::v1::{Completion, RunManifest};
 use prost::Message;
-use sha2::{Digest, Sha256};
-
-use super::{SyncError, sync_io};
 
 #[derive(Clone, Debug)]
 pub(crate) struct SpoolRun {
@@ -125,14 +122,6 @@ pub(crate) fn incomplete_inventory(root: &Path) -> Result<Vec<PathBuf>, SyncErro
         }
     }
     Ok(directories)
-}
-
-pub(crate) fn digest(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(64);
-    for byte in Sha256::digest(bytes) {
-        write!(output, "{byte:02x}").expect("String write");
-    }
-    output
 }
 
 fn is_digest(value: &str) -> bool {

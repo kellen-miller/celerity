@@ -26,7 +26,7 @@ fn status_route_is_get_only_host_guarded_and_hardened() {
     let worker_stopping = Arc::clone(&stopping);
     let worker = thread::spawn(move || run_http(server, observer, worker_stopping));
 
-    let status = request(address, "GET", "/v1/status", "localhost:8080");
+    let status = request(address, "GET", "/v1/status", "localhost:8080").expect("status request");
     assert!(status.starts_with("HTTP/1.1 200"), "{status}");
     assert!(
         status.contains("Content-Type: application/x-protobuf"),
@@ -35,15 +35,16 @@ fn status_route_is_get_only_host_guarded_and_hardened() {
     assert!(status.contains("Cache-Control: no-store"), "{status}");
     assert!(!status.to_ascii_lowercase().contains("access-control"));
 
-    let forbidden = request(address, "GET", "/v1/status", "example.test");
+    let forbidden =
+        request(address, "GET", "/v1/status", "example.test").expect("forbidden request");
     assert!(forbidden.starts_with("HTTP/1.1 403"), "{forbidden}");
-    let missing = request(address, "GET", "/missing", "[::1]:4567");
+    let missing = request(address, "GET", "/missing", "[::1]:4567").expect("missing route request");
     assert!(missing.starts_with("HTTP/1.1 404"), "{missing}");
-    let method = request(address, "POST", "/v1/status", "127.0.0.1");
+    let method = request(address, "POST", "/v1/status", "127.0.0.1").expect("method request");
     assert!(method.starts_with("HTTP/1.1 405"), "{method}");
     assert!(method.contains("Allow: GET"), "{method}");
 
-    let html = request(address, "GET", "/", "localhost");
+    let html = request(address, "GET", "/", "localhost").expect("HTML request");
     assert!(html.starts_with("HTTP/1.1 200"), "{html}");
     assert!(html.contains("X-Content-Type-Options: nosniff"), "{html}");
     assert!(
@@ -84,7 +85,7 @@ fn status_response_does_not_wait_for_diagnostics_io() {
     let worker_stopping = Arc::clone(&stopping);
     let worker = thread::spawn(move || run_http(server, observer, worker_stopping));
     let started = Instant::now();
-    let response = request(address, "GET", "/v1/status", "localhost");
+    let response = request(address, "GET", "/v1/status", "localhost").expect("status request");
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     assert!(started.elapsed() < Duration::from_millis(150));
 
@@ -94,14 +95,18 @@ fn status_response_does_not_wait_for_diagnostics_io() {
     worker.join().expect("HTTP thread").expect("HTTP result");
 }
 
-fn request(address: std::net::SocketAddr, method: &str, path: &str, host: &str) -> String {
-    let mut stream = TcpStream::connect(address).expect("HTTP connect");
+fn request(
+    address: std::net::SocketAddr,
+    method: &str,
+    path: &str,
+    host: &str,
+) -> std::io::Result<String> {
+    let mut stream = TcpStream::connect(address)?;
     write!(
         stream,
         "{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
-    )
-    .expect("HTTP request");
+    )?;
     let mut response = String::new();
-    stream.read_to_string(&mut response).expect("HTTP response");
-    response
+    stream.read_to_string(&mut response)?;
+    Ok(response)
 }

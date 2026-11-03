@@ -4,18 +4,18 @@ use control_core::{Completion, EnqueueResult, RunRecord, RunWriter, recover_inco
 use prost::Message;
 use sha2::{Digest, Sha256};
 
-fn root(name: &str) -> PathBuf {
+fn root(name: &str) -> std::io::Result<PathBuf> {
     let path = std::env::temp_dir().join(format!("celerity-{name}-{}", std::process::id()));
     if path.exists() {
-        fs::remove_dir_all(&path).expect("remove prior fixture");
+        fs::remove_dir_all(&path)?;
     }
-    fs::create_dir_all(&path).expect("fixture root");
-    path
+    fs::create_dir_all(&path)?;
+    Ok(path)
 }
 
 #[test]
 fn sealed_run_has_exact_byte_checksum_and_monotonic_manifest() {
-    let root = root("sealed-run");
+    let root = root("sealed-run").expect("fixture root");
     let writer = RunWriter::start(&root, "run-1", 8, 0).expect("start writer");
     assert_eq!(
         writer.enqueue(RunRecord::lifecycle(1, 10, "starting")),
@@ -45,7 +45,7 @@ fn sealed_run_has_exact_byte_checksum_and_monotonic_manifest() {
 
 #[test]
 fn large_run_rotates_into_verified_chunks() {
-    let root = root("rotated-run");
+    let root = root("rotated-run").expect("fixture root");
     let writer = RunWriter::start(&root, "run-rotated", 32, 0).expect("start writer");
     let payload = "x".repeat(1024 * 1024);
     for sequence in 1..=9 {
@@ -68,7 +68,7 @@ fn large_run_rotates_into_verified_chunks() {
 
 #[test]
 fn nonmonotonic_sequence_seals_explicitly_incomplete() {
-    let root = root("nonmonotonic-run");
+    let root = root("nonmonotonic-run").expect("fixture root");
     let writer = RunWriter::start(&root, "run-2", 8, 0).expect("start writer");
     assert_eq!(
         writer.enqueue(RunRecord::lifecycle(2, 20, "running")),
@@ -88,7 +88,7 @@ fn nonmonotonic_sequence_seals_explicitly_incomplete() {
 
 #[test]
 fn impossible_free_space_threshold_degrades_without_blocking() {
-    let root = root("space-run");
+    let root = root("space-run").expect("fixture root");
     let writer = RunWriter::start(&root, "run-3", 8, u64::MAX).expect("start degraded writer");
     assert_eq!(
         writer.enqueue(RunRecord::lifecycle(1, 10, "starting")),
@@ -104,7 +104,7 @@ fn impossible_free_space_threshold_degrades_without_blocking() {
 
 #[test]
 fn interrupted_partial_run_is_recovered_without_becoming_complete() {
-    let root = root("recover-run");
+    let root = root("recover-run").expect("fixture root");
     let run = root.join("run-4");
     fs::create_dir_all(&run).expect("run directory");
     fs::write(run.join("events.chunk.partial"), b"exact partial bytes").expect("partial chunk");

@@ -39,4 +39,4 @@ predictor seam were rejected because they add lifecycle and failure paths
 without improving the required safety boundary.
 
 The artifact contract remains normative in the `ModelBundleManifest` message
-in [`contracts/celerity/v1/celerity.proto`](../../contracts/celerity/v1/celerity.proto).
+in [`proto/celerity/v1/celerity.proto`](../../proto/celerity/v1/celerity.proto).

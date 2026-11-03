@@ -4,8 +4,8 @@ use celerity_proto::celerity::v1::ModelBundleManifest;
 use prost::Message;
 
 use super::api::ReconcileRequest;
-use super::artifact::{atomic_write, digest_file, read_zip_entry};
-use super::inventory::{SpoolRun, digest, incomplete_inventory, inventory};
+use super::artifact::{atomic_write, digest, digest_file, read_zip_entry};
+use super::inventory::{SpoolRun, incomplete_inventory, inventory};
 use super::{HomeApi, NetworkPresence, SyncConfiguration, SyncError, TransferJournal, sync_io};
 
 #[derive(Clone, Debug, Eq, PartialEq)]

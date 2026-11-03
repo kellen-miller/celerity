@@ -13,10 +13,18 @@ requires them.
 
 ## Decision
 
-Use one FastAPI application, one Kubernetes replica, one PVC, SQLite metadata,
-and filesystem Run/model storage. SQLite owns durable job and notification
-state. Jobs are serialized where shared state requires it; retries and restart
-recovery are idempotent.
+Use one Rust tonic gRPC application, one Kubernetes replica, one PVC, SQLite metadata,
+and filesystem Run/model storage. Rust owns uploads, database migration, durable
+job state, model staging and webhook delivery. Python owns numerical data
+preparation, PyTorch training, ONNX export and evaluation through an immutable
+protobuf request/result file contract. sqlc generates typed SQLite queries from
+owned SQL sources. A detached Rust worker claims each queued job
+atomically before launching Python and fences terminal writes by process identity.
+Python inherits a filesystem admission lock across exec. Recovery retains the
+active slot until numerical work exits, including supervisor death and spawn
+races. SQLite owns durable job and notification state. If the desired model
+changes while training runs, the candidate finishes without changing the desired
+model. Jobs are serialized; retries and restart recovery are idempotent.
 
 Package the workload as a Celerity-owned Helm chart. Infrastructure supplies
 environment-specific values and an existing 1Password-backed

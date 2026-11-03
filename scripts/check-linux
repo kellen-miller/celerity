@@ -10,5 +10,5 @@ for interface in vcan-powertrain vcan-controller; do
   ip link show "$interface" >/dev/null
 done
 
-./scripts/check-rust
+./scripts/check-rust-targets
 ./scripts/check-systemd

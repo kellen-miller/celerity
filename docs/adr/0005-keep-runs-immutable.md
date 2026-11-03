@@ -24,7 +24,7 @@ the home service acknowledges its exact digest and retention policy permits
 deletion.
 
 The home application validates canonical Run framing, schema, source and
-payload cardinality, sequence, monotonic time, and signal validity both at HTTP
+payload cardinality, sequence, monotonic time, and signal validity both at home RPC
 admission and corpus loading. Training admission is serialized durably so
 retries and restarts converge instead of racing.
 
@@ -38,5 +38,5 @@ Mutable Runs, runtime-owned retention, and digest-only admission were rejected
 because they weaken reproducibility or couple control to external systems.
 
 The canonical Run, home, job, model, and webhook messages remain normative in
-[`contracts/celerity/v1/celerity.proto`](../../contracts/celerity/v1/celerity.proto).
-The home HTTP routes are transport adapters for those protobuf messages.
+[`proto/celerity/v1/celerity.proto`](../../proto/celerity/v1/celerity.proto).
+The home service uses generated tonic RPC interfaces for those protobuf messages.

@@ -13,10 +13,10 @@ import onnx
 import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
+from celerity.v1.celerity_pb2 import RunChunk, RunManifest
 from onnx.reference import ReferenceEvaluator
 from torch import nn
 
-from celerity.v1.celerity_pb2 import RunChunk, RunManifest
 from celerity_home.run import decode_run_records
 
 # Both model outputs are temperatures. This remains far below source sensor resolution while

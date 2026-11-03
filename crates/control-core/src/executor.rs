@@ -389,12 +389,6 @@ impl ExecutorState {
                     ExperimentDecision::Apply {
                         radiator_split_basis_points,
                     } => {
-                        if self.last_experiment_command != Some(radiator_split_basis_points) {
-                            self.effects.push(RuntimeEffect::RecordExperiment(format!(
-                                r#"{{"event":"step","radiator_split_basis_points":{radiator_split_basis_points}}}"#
-                            )));
-                            self.last_experiment_command = Some(radiator_split_basis_points);
-                        }
                         command = radiator_split_basis_points;
                         source = CommandSource::Experiment;
                     }
@@ -408,6 +402,12 @@ impl ExecutorState {
                     ExperimentDecision::Abort(reason) => self.abort_experiment(reason),
                 }
             }
+        }
+        if source == CommandSource::Experiment && self.last_experiment_command != Some(command) {
+            self.effects.push(RuntimeEffect::RecordExperiment(format!(
+                r#"{{"event":"step","radiator_split_basis_points":{command}}}"#
+            )));
+            self.last_experiment_command = Some(command);
         }
         self.lease_sequence = self.lease_sequence.wrapping_add(1);
         self.command_sequence = self.command_sequence.wrapping_add(1);

@@ -1,4 +1,3 @@
 test-results/
 playwright-report/
-src/generated/
 crates/vehicle-ui/assets/

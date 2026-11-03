@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches: [main]
 permissions:
   contents: read
 
@@ -10,112 +12,452 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  prerelease:
-    name: Prerelease generated contracts
-    runs-on: ubuntu-24.04
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changes: ${{ steps.paths.outputs.changes }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+          fetch-depth: 0
+      - id: paths
+        uses: kellen-miller/ci/.github/actions/changed-paths@2af77688327c2fc0f164e91f77e8784ef25e14c6
+        with:
+          filters: |
+            {
+              "contracts": [
+                ".github/workflows/**",
+                "scripts/**",
+                "contracts/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
+                "crates/vehicle-ui/web/package*.json",
+                "Cargo.toml",
+                "Cargo.lock",
+                ".cargo/**",
+                "rust-toolchain.toml"
+              ],
+              "rust": [
+                ".github/workflows/**",
+                "scripts/**",
+                "Cargo.toml",
+                "Cargo.lock",
+                ".cargo/**",
+                "rust-toolchain.toml",
+                "crates/**",
+                "firmware/**",
+                "config/**",
+                "contracts/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
+                "fixtures/**",
+                "testdata/**"
+              ],
+              "python": [
+                ".github/workflows/**",
+                "scripts/**",
+                "services/home/**",
+                "contracts/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
+                "fixtures/**",
+                "testdata/**",
+                ".python-version",
+                "pyproject.toml",
+                "uv.lock"
+              ],
+              "e2e": [
+                ".github/workflows/**",
+                "scripts/**",
+                "Cargo.toml",
+                "Cargo.lock",
+                ".cargo/**",
+                "rust-toolchain.toml",
+                "crates/**",
+                "firmware/**",
+                "config/**",
+                "contracts/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
+                "fixtures/**",
+                "testdata/**",
+                "services/home/**",
+                ".python-version",
+                "pyproject.toml",
+                "uv.lock"
+              ],
+              "ui": [
+                ".github/workflows/**",
+                "scripts/**",
+                "Cargo.toml",
+                "Cargo.lock",
+                ".cargo/**",
+                "rust-toolchain.toml",
+                "crates/**",
+                "firmware/**",
+                "config/**",
+                "contracts/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
+                "fixtures/**",
+                "testdata/**"
+              ],
+              "artifacts": [
+                ".github/workflows/**",
+                "scripts/**",
+                "Cargo.toml",
+                "Cargo.lock",
+                ".cargo/**",
+                "rust-toolchain.toml",
+                "crates/**",
+                "firmware/**",
+                "config/**",
+                "contracts/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
+                "fixtures/**",
+                "testdata/**",
+                "services/home/**",
+                "deploy/helm/**",
+                ".python-version",
+                "pyproject.toml",
+                "uv.lock"
+              ],
+              "linux": [
+                ".github/workflows/**",
+                "scripts/**",
+                "Cargo.toml",
+                "Cargo.lock",
+                ".cargo/**",
+                "rust-toolchain.toml",
+                "crates/**",
+                "firmware/**",
+                "config/**",
+                "contracts/**",
+                "proto/**",
+                "sql/**",
+                "gen/**",
+                "tools/generate/**",
+                "fixtures/**",
+                "testdata/**",
+                "deploy/systemd/**",
+                "deploy/tmpfiles.d/**",
+                "services/home/**"
+              ],
+              "shell": [
+                ".github/workflows/**",
+                "scripts/**"
+              ],
+              "docker": [
+                ".github/workflows/**",
+                "scripts/**",
+                "services/home/Dockerfile",
+                ".hadolint*"
+              ],
+              "length": [
+                ".github/workflows/**",
+                "scripts/**",
+                "**/*.rs",
+                "**/*.py",
+                "**/*.ts",
+                "**/*.tsx",
+                "**/*.js",
+                "**/*.jsx",
+                "**/*.svelte",
+                "**/*.css",
+                "**/*.html",
+                "**/*.proto",
+                "**/*.sh",
+                "**/*.bash",
+                "**/*.yaml",
+                "**/*.yml",
+                "**/*.toml",
+                "**/*.json",
+                "**/*.service",
+                "**/*.conf",
+                "**/Dockerfile",
+                "Dockerfile"
+              ]
+            }
+
+  prerelease:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).contracts) }}
+    name: Prerelease generated contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           cache-on-failure: true
           cache-key: prerelease-protos
           rustflags: ""
       - name: Set up Node project
-        uses: kellen-miller/ci/.github/actions/setup-node@d1c91763535a5866b55282018f301d921b22bcd5
+        uses: kellen-miller/ci/.github/actions/setup-node@2af77688327c2fc0f164e91f77e8784ef25e14c6
         with:
           node-version: '26'
           working-directory: crates/vehicle-ui/web
 
       - name: Check committed protobuf bindings
         run: ./scripts/check-protos
+      - uses: sqlc-dev/setup-sqlc@bac53b7fb28c039a6c7f5736fd1e89744021bdd6 # v5
+        with:
+          sqlc-version: '1.31.1'
+      - name: Check committed SQL bindings
+        run: ./scripts/check-sql
 
-  portable:
+  rust:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).e2e) }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-24.04]
+        os: [macos-15, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           cache-on-failure: true
-          cache-key: portable
+          cache-key: portable-rust-v2
           rustflags: ""
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).e2e) }}
         with:
+          python-version: '3.14'
           enable-cache: true
           cache-dependency-glob: services/home/uv.lock
           cache-suffix: ${{ matrix.os }}
-      - name: Set up Node project
-        uses: kellen-miller/ci/.github/actions/setup-node@d1c91763535a5866b55282018f301d921b22bcd5
-        with:
-          node-version: '26'
-          working-directory: crates/vehicle-ui/web
-
-      - name: Set up Playwright
-        uses: kellen-miller/ci/.github/actions/playwright-setup@d1c91763535a5866b55282018f301d921b22bcd5
-        with:
-          working-directory: crates/vehicle-ui/web
-          browsers: chromium
-      - uses: Azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        with:
-          version: v4.2.3
       - name: Set up virtual CAN on Linux
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes "linux-modules-extra-$(uname -r)"
+          ./scripts/configure-ubuntu-ci
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          modules_package="linux-modules-extra-$(uname -r)"
+          if apt-cache show "$modules_package" 2>/dev/null | grep -q '^Package:'; then
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install --yes "$modules_package"
+          fi
           sudo modprobe vcan
           sudo ip link add dev vcan-powertrain type vcan
           sudo ip link add dev vcan-controller type vcan
           sudo ip link set up vcan-powertrain
           sudo ip link set up vcan-controller
-      - run: ./scripts/check-rust --portable
-      - run: ./scripts/check-python
+      - name: Check Rust workspace
+        uses: kellen-miller/ci/.github/actions/rust-check@b8999e61df957b667afedc68f2814361a199c53f
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
+        with:
+          setup-toolchain: 'false'
+          checks: fmt clippy
+      - name: Test and build Rust workspace
+        uses: kellen-miller/ci/.github/actions/rust-check@b8999e61df957b667afedc68f2814361a199c53f
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
+        with:
+          setup-toolchain: 'false'
+          checks: test build
       - run: ./scripts/check-e2e
-      - run: ./scripts/check-ui
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).e2e) }}
+
+  home:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).python || fromJSON(needs.changes.outputs.changes).artifacts) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: '3.14'
+          enable-cache: true
+          cache-dependency-glob: services/home/uv.lock
+          cache-suffix: ${{ matrix.os }}
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).artifacts) }}
+        with:
+          cache-on-failure: true
+          cache-key: home-artifacts-v1
+          rustflags: ""
+      - uses: Azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).artifacts) }}
+        with:
+          version: v4.2.3
+      - run: ./scripts/check-python
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).python) }}
       - run: ./scripts/check-artifacts
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).artifacts) }}
+
+  ui:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).ui) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache-on-failure: true
+          cache-key: ui-v1
+          rustflags: ""
+      - name: Set up Node project
+        uses: kellen-miller/ci/.github/actions/setup-node@2af77688327c2fc0f164e91f77e8784ef25e14c6
+        with:
+          node-version: '26'
+          working-directory: crates/vehicle-ui/web
+      - name: Use Ubuntu archive for browser dependencies
+        if: runner.os == 'Linux'
+        run: |
+          ./scripts/configure-ubuntu-ci
+      - name: Set up Playwright
+        uses: kellen-miller/ci/.github/actions/playwright-setup@2af77688327c2fc0f164e91f77e8784ef25e14c6
+        with:
+          working-directory: crates/vehicle-ui/web
+          browsers: chromium
+      - run: ./scripts/check-ui
+
+  portable:
+    needs: [changes, rust, home, ui]
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Require portable checks
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          HOME_RESULT: ${{ needs.home.result }}
+          UI_RESULT: ${{ needs.ui.result }}
+          EXPECTED_RUST: ${{ (fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).e2e) && 'success' || 'skipped' }}
+          EXPECTED_HOME: ${{ (fromJSON(needs.changes.outputs.changes).python || fromJSON(needs.changes.outputs.changes).artifacts) && 'success' || 'skipped' }}
+          EXPECTED_UI: ${{ fromJSON(needs.changes.outputs.changes).ui && 'success' || 'skipped' }}
+        run: |
+          printf 'changes=%s rust=%s home=%s ui=%s\n'             "$CHANGES_RESULT" "$RUST_RESULT" "$HOME_RESULT" "$UI_RESULT"
+          if [[ "$CHANGES_RESULT" != success || "$RUST_RESULT" != "$EXPECTED_RUST"             || "$HOME_RESULT" != "$EXPECTED_HOME" || "$UI_RESULT" != "$EXPECTED_UI" ]]; then
+            exit 1
+          fi
 
   quality:
-    runs-on: ubuntu-24.04
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).shell || fromJSON(needs.changes.outputs.changes).docker || fromJSON(needs.changes.outputs.changes).length) }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: ShellCheck
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).shell) }}
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
         with:
           scandir: ./scripts
       - name: Hadolint
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).docker) }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: services/home/Dockerfile
       - name: Check source file lengths
+        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).length) }}
         run: ./scripts/check-file-length
 
-  linux:
-    runs-on: ubuntu-24.04
+  systemd:
+    name: Linux service lifecycle
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           cache-on-failure: true
-          cache-key: linux-full
+          cache-key: linux-systemd-v1
           rustflags: ""
-      - name: Install cross linker and vcan
+      - name: Set up virtual CAN
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes gcc-aarch64-linux-gnu "linux-modules-extra-$(uname -r)"
+          ./scripts/configure-ubuntu-ci
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          modules_package="linux-modules-extra-$(uname -r)"
+          if apt-cache show "$modules_package" 2>/dev/null | grep -q '^Package:'; then
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install --yes "$modules_package"
+          fi
           sudo modprobe vcan
           sudo ip link add dev vcan-powertrain type vcan
           sudo ip link add dev vcan-controller type vcan
           sudo ip link set up vcan-powertrain
           sudo ip link set up vcan-controller
-      - run: ./scripts/check-linux
+      # Workspace checks already run in portable (ubuntu-latest).
+      - name: Check Linux service lifecycle
+        run: ./scripts/check-systemd
+
+  targets:
+    name: Cross-compile ARM64 and firmware
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache-on-failure: true
+          cache-key: cross-targets-v1
+          rustflags: ""
+      - name: Install ARM64 cross linker
+        timeout-minutes: 10
+        run: |
+          ./scripts/configure-ubuntu-ci
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install --yes gcc-aarch64-linux-gnu
+      - name: Build ARM64 services and controller firmware
+        run: ./scripts/check-rust-targets
+
+  linux:
+    needs: [changes, systemd, targets]
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require Linux service and target checks
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SYSTEMD_RESULT: ${{ needs.systemd.result }}
+          TARGETS_RESULT: ${{ needs.targets.result }}
+        run: |
+          printf 'changes=%s systemd=%s targets=%s\n' \
+            "$CHANGES_RESULT" "$SYSTEMD_RESULT" "$TARGETS_RESULT"
+          if [[ "$CHANGES_RESULT" != success || "$SYSTEMD_RESULT" != success \
+            || "$TARGETS_RESULT" != success ]]; then
+            exit 1
+          fi

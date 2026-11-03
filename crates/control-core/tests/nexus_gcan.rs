@@ -8,12 +8,12 @@ fn bundle(haltech: &str, cantcu: &str, name: &str) -> Result<ValidatedBundle, Bu
     let source = fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/examples/simulation.toml"),
     )
-    .expect("simulation fixture")
+    .map_err(|error| BundleError::Read(error.to_string()))?
     .replace("mode = \"broadcast-v2\"", haltech)
     .replace("mode = \"disabled\"", cantcu);
     let path =
         std::env::temp_dir().join(format!("celerity-nexus-{name}-{}.toml", std::process::id()));
-    fs::write(&path, source).expect("Nexus bundle");
+    fs::write(&path, source).map_err(|error| BundleError::Read(error.to_string()))?;
     ValidatedBundle::load(&path, StartupMode::Simulation)
 }
 
@@ -90,7 +90,7 @@ fn nexus_selection_keeps_factory_broadcast_opaque_and_cantcu_independent() {
     for id in [0x360, 0x3e0, 0x5ff, 0x604] {
         let observation = decoder.decode(id, &[1, 2, 3]).expect("opaque evidence");
         assert_eq!(observation.source, PowertrainSource::Unknown);
-        assert!(observation.signals.is_empty());
+        assert_eq!(observation.signals, []);
         assert_eq!(observation.raw, [1, 2, 3]);
     }
 

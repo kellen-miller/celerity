@@ -1,5 +1,4 @@
 use std::{
-    fmt::Write as _,
     fs::{self, File},
     io::{Cursor, Read, Write},
     path::Path,
@@ -20,11 +19,21 @@ pub(crate) fn digest_file(path: &Path) -> Result<String, SyncError> {
         }
         hasher.update(&buffer[..read]);
     }
-    let mut output = String::with_capacity(64);
-    for byte in hasher.finalize() {
-        write!(output, "{byte:02x}").expect("String write");
+    Ok(hex_digest(&hasher.finalize()))
+}
+
+pub(crate) fn digest(bytes: &[u8]) -> String {
+    hex_digest(&Sha256::digest(bytes))
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(char::from(HEX[usize::from(byte >> 4)]));
+        output.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
-    Ok(output)
+    output
 }
 
 pub(crate) fn read_zip_entry(

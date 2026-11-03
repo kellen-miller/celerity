@@ -246,11 +246,11 @@ impl PowertrainCanReceiver {
             .map_err(|error| error.to_string())?;
         socket
             .set_timestamping(
-                socketcan::SOF_TIMESTAMPING_RX_HARDWARE
-                    | socketcan::SOF_TIMESTAMPING_RAW_HARDWARE
-                    | socketcan::SOF_TIMESTAMPING_RX_SOFTWARE
-                    | socketcan::SOF_TIMESTAMPING_SOFTWARE
-                    | socketcan::SOF_TIMESTAMPING_OPT_CMSG,
+                socketcan::timestamp::SOF_TIMESTAMPING_RX_HARDWARE
+                    | socketcan::timestamp::SOF_TIMESTAMPING_RAW_HARDWARE
+                    | socketcan::timestamp::SOF_TIMESTAMPING_RX_SOFTWARE
+                    | socketcan::timestamp::SOF_TIMESTAMPING_SOFTWARE
+                    | socketcan::timestamp::SOF_TIMESTAMPING_OPT_CMSG,
             )
             .map_err(|error| error.to_string())?;
         setsockopt(&socket, sockopt::RxqOvfl, &1).map_err(|error| error.to_string())?;

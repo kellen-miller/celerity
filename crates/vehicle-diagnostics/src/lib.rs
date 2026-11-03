@@ -242,12 +242,14 @@ pub fn serve_diagnostics(
                                 continue;
                             }
                         };
-                        if &request[..read] != b"status\n" {
-                            if let Err(error) = stream
+                        let is_status_request = &request[..read] == b"status\n";
+                        if !is_status_request
+                            && let Err(error) = stream
                                 .write_all(b"{\"error\":\"read-only status request required\"}\n")
-                            {
-                                eprintln!("diagnostics rejection write failed: {error}");
-                            }
+                        {
+                            eprintln!("diagnostics rejection write failed: {error}");
+                        }
+                        if !is_status_request {
                             continue;
                         }
                         let current = match store.snapshot(Instant::now()) {
@@ -267,7 +269,11 @@ pub fn serve_diagnostics(
                     }
                     Err(error) => {
                         drop(listener);
-                        let _ = fs::remove_file(&socket_path);
+                        if let Err(cleanup_error) = fs::remove_file(&socket_path)
+                            && cleanup_error.kind() != std::io::ErrorKind::NotFound
+                        {
+                            eprintln!("diagnostics socket cleanup failed: {cleanup_error}");
+                        }
                         return Err(error.to_string());
                     }
                 }

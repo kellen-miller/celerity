@@ -97,7 +97,7 @@ pub enum ExperimentAbort {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ExperimentPhase {
+pub(crate) enum ExperimentPhase {
     WaitingForAcceptance,
     Settling { started_ms: u64 },
     Holding { started_ms: u64 },

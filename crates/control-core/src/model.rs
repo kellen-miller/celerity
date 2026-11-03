@@ -276,22 +276,36 @@ impl RuntimeModel {
                 reason: ModelIneligibility::IncompleteHistory,
             };
         }
-        let current = self
-            .history
-            .back()
-            .expect("complete history has a current sample");
-        let coolant_c = current[bundle
+        let Some(current) = self.history.back() else {
+            return ModelCommandSelection::Deterministic {
+                split_basis_points: deterministic_split_basis_points,
+                reason: ModelIneligibility::IncompleteHistory,
+            };
+        };
+        let Some(coolant_index) = bundle
             .model
             .input_signals
             .iter()
             .position(|signal| signal == "coolant_temperature_c")
-            .expect("validated coolant input")];
-        let iat_c = current[bundle
+        else {
+            return ModelCommandSelection::Deterministic {
+                split_basis_points: deterministic_split_basis_points,
+                reason: ModelIneligibility::Incompatible,
+            };
+        };
+        let Some(iat_index) = bundle
             .model
             .input_signals
             .iter()
             .position(|signal| signal == "air_temperature_c")
-            .expect("validated IAT input")];
+        else {
+            return ModelCommandSelection::Deterministic {
+                split_basis_points: deterministic_split_basis_points,
+                reason: ModelIneligibility::Incompatible,
+            };
+        };
+        let coolant_c = current[coolant_index];
+        let iat_c = current[iat_index];
         let coolant_range =
             bundle.model.coolant_input_maximum_c - bundle.model.coolant_input_minimum_c;
         let iat_range = bundle.model.iat_input_maximum_c - bundle.model.iat_input_minimum_c;

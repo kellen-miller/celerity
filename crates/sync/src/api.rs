@@ -1,14 +1,22 @@
-use std::{
-    fs::{self, File},
-    path::Path,
-    time::Duration,
-};
+use std::{fs, future::Future, path::Path, time::Duration};
 
 pub(crate) use celerity_proto::celerity::v1::{CompletedRun, ReconcileRequest, ReconcileResponse};
-use prost::Message;
-use reqwest::blocking::Client;
+use celerity_proto::{
+    HOME_MAX_MESSAGE_BYTES,
+    celerity::v1::{
+        CompleteRunRequest, DownloadModelRequest, UploadChunkRequest, home_client::HomeClient,
+    },
+};
+use tokio::runtime::{Builder, Handle, Runtime};
+use tonic::{
+    Request, Status,
+    metadata::{Ascii, MetadataValue},
+    transport::{Channel, ClientTlsConfig, Endpoint},
+};
 
-use super::{SyncError, sync_http, sync_io};
+use super::{SyncError, sync_io};
+
+const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub trait HomeApi {
     /// Sends the content inventory and obtains missing/desired digests.
@@ -40,83 +48,131 @@ pub trait HomeApi {
     fn get_model(&self, digest: &str) -> Result<Vec<u8>, SyncError>;
 }
 
-pub struct ReqwestHomeApi {
-    base_url: String,
-    token: String,
-    client: Client,
+/// Synchronous Home RPC transport with an explicitly owned current-thread runtime.
+/// Construct, call, and drop this client outside an asynchronous runtime.
+pub struct GrpcHomeApi {
+    client: HomeClient<Channel>,
+    authorization: MetadataValue<Ascii>,
+    runtime: Runtime,
 }
 
-impl ReqwestHomeApi {
-    /// Creates the production HTTPS-capable client from a bearer-token file.
+impl GrpcHomeApi {
+    /// Creates a lazy HTTPS-capable channel from a bearer-token file.
     ///
     /// # Errors
     ///
-    /// Returns an error when the token or HTTP client cannot be loaded.
+    /// Returns an error for invalid credentials, endpoint, runtime, or nested runtime use.
     pub fn new(base_url: &str, token_path: &Path) -> Result<Self, SyncError> {
+        if Handle::try_current().is_ok() {
+            return Err(SyncError(
+                "synchronous Home client requires a caller outside a Tokio runtime".into(),
+            ));
+        }
+
         let token = fs::read_to_string(token_path).map_err(sync_io)?;
-        let client = Client::builder()
+        if token.trim().is_empty() {
+            return Err(SyncError("empty Home bearer token".into()));
+        }
+
+        let authorization = format!("Bearer {}", token.trim())
+            .parse()
+            .map_err(|error| SyncError(format!("invalid Home bearer token: {error}")))?;
+        let mut endpoint = Endpoint::from_shared(base_url.trim_end_matches('/').to_owned())
+            .map_err(|error| SyncError(error.to_string()))?
             .connect_timeout(Duration::from_secs(5))
+            .timeout(RPC_TIMEOUT);
+        if endpoint.uri().scheme_str() == Some("https") {
+            endpoint = endpoint
+                .tls_config(ClientTlsConfig::new().with_native_roots())
+                .map_err(|error| SyncError(error.to_string()))?;
+        }
+
+        let runtime = Builder::new_current_thread()
+            .enable_all()
             .build()
-            .map_err(sync_http)?;
+            .map_err(sync_io)?;
+        let client = {
+            let _entered = runtime.enter();
+            HomeClient::new(endpoint.connect_lazy())
+                .max_encoding_message_size(HOME_MAX_MESSAGE_BYTES)
+                .max_decoding_message_size(HOME_MAX_MESSAGE_BYTES)
+        };
         Ok(Self {
-            base_url: base_url.trim_end_matches('/').to_owned(),
-            token: token.trim().to_owned(),
             client,
+            authorization,
+            runtime,
         })
     }
 
-    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::blocking::RequestBuilder {
-        self.client
-            .request(method, format!("{}{path}", self.base_url))
-            .bearer_auth(&self.token)
+    fn authenticated<T>(&self, message: T) -> Result<Request<T>, SyncError> {
+        if Handle::try_current().is_ok() {
+            return Err(SyncError(
+                "synchronous Home RPC requires a caller outside a Tokio runtime".into(),
+            ));
+        }
+
+        let mut request = Request::new(message);
+        request
+            .metadata_mut()
+            .insert("authorization", self.authorization.clone());
+        request.set_timeout(RPC_TIMEOUT);
+        Ok(request)
+    }
+
+    fn wait_for_rpc<T>(
+        &self,
+        rpc: impl Future<Output = Result<tonic::Response<T>, Status>>,
+    ) -> Result<T, SyncError> {
+        self.runtime
+            .block_on(async { tokio::time::timeout(RPC_TIMEOUT, rpc).await })
+            .map_err(|_| {
+                SyncError("home gRPC DeadlineExceeded: full RPC exceeded 30 seconds".into())
+            })?
+            .map(tonic::Response::into_inner)
+            .map_err(sync_status)
     }
 }
 
-impl HomeApi for ReqwestHomeApi {
+impl HomeApi for GrpcHomeApi {
     fn reconcile(&self, request: &ReconcileRequest) -> Result<ReconcileResponse, SyncError> {
-        let response = self
-            .request(reqwest::Method::POST, "/v1/reconcile")
-            .header(reqwest::header::CONTENT_TYPE, "application/x-protobuf")
-            .body(request.encode_to_vec())
-            .send()
-            .and_then(reqwest::blocking::Response::error_for_status)
-            .map_err(sync_http)?;
-        ReconcileResponse::decode(response.bytes().map_err(sync_http)?.as_ref())
-            .map_err(|error| SyncError(error.to_string()))
+        let request = self.authenticated(request.clone())?;
+        let mut client = self.client.clone();
+        self.wait_for_rpc(client.reconcile(request))
     }
 
     fn put_chunk(&self, run: &str, chunk: &str, path: &Path) -> Result<(), SyncError> {
-        let file = File::open(path).map_err(sync_io)?;
-        self.request(
-            reqwest::Method::PUT,
-            &format!("/v1/runs/{run}/chunks/{chunk}"),
-        )
-        .body(file)
-        .send()
-        .and_then(reqwest::blocking::Response::error_for_status)
-        .map_err(sync_http)?;
-        Ok(())
+        let request = self.authenticated(UploadChunkRequest {
+            run_digest: run.to_owned(),
+            chunk_digest: chunk.to_owned(),
+            data: fs::read(path).map_err(sync_io)?,
+        })?;
+        let mut client = self.client.clone();
+        self.wait_for_rpc(client.upload_chunk(request)).map(|_| ())
     }
 
     fn complete(&self, run: &str, manifest: &[u8]) -> Result<CompletedRun, SyncError> {
-        let response = self
-            .request(reqwest::Method::POST, &format!("/v1/runs/{run}/complete"))
-            .header(reqwest::header::CONTENT_TYPE, "application/x-protobuf")
-            .body(manifest.to_vec())
-            .send()
-            .and_then(reqwest::blocking::Response::error_for_status)
-            .map_err(sync_http)?;
-        CompletedRun::decode(response.bytes().map_err(sync_http)?.as_ref())
-            .map_err(|error| SyncError(error.to_string()))
+        let request = self.authenticated(CompleteRunRequest {
+            run_digest: run.to_owned(),
+            manifest_pb: manifest.to_vec(),
+        })?;
+        let mut client = self.client.clone();
+        self.wait_for_rpc(client.complete_run(request))
     }
 
     fn get_model(&self, digest: &str) -> Result<Vec<u8>, SyncError> {
-        self.request(reqwest::Method::GET, &format!("/v1/models/{digest}"))
-            .send()
-            .and_then(reqwest::blocking::Response::error_for_status)
-            .map_err(sync_http)?
-            .bytes()
-            .map(|bytes| bytes.to_vec())
-            .map_err(sync_http)
+        let request = self.authenticated(DownloadModelRequest {
+            digest: digest.to_owned(),
+        })?;
+        let mut client = self.client.clone();
+        self.wait_for_rpc(client.download_model(request))
+            .map(|response| response.bundle_zip)
     }
+}
+
+fn sync_status(status: Status) -> SyncError {
+    SyncError(format!(
+        "home gRPC {:?}: {}",
+        status.code(),
+        status.message()
+    ))
 }

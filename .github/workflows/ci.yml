@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   detect-changes:
-    name: Celerity / Change detection
+    name: Change detection
     runs-on: ubuntu-latest
     outputs:
       changes: ${{ steps.paths.outputs.changes }}
@@ -349,7 +349,7 @@ jobs:
       - run: ./scripts/check-ui
 
   portable-required-verification:
-    name: Celerity / Required portable verification (${{ matrix.os }})
+    name: Required portable verification (${{ matrix.os }})
     needs: [detect-changes, rust-verification, home-verification, vehicle-ui-verification]
     if: ${{ !cancelled() }}
     strategy:
@@ -374,7 +374,7 @@ jobs:
           fi
 
   source-policy-validation:
-    name: Celerity / Shell, Dockerfile and source size validation
+    name: Shell, Dockerfile and source size validation
     needs: detect-changes
     if: ${{ !cancelled() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).shell || fromJSON(needs.detect-changes.outputs.changes).docker || fromJSON(needs.detect-changes.outputs.changes).length) }}
     runs-on: ubuntu-latest

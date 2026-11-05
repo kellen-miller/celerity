@@ -2,11 +2,11 @@
   "checks": [
     "Contracts / Generated bindings validation",
     "Linux services / Required verification",
-    "Celerity / Required portable verification (macos-15)",
-    "Celerity / Required portable verification (ubuntu-latest)",
-    "Celerity / Shell, Dockerfile and source size validation",
+    "Required portable verification (macos-15)",
+    "Required portable verification (ubuntu-latest)",
+    "Shell, Dockerfile and source size validation",
     "Renovate / Config validation",
     "GitHub Actions / Workflow validation",
-    "Code duplication / JSCPD scan"
+    "JSCPD scan"
   ]
 }

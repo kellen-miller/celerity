@@ -1,4 +1,4 @@
-name: CI
+name: Celerity
 
 on:
   pull_request:
@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   changes:
+    name: Celerity / Change detection
     runs-on: ubuntu-latest
     outputs:
       changes: ${{ steps.paths.outputs.changes }}
@@ -200,7 +201,7 @@ jobs:
   prerelease:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).contracts) }}
-    name: Prerelease generated contracts
+    name: Contracts / Generated bindings validation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -226,6 +227,7 @@ jobs:
         run: ./scripts/check-sql
 
   rust:
+    name: Rust / Workspace and integration verification (${{ matrix.os }})
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).e2e) }}
     strategy:
@@ -279,6 +281,7 @@ jobs:
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).e2e) }}
 
   home:
+    name: Home service / Python and artifact verification (${{ matrix.os }})
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).python || fromJSON(needs.changes.outputs.changes).artifacts) }}
     strategy:
@@ -312,6 +315,7 @@ jobs:
         if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).artifacts) }}
 
   ui:
+    name: Vehicle UI / Browser and build verification (${{ matrix.os }})
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).ui) }}
     strategy:
@@ -345,6 +349,7 @@ jobs:
       - run: ./scripts/check-ui
 
   portable:
+    name: Celerity / Required portable verification (${{ matrix.os }})
     needs: [changes, rust, home, ui]
     if: ${{ !cancelled() }}
     strategy:
@@ -369,6 +374,7 @@ jobs:
           fi
 
   quality:
+    name: Celerity / Shell, Dockerfile and source size validation
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).shell || fromJSON(needs.changes.outputs.changes).docker || fromJSON(needs.changes.outputs.changes).length) }}
     runs-on: ubuntu-latest
@@ -391,7 +397,7 @@ jobs:
         run: ./scripts/check-file-length
 
   systemd:
-    name: Linux service lifecycle
+    name: Linux services / Lifecycle tests
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
     runs-on: ubuntu-latest
@@ -422,7 +428,7 @@ jobs:
         run: ./scripts/check-systemd
 
   targets:
-    name: Cross-compile ARM64 and firmware
+    name: Rust / ARM64 and firmware builds
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
     runs-on: ubuntu-latest
@@ -445,6 +451,7 @@ jobs:
         run: ./scripts/check-rust-targets
 
   linux:
+    name: Linux services / Required verification
     needs: [changes, systemd, targets]
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
     runs-on: ubuntu-latest

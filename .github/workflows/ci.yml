@@ -349,14 +349,10 @@ jobs:
       - run: ./scripts/check-ui
 
   portable-required-verification:
-    name: Required portable verification (${{ matrix.os }})
+    name: Required portable verification
     needs: [detect-changes, rust-verification, home-verification, vehicle-ui-verification]
     if: ${{ !cancelled() }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - name: Require portable checks
         env:

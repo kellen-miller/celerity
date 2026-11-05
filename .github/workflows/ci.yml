@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
+  detect-changes:
     name: Celerity / Change detection
     runs-on: ubuntu-latest
     outputs:
@@ -198,9 +198,9 @@ jobs:
               ]
             }
 
-  prerelease:
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).contracts) }}
+  generated-bindings-validation:
+    needs: detect-changes
+    if: ${{ !cancelled() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).contracts) }}
     name: Contracts / Generated bindings validation
     runs-on: ubuntu-latest
     steps:
@@ -226,10 +226,10 @@ jobs:
       - name: Check committed SQL bindings
         run: ./scripts/check-sql
 
-  rust:
+  rust-verification:
     name: Rust / Workspace and integration verification (${{ matrix.os }})
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).e2e) }}
+    needs: detect-changes
+    if: ${{ !cancelled() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).rust || fromJSON(needs.detect-changes.outputs.changes).e2e) }}
     strategy:
       fail-fast: false
       matrix:
@@ -245,7 +245,7 @@ jobs:
           cache-key: portable-rust-v2
           rustflags: ""
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).e2e) }}
+        if: ${{ success() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).e2e) }}
         with:
           python-version: '3.14'
           enable-cache: true
@@ -267,23 +267,23 @@ jobs:
           sudo ip link set up vcan-controller
       - name: Check Rust workspace
         uses: kellen-miller/ci/.github/actions/rust-check@b8999e61df957b667afedc68f2814361a199c53f
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
+        if: ${{ success() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).rust) }}
         with:
           setup-toolchain: 'false'
           checks: fmt clippy
       - name: Test and build Rust workspace
         uses: kellen-miller/ci/.github/actions/rust-check@b8999e61df957b667afedc68f2814361a199c53f
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).rust) }}
+        if: ${{ success() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).rust) }}
         with:
           setup-toolchain: 'false'
           checks: test build
       - run: ./scripts/check-e2e
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).e2e) }}
+        if: ${{ success() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).e2e) }}
 
-  home:
+  home-verification:
     name: Home service / Python and artifact verification (${{ matrix.os }})
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).python || fromJSON(needs.changes.outputs.changes).artifacts) }}
+    needs: detect-changes
+    if: ${{ !cancelled() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).python || fromJSON(needs.detect-changes.outputs.changes).artifacts) }}
     strategy:
       fail-fast: false
       matrix:
@@ -300,24 +300,24 @@ jobs:
           cache-dependency-glob: services/home/uv.lock
           cache-suffix: ${{ matrix.os }}
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).artifacts) }}
+        if: ${{ success() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).artifacts) }}
         with:
           cache-on-failure: true
           cache-key: home-artifacts-v1
           rustflags: ""
       - uses: Azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).artifacts) }}
+        if: ${{ success() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).artifacts) }}
         with:
           version: v4.2.3
       - run: ./scripts/check-python
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).python) }}
+        if: ${{ success() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).python) }}
       - run: ./scripts/check-artifacts
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).artifacts) }}
+        if: ${{ success() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).artifacts) }}
 
-  ui:
+  vehicle-ui-verification:
     name: Vehicle UI / Browser and build verification (${{ matrix.os }})
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).ui) }}
+    needs: detect-changes
+    if: ${{ !cancelled() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).ui) }}
     strategy:
       fail-fast: false
       matrix:
@@ -348,9 +348,9 @@ jobs:
           browsers: chromium
       - run: ./scripts/check-ui
 
-  portable:
+  portable-required-verification:
     name: Celerity / Required portable verification (${{ matrix.os }})
-    needs: [changes, rust, home, ui]
+    needs: [detect-changes, rust-verification, home-verification, vehicle-ui-verification]
     if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
@@ -360,46 +360,46 @@ jobs:
     steps:
       - name: Require portable checks
         env:
-          CHANGES_RESULT: ${{ needs.changes.result }}
-          RUST_RESULT: ${{ needs.rust.result }}
-          HOME_RESULT: ${{ needs.home.result }}
-          UI_RESULT: ${{ needs.ui.result }}
-          EXPECTED_RUST: ${{ (fromJSON(needs.changes.outputs.changes).rust || fromJSON(needs.changes.outputs.changes).e2e) && 'success' || 'skipped' }}
-          EXPECTED_HOME: ${{ (fromJSON(needs.changes.outputs.changes).python || fromJSON(needs.changes.outputs.changes).artifacts) && 'success' || 'skipped' }}
-          EXPECTED_UI: ${{ fromJSON(needs.changes.outputs.changes).ui && 'success' || 'skipped' }}
+          CHANGES_RESULT: ${{ needs.detect-changes.result }}
+          RUST_RESULT: ${{ needs.rust-verification.result }}
+          HOME_RESULT: ${{ needs.home-verification.result }}
+          UI_RESULT: ${{ needs.vehicle-ui-verification.result }}
+          EXPECTED_RUST: ${{ (fromJSON(needs.detect-changes.outputs.changes).rust || fromJSON(needs.detect-changes.outputs.changes).e2e) && 'success' || 'skipped' }}
+          EXPECTED_HOME: ${{ (fromJSON(needs.detect-changes.outputs.changes).python || fromJSON(needs.detect-changes.outputs.changes).artifacts) && 'success' || 'skipped' }}
+          EXPECTED_UI: ${{ fromJSON(needs.detect-changes.outputs.changes).ui && 'success' || 'skipped' }}
         run: |
           printf 'changes=%s rust=%s home=%s ui=%s\n'             "$CHANGES_RESULT" "$RUST_RESULT" "$HOME_RESULT" "$UI_RESULT"
           if [[ "$CHANGES_RESULT" != success || "$RUST_RESULT" != "$EXPECTED_RUST"             || "$HOME_RESULT" != "$EXPECTED_HOME" || "$UI_RESULT" != "$EXPECTED_UI" ]]; then
             exit 1
           fi
 
-  quality:
+  source-policy-validation:
     name: Celerity / Shell, Dockerfile and source size validation
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).shell || fromJSON(needs.changes.outputs.changes).docker || fromJSON(needs.changes.outputs.changes).length) }}
+    needs: detect-changes
+    if: ${{ !cancelled() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).shell || fromJSON(needs.detect-changes.outputs.changes).docker || fromJSON(needs.detect-changes.outputs.changes).length) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: ShellCheck
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).shell) }}
+        if: ${{ success() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).shell) }}
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
         with:
           scandir: ./scripts
       - name: Hadolint
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).docker) }}
+        if: ${{ success() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).docker) }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: services/home/Dockerfile
       - name: Check source file lengths
-        if: ${{ success() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).length) }}
+        if: ${{ success() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).length) }}
         run: ./scripts/check-file-length
 
-  systemd:
+  service-lifecycle-tests:
     name: Linux services / Lifecycle tests
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
+    needs: detect-changes
+    if: ${{ !cancelled() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).linux) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -427,10 +427,10 @@ jobs:
       - name: Check Linux service lifecycle
         run: ./scripts/check-systemd
 
-  targets:
+  cross-target-builds:
     name: Rust / ARM64 and firmware builds
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
+    needs: detect-changes
+    if: ${{ !cancelled() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).linux) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -450,17 +450,17 @@ jobs:
       - name: Build ARM64 services and controller firmware
         run: ./scripts/check-rust-targets
 
-  linux:
+  linux-required-verification:
     name: Linux services / Required verification
-    needs: [changes, systemd, targets]
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).linux) }}
+    needs: [detect-changes, service-lifecycle-tests, cross-target-builds]
+    if: ${{ !cancelled() && (needs.detect-changes.result != 'success' || fromJSON(needs.detect-changes.outputs.changes).linux) }}
     runs-on: ubuntu-latest
     steps:
       - name: Require Linux service and target checks
         env:
-          CHANGES_RESULT: ${{ needs.changes.result }}
-          SYSTEMD_RESULT: ${{ needs.systemd.result }}
-          TARGETS_RESULT: ${{ needs.targets.result }}
+          CHANGES_RESULT: ${{ needs.detect-changes.result }}
+          SYSTEMD_RESULT: ${{ needs.service-lifecycle-tests.result }}
+          TARGETS_RESULT: ${{ needs.cross-target-builds.result }}
         run: |
           printf 'changes=%s systemd=%s targets=%s\n' \
             "$CHANGES_RESULT" "$SYSTEMD_RESULT" "$TARGETS_RESULT"

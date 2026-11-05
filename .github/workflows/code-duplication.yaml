@@ -7,7 +7,7 @@ concurrency:
   group: code-duplication-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 jobs:
-  duplication:
+  jscpd-scan:
     name: Code duplication / JSCPD scan
     runs-on: ubuntu-latest
     steps:

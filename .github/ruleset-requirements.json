@@ -1,12 +1,11 @@
 {
   "checks": [
-    "Prerelease generated contracts",
-    "linux",
-    "portable (macos-15)",
-    "portable (ubuntu-latest)",
-    "quality",
-    "Renovate / Config validation",
-    "GitHub Actions / Workflow validation",
-    "Code duplication (CPD)"
+    "Contracts / Generated bindings validation",
+    "Linux services / Required verification",
+    "Required portable verification",
+    "Shell, Dockerfile and source size validation",
+    "renovate.json / Config validation",
+    ".github/workflows / Workflow validation",
+    "JSCPD scan"
   ]
 }

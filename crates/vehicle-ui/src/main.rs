@@ -11,9 +11,15 @@ use std::{
 use vehicle_ui::StatusObserver;
 
 const DIAGNOSTICS_SOCKET: &str = "/run/celerity/diagnostics.sock";
+const DEFAULT_PORT: u16 = 8080;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let server = tiny_http::Server::http("127.0.0.1:8080")?;
+    let port = match std::env::var("VEHICLE_UI_PORT") {
+        Ok(value) => value.parse::<u16>()?,
+        Err(std::env::VarError::NotPresent) => DEFAULT_PORT,
+        Err(error) => return Err(error.into()),
+    };
+    let server = tiny_http::Server::http(("127.0.0.1", port))?;
     let observer = Arc::new(RwLock::new(StatusObserver::new()));
     let stopping = Arc::new(AtomicBool::new(false));
     let worker_observer = Arc::clone(&observer);

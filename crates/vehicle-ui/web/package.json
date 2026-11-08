@@ -22,19 +22,19 @@
     "@types/node": "26.6.6",
     "@typescript/native": "npm:typescript@7.0.2",
     "eslint": "10.14.0",
-    "eslint-plugin-svelte": "3.23.1",
-    "globals": "17.13.0",
+    "eslint-plugin-svelte": "3.24.0",
+    "globals": "17.14.0",
     "prettier": "3.9.10",
     "prettier-plugin-svelte": "4.1.1",
     "svelte": "5.57.3",
-    "svelte-check": "4.7.7",
+    "svelte-check": "4.7.8",
     "terser": "5.51.2",
-    "ts-proto": "2.18.3",
+    "ts-proto": "2.18.4",
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "typescript-eslint": "8.72.1",
-    "vite": "8.3.5",
+    "vite": "8.3.6",
     "vite-plugin-singlefile": "2.3.4",
-    "vitest": "5.0.5"
+    "vitest": "5.1.0"
   },
   "dependencies": {
     "@celerity/proto": "file:../../../gen/typescript"
